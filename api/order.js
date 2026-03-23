@@ -2,13 +2,15 @@
 // Handles secure order submission: Telegram + Google Sheets + Trello
 // API keys are stored as Vercel Environment Variables (not in client code)
 
-export const config = {
+const config = {
   api: {
     bodyParser: {
       sizeLimit: '5mb',
     },
   },
 };
+
+module.exports.config = config;
 
 // ============================================================
 // PRICE CALCULATOR (production price for internal use)
@@ -163,7 +165,7 @@ function getCorsOrigin(req) {
   return ALLOWED_ORIGINS[0];
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   // CORS headers — restrict to known origins
   const corsOrigin = getCorsOrigin(req);
   res.setHeader("Access-Control-Allow-Origin", corsOrigin);
