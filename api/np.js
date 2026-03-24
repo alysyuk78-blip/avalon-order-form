@@ -22,8 +22,9 @@ module.exports = async function handler(req, res) {
 
     // Whitelist allowed methods to prevent API abuse
     const allowedMethods = {
-      "Address": ["searchSettlements", "getWarehouses"],
-    };
+        "Address": ["getWarehouses"],
+        "AddressGeneral": ["searchSettlements"],
+      };
 
     if (!allowedMethods[modelName] || !allowedMethods[modelName].includes(calledMethod)) {
       return res.status(403).json({ error: "Method not allowed" });
