@@ -15,7 +15,7 @@ module.exports.config = config;
 // ============================================================
 // PRICE CALCULATOR (production price for internal use)
 // ============================================================
-const PRODUCTION_PRICE_PER_M2 = 1920;
+const PRODUCTION_PRICE_PER_M2 = 2030;
 const COMPLEX_PATTERNS = ["K3", "K4", "K6", "K8", "K9"];
 
 function calcPriceForMessage(order) {
@@ -28,7 +28,7 @@ function calcPriceForMessage(order) {
   const areaM2 = areaMm2 / 1_000_000;
   let pricePerM2 = PRODUCTION_PRICE_PER_M2;
   if (order.basket_type?.toLowerCase().includes("антивандал")) pricePerM2 *= 1.35;
-  if (order.construction_type?.toLowerCase().includes("розбірний")) pricePerM2 *= 1.1;
+  if (order.construction_type?.toLowerCase().includes("розбірний")) pricePerM2 = 2170;
   if (order.pattern && COMPLEX_PATTERNS.includes(order.pattern)) pricePerM2 *= 1.15;
   const perUnit = Math.round(areaM2 * pricePerM2);
   const total = perUnit * qty;

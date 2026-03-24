@@ -24,9 +24,9 @@ function doPost(e) {
     let areaM2 = 0, total = 0;
     if (w && h) {
       areaM2 = (w * h + 2 * d * h) / 1000000;
-      let ppm2 = 1920; // Виробнича ціна
+      let ppm2 = 2030; // Виробнича ціна
       if ((data.basket_type||"").toLowerCase().indexOf("антивандал") >= 0) ppm2 *= 1.35;
-      if ((data.construction_type||"").toLowerCase().indexOf("розбірний") >= 0) ppm2 *= 1.1;
+      if ((data.construction_type||"").toLowerCase().indexOf("розбірний") >= 0) ppm2 = 2170;
       if (data.pattern && ["K3","K4","K6","K8","K9"].indexOf(data.pattern) >= 0) ppm2 *= 1.15;
       total = Math.round(areaM2 * ppm2) * qty;
     }
