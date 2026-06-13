@@ -156,6 +156,28 @@
       return { total, prepayment, perUnit, areaM2: Math.round(areaM2 * 1000) / 1000, pricePerM2, costTotal, profit };
     }
 
+    // ============================================================
+    // РОЗМІР КОШИКА З ГАБАРИТІВ БЛОКУ (логіка з калькулятора AVALON)
+    // Режим Б (розміри кондиціонера) і В (бренд+модель).
+    // ============================================================
+    const BRACKET_LENGTHS = [450, 500, 600, 700]; // К1, К2, К3, К4 (мм)
+    const roundUp10 = (v) => Math.ceil(v / 10) * 10;
+    function basketFromAC({ ac_w, ac_h, ac_d, premium = false, coversBrackets = false }) {
+      const W = Number(ac_w) || 0, H = Number(ac_h) || 0, D = Number(ac_d) || 0;
+      if (!W || !H || !D) return null;
+      const FRONT_GAP = 50;
+      const wallGap = premium ? 100 : 150; // мін. зазор до стіни: 150 стандарт / 100 преміум
+      // Глибина: кронштейн має бути ≥ глибина блоку + зазор до стіни; беремо найближчий стандартний (К1–К4).
+      const required = D + wallGap;
+      const bracket = BRACKET_LENGTHS.find(b => b >= required) || required;
+      const size_d = roundUp10(bracket + FRONT_GAP);          // глибина = кронштейн + 50
+      const size_w = roundUp10(W + 100);                       // ширина = блок + по 50 з боків
+      let size_h = H;
+      if (coversBrackets) size_h += 120;                       // +120 якщо кошик закриває кронштейни
+      size_h = roundUp10(size_h);
+      return { size_w, size_h, size_d, bracket };
+    }
+
     function fmt(n) {
       return n.toLocaleString("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
