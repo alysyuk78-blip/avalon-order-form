@@ -1035,6 +1035,7 @@
       const [acModels, setAcModels] = useState([]);
       const [selBrand, setSelBrand] = useState("");
       const [selModel, setSelModel] = useState("");
+      const [items, setItems] = useState([]); // позиції замовлення (кілька кошиків)
 
       const set = (field, value) => setForm(f => ({ ...f, [field]: value }));
       const touch = (field) => setTouched(t => ({ ...t, [field]: true }));
@@ -1092,56 +1093,88 @@
         }
       };
 
-      const isFormValid =
-        form.first_name.trim() &&
-        isValidPhoneUA(form.phone) &&
-        form.construction_type &&
-        form.basket_type &&
-        Number(form.quantity) >= 1 &&
-        form.color &&
-        form.pattern &&
-        Number(form.size_w) > 0 &&
-        Number(form.size_h) > 0 &&
-        Number(form.size_d) > 0 &&
-        form.delivery_location &&
-        form.transport &&
-        form.payment_method &&
-        form.how_found &&
-        form.terms_accepted;
+      // ── Мультипозиційність: поточний кошик + список доданих ──
+      const basketComplete = (s) =>
+        !!(s.construction_type && s.basket_type && s.color && s.pattern &&
+           Number(s.size_w) > 0 && Number(s.size_h) > 0 && Number(s.size_d) > 0 && Number(s.quantity) >= 1);
+      const basketTouched = !!(form.construction_type || form.basket_type || form.color || form.pattern ||
+           form.size_w || form.size_h || form.size_d || (form.quantity && Number(form.quantity) > 0));
+      const buildItem = (s) => {
+        const p = calcPrice(s) || {};
+        return {
+          construction_type: s.construction_type, basket_type: s.basket_type,
+          color: s.color, color_custom: s.color_custom, pattern: s.pattern, pattern_custom: s.pattern_custom,
+          size_w: Number(s.size_w) || 0, size_h: Number(s.size_h) || 0, size_d: Number(s.size_d) || 0,
+          quantity: Number(s.quantity) || 1,
+          price_total: p.total || 0, price_per_unit: p.perUnit || 0, price_per_m2: p.pricePerM2 || 0,
+          area_m2: p.areaM2 || 0, cost_total: p.costTotal || 0, profit: p.profit || 0,
+        };
+      };
+      const resetBasketFields = () => {
+        setForm(f => ({ ...f, construction_type: "", basket_type: "", quantity: "",
+          color: "", color_custom: "", pattern: "", pattern_custom: "", size_w: "", size_h: "", size_d: "" }));
+        setSizeMode("basket"); setAcDims({ w: "", h: "", d: "" });
+        setPremium(false); setCoversBrackets(false); setSelBrand(""); setSelModel(""); setPatternFile(null);
+      };
+      const addBasket = () => {
+        if (!basketComplete(form)) {
+          setShowErrors(true);
+          setToast({ message: "Заповніть параметри кошика: тип, конструкція, колір, візерунок, розмір, кількість", type: "error" });
+          const el = document.querySelector(".field-error");
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+          return;
+        }
+        setItems(prev => [...prev, buildItem(form)]);
+        resetBasketFields();
+        setShowErrors(false);
+        setToast({ message: "Кошик додано до замовлення", type: "success" });
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      };
+      const removeBasket = (i) => setItems(prev => prev.filter((_, idx) => idx !== i));
+
+      // Усі позиції = додані + поточний (якщо повністю заповнений)
+      const allItems = [...items, ...(basketComplete(form) ? [buildItem(form)] : [])];
+      const grandTotal = allItems.reduce((s, it) => s + (it.price_total || 0), 0);
+
+      const commonValid =
+        form.first_name.trim() && isValidPhoneUA(form.phone) &&
+        form.delivery_location && form.transport && form.payment_method &&
+        form.how_found && form.terms_accepted;
+      const isFormValid = commonValid && allItems.length >= 1 && (!basketTouched || basketComplete(form));
 
       const handleSubmit = async (e) => {
         e.preventDefault();
         if (!isFormValid) {
           setShowErrors(true);
-          setToast({ message: "Заповніть всі обов'язкові поля, позначені *", type: "error" });
+          let msg = "Заповніть всі обов'язкові поля, позначені *";
+          if (commonValid && allItems.length === 0) msg = "Додайте хоча б один кошик";
+          else if (basketTouched && !basketComplete(form)) msg = "Завершіть поточний кошик (або очистіть його поля) перед відправкою";
+          setToast({ message: msg, type: "error" });
           const el = document.querySelector(".field-error");
           if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
           return;
         }
         setShowErrors(false);
         setSubmitting(true);
+        const orderItems = allItems;
+        const grand = orderItems.reduce((s, it) => s + (it.price_total || 0), 0);
+        const costSum = orderItems.reduce((s, it) => s + (it.cost_total || 0), 0);
+        const profitSum = orderItems.reduce((s, it) => s + (it.profit || 0), 0);
+        const f0 = orderItems[0];
         const order = {
-          ...form,
-          first_name: form.first_name.trim(),
-          last_name: form.last_name.trim(),
-          phone: form.phone.trim(),
-          city: form.city.trim(),
-          quantity: Number(form.quantity) || 1,
-          size_w: Number(form.size_w) || 0,
-          size_h: Number(form.size_h) || 0,
-          size_d: Number(form.size_d) || 0,
+          first_name: form.first_name.trim(), last_name: form.last_name.trim(),
+          phone: form.phone.trim(), city: form.city.trim(),
+          transport: form.transport, transport_custom: form.transport_custom,
+          delivery_address: form.delivery_address, delivery_location: form.delivery_location,
+          delivery_date: form.delivery_date, payment_method: form.payment_method,
+          how_found: form.how_found, how_found_custom: form.how_found_custom, notes: form.notes,
+          items: orderItems,
+          price_total: grand, prepayment: Math.round(grand * 0.5), cost_total: costSum, profit: profitSum,
+          // сумісність зі старим форматом (перша позиція):
+          size_w: f0.size_w, size_h: f0.size_h, size_d: f0.size_d, quantity: f0.quantity,
+          construction_type: f0.construction_type, basket_type: f0.basket_type,
+          color: f0.color, color_custom: f0.color_custom, pattern: f0.pattern, pattern_custom: f0.pattern_custom,
         };
-        // Рахуємо ціну ОДИН раз і передаємо готові числа далі (форма = Telegram = Sheets):
-        const priceCalc = calcPrice(order);
-        if (priceCalc) {
-          order.price_total = priceCalc.total;       // клієнтська ціна (з націнкою) — головна сума скрізь
-          order.price_per_unit = priceCalc.perUnit;
-          order.price_per_m2 = priceCalc.pricePerM2;
-          order.area_m2 = priceCalc.areaM2;
-          order.prepayment = priceCalc.prepayment;
-          order.cost_total = priceCalc.costTotal;     // собівартість (для менеджера)
-          order.profit = priceCalc.profit;            // прибуток (для менеджера)
-        }
         try {
           await submitOrder(order);
           setSubmitted(true);
@@ -1159,6 +1192,9 @@
         setPatternFile(null);
         setNpCityRef("");
         setTouched({});
+        setItems([]);
+        setSizeMode("basket"); setAcDims({ w: "", h: "", d: "" });
+        setPremium(false); setCoversBrackets(false); setSelBrand(""); setSelModel("");
         clearDraft();
         setHasDraft(false);
         setForm({
@@ -1481,6 +1517,40 @@
                   </div>
                 )}
               </FormCard>
+
+              {/* Додавання кошиків + список позицій */}
+              <div className="space-y-3">
+                <button type="button" onClick={addBasket}
+                  className="w-full py-3 rounded-xl text-sm font-bold transition-colors"
+                  style={{ backgroundColor: "#fff", color: "#1B4332", border: "2px dashed #1B4332" }}>
+                  + Додати ще кошик до замовлення
+                </button>
+                {items.length > 0 && (
+                  <FormCard title={`Кошики в замовленні (${items.length})`}>
+                    <div className="space-y-2">
+                      {items.map((it, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 p-3 rounded-lg" style={{ backgroundColor: "#f5f0e8", border: "1px solid #e2e0dc" }}>
+                          <div className="text-sm" style={{ color: "#1B4332" }}>
+                            <div className="font-semibold">{i + 1}. {it.size_w}×{it.size_h}×{it.size_d} мм × {it.quantity} шт.</div>
+                            <div className="text-xs" style={{ color: "#6B7280" }}>
+                              {[it.construction_type, it.basket_type, it.color, it.pattern].filter(Boolean).join(", ")}
+                            </div>
+                            <div className="text-xs font-semibold mt-0.5" style={{ color: "#1B4332" }}>{fmt(it.price_total)} ₴</div>
+                          </div>
+                          <button type="button" onClick={() => removeBasket(i)} aria-label="Видалити"
+                            className="flex-shrink-0 flex items-center justify-center"
+                            style={{ width: 32, height: 32, borderRadius: 999, color: "#ef4444", border: "1px solid #ef4444", backgroundColor: "#fff", fontSize: 18, lineHeight: 1 }}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop: "2px solid #e2e0dc" }}>
+                      <span className="font-bold" style={{ color: "#1B4332" }}>Разом за замовлення:</span>
+                      <span className="font-bold text-lg" style={{ color: "#1B4332" }}>{fmt(grandTotal)} ₴</span>
+                    </div>
+                    <p className="text-xs mt-2" style={{ color: "#6B7280" }}>Поточний кошик додасться автоматично при відправці, якщо повністю заповнений.</p>
+                  </FormCard>
+                )}
+              </div>
 
               {/* Доставка */}
               <FormCard title="Доставка *">
