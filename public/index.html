@@ -1027,9 +1027,35 @@
       const [showCalendar, setShowCalendar] = useState(false);
       const [npCityRef, setNpCityRef] = useState("");
       const [hasDraft, setHasDraft] = useState(!!loadDraft());
+      // Режими вводу розміру: 'basket' (розмір кошика), 'ac' (габарити блоку), 'model' (бренд+модель)
+      const [sizeMode, setSizeMode] = useState("basket");
+      const [acDims, setAcDims] = useState({ w: "", h: "", d: "" });
+      const [premium, setPremium] = useState(false);
+      const [coversBrackets, setCoversBrackets] = useState(false);
+      const [acModels, setAcModels] = useState([]);
+      const [selBrand, setSelBrand] = useState("");
+      const [selModel, setSelModel] = useState("");
 
       const set = (field, value) => setForm(f => ({ ...f, [field]: value }));
       const touch = (field) => setTouched(t => ({ ...t, [field]: true }));
+
+      // Завантаження бази моделей кондиціонерів (для режиму "Бренд+модель")
+      useEffect(() => {
+        fetch("/models.json").then(r => r.json()).then(d => setAcModels(d.models || [])).catch(() => {});
+      }, []);
+
+      // Автоматичний перерахунок розміру кошика в режимах "ac" і "model"
+      useEffect(() => {
+        if (sizeMode === "basket") return;
+        let dims = null;
+        if (sizeMode === "ac") dims = { ac_w: acDims.w, ac_h: acDims.h, ac_d: acDims.d };
+        else if (sizeMode === "model" && selModel) {
+          const m = acModels.find(x => x.model === selModel);
+          if (m) dims = { ac_w: m.w, ac_h: m.h, ac_d: m.d };
+        }
+        const res = dims && basketFromAC({ ...dims, premium, coversBrackets });
+        if (res) setForm(f => ({ ...f, size_w: res.size_w, size_h: res.size_h, size_d: res.size_d }));
+      }, [sizeMode, acDims, premium, coversBrackets, selModel, acModels]);
 
       // Autosave on form change (debounced)
       const saveTimerRef = useRef(null);
@@ -1358,21 +1384,102 @@
 
               {/* Розміри */}
               <FormCard title="Розміри (мм) *">
-                <p className="text-sm mb-4 italic" style={{ color: "#6B7280" }}>Вкажіть ширину (W), висоту (H) та глибину (D) відповідно до схем нижче</p>
-                <div className="grid grid-cols-3 gap-3">
-                  {[["size_w", "W — Ширина", 1], ["size_h", "H — Висота", 0], ["size_d", "D — Глибина", 2]].map(([field, label, idx]) => (
-                    <div key={field} className="flex flex-col gap-2">
-                      {SETTINGS.size_diagram_urls?.[idx] && (
-                        <div className="rounded-lg overflow-hidden border bg-white" style={{ borderColor: "#e5e7eb" }}>
-                          <img src={SETTINGS.size_diagram_urls[idx]} alt={label} className="w-full h-28 object-contain p-1" />
-                        </div>
-                      )}
-                      <label className="text-xs font-semibold block" style={{ color: "#1B4332" }}>{label}</label>
-                      <StyledInput type="number" placeholder="мм" value={form[field]}
-                        onChange={e => set(field, e.target.value)} error={fieldError(field)} />
-                    </div>
+                {/* Перемикач режиму вводу */}
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  {[{ id: "basket", label: "Розмір кошика" }, { id: "ac", label: "Розміри блоку" }, { id: "model", label: "Бренд + модель" }].map(m => (
+                    <button key={m.id} type="button" onClick={() => setSizeMode(m.id)}
+                      className="py-2 px-1 rounded-lg text-xs font-semibold transition-colors"
+                      style={{
+                        backgroundColor: sizeMode === m.id ? "#1B4332" : "#fff",
+                        color: sizeMode === m.id ? "#fff" : "#1B4332",
+                        border: sizeMode === m.id ? "1.5px solid #1B4332" : "1.5px solid #d1d5db"
+                      }}>
+                      {m.label}
+                    </button>
                   ))}
                 </div>
+
+                {/* Режим А — розмір кошика */}
+                {sizeMode === "basket" && (
+                  <>
+                    <p className="text-sm mb-4 italic" style={{ color: "#6B7280" }}>Вкажіть ширину (W), висоту (H) та глибину (D) відповідно до схем нижче</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      {[["size_w", "W — Ширина", 1], ["size_h", "H — Висота", 0], ["size_d", "D — Глибина", 2]].map(([field, label, idx]) => (
+                        <div key={field} className="flex flex-col gap-2">
+                          {SETTINGS.size_diagram_urls?.[idx] && (
+                            <div className="rounded-lg overflow-hidden border bg-white" style={{ borderColor: "#e5e7eb" }}>
+                              <img src={SETTINGS.size_diagram_urls[idx]} alt={label} className="w-full h-28 object-contain p-1" />
+                            </div>
+                          )}
+                          <label className="text-xs font-semibold block" style={{ color: "#1B4332" }}>{label}</label>
+                          <StyledInput type="number" placeholder="мм" value={form[field]}
+                            onChange={e => set(field, e.target.value)} error={fieldError(field)} />
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {/* Режим Б — габарити кондиціонера */}
+                {sizeMode === "ac" && (
+                  <div className="space-y-3">
+                    <p className="text-sm italic" style={{ color: "#6B7280" }}>Вкажіть габарити ЗОВНІШНЬОГО блоку — розмір кошика порахується автоматично</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      {[["w", "Ширина блоку"], ["h", "Висота блоку"], ["d", "Глибина блоку"]].map(([k, label]) => (
+                        <div key={k} className="flex flex-col gap-1">
+                          <label className="text-xs font-semibold block" style={{ color: "#1B4332" }}>{label}</label>
+                          <StyledInput type="number" placeholder="мм" value={acDims[k]}
+                            onChange={e => setAcDims(d => ({ ...d, [k]: e.target.value }))} />
+                        </div>
+                      ))}
+                    </div>
+                    <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "#1B4332" }}>
+                      <input type="checkbox" checked={premium} onChange={e => setPremium(e.target.checked)} />
+                      Преміум-кондиціонер (зазор до стіни 100 мм замість 150)
+                    </label>
+                    <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "#1B4332" }}>
+                      <input type="checkbox" checked={coversBrackets} onChange={e => setCoversBrackets(e.target.checked)} />
+                      Кошик закриває кронштейни (+120 мм до висоти)
+                    </label>
+                    <div className="rounded-xl p-3 text-center" style={{ backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+                      <div className="text-xs" style={{ color: "#166534" }}>Розрахований розмір кошика (Ш×В×Г):</div>
+                      <div className="text-lg font-bold" style={{ color: "#1B4332" }}>
+                        {form.size_w && form.size_h && form.size_d ? `${form.size_w} × ${form.size_h} × ${form.size_d} мм` : "—"}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Режим В — бренд + модель */}
+                {sizeMode === "model" && (
+                  <div className="space-y-3">
+                    <p className="text-sm italic" style={{ color: "#6B7280" }}>Оберіть бренд і модель — габарити й розмір кошика підставляться автоматично</p>
+                    <Field label="Бренд">
+                      <StyledSelect value={selBrand} onChange={v => { setSelBrand(v); setSelModel(""); }} placeholder="Оберіть бренд">
+                        {[...new Set(acModels.map(m => m.brand))].map(b => <option key={b} value={b}>{b}</option>)}
+                      </StyledSelect>
+                    </Field>
+                    {selBrand && (
+                      <Field label="Модель">
+                        <StyledSelect value={selModel} onChange={v => setSelModel(v)} placeholder="Оберіть модель">
+                          {acModels.filter(m => m.brand === selBrand).map(m => <option key={m.model} value={m.model}>{m.series} — {m.model} ({m.btu} BTU)</option>)}
+                        </StyledSelect>
+                      </Field>
+                    )}
+                    <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "#1B4332" }}>
+                      <input type="checkbox" checked={premium} onChange={e => setPremium(e.target.checked)} />
+                      Преміум-монтаж (зазор до стіни 100 мм)
+                    </label>
+                    {selModel && (
+                      <div className="rounded-xl p-3 text-center" style={{ backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+                        <div className="text-xs" style={{ color: "#166534" }}>Розрахований розмір кошика (Ш×В×Г):</div>
+                        <div className="text-lg font-bold" style={{ color: "#1B4332" }}>
+                          {form.size_w && form.size_h && form.size_d ? `${form.size_w} × ${form.size_h} × ${form.size_d} мм` : "—"}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </FormCard>
 
               {/* Доставка */}
