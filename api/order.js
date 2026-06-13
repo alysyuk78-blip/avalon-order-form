@@ -94,22 +94,29 @@ function formatTelegramMessage(order) {
   msg += `📞 ${e(order.phone)}\n`;
   if (order.city) msg += `🏙 ${e(order.city)}\n`;
   msg += `\n`;
-  msg += `• Тип: <b>${e(basketType)}</b>\n`;
-  msg += `• Вид конструкції: <b>${e(order.construction_type)}</b>\n`;
-  if (order.color) msg += `• Колір: <b>${e(order.color)}${order.color_custom ? " (" + e(order.color_custom) + ")" : ""}</b>\n`;
-  if (order.pattern) msg += `• Візерунок: <b>${e(order.pattern)}${order.pattern_custom ? " (" + e(order.pattern_custom) + ")" : ""}</b>\n`;
-  msg += `• Розміри:\n`;
-  msg += `   Висота — H: <b>${order.size_h}</b> мм\n`;
-  msg += `   Ширина — W: <b>${order.size_w}</b> мм\n`;
-  msg += `   Глибина — D: <b>${order.size_d}</b> мм\n`;
-  msg += `• Кількість: <b>${order.quantity} шт.</b>\n`;
-  if (price) {
-    msg += `• Площа виробу: <b>${price.areaM2} м²</b>\n`;
-    if (price.pricePerM2) msg += `• Ціна за 1 м²: <b>${price.pricePerM2.toLocaleString("uk-UA")} ₴</b>\n`;
-    msg += `• Вартість для клієнта: <b>${price.total.toLocaleString("uk-UA")} ₴</b>\n`;
-    if (price.costTotal != null) msg += `• Собівартість: <b>${price.costTotal.toLocaleString("uk-UA")} ₴</b>\n`;
-    if (price.profit != null) msg += `• Прибуток: <b>${price.profit.toLocaleString("uk-UA")} ₴</b>\n`;
-  }
+  // Позиції замовлення (кілька кошиків) або один кошик (старий формат)
+  const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
+    basket_type: order.basket_type, construction_type: order.construction_type,
+    color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
+    size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
+    price_total: order.price_total, area_m2: order.area_m2,
+  }];
+  const multi = items.length > 1;
+  const num = (v) => Number(v || 0).toLocaleString("uk-UA");
+  items.forEach((it, i) => {
+    const bt = it.basket_type?.includes("Антивандальний") ? "Антивандальний" : it.basket_type;
+    if (multi) msg += `\n🧺 <b>Кошик ${i + 1}</b>\n`;
+    msg += `• Тип: <b>${e(bt)}</b>\n`;
+    msg += `• Вид конструкції: <b>${e(it.construction_type)}</b>\n`;
+    if (it.color) msg += `• Колір: <b>${e(it.color)}${it.color_custom ? " (" + e(it.color_custom) + ")" : ""}</b>\n`;
+    if (it.pattern) msg += `• Візерунок: <b>${e(it.pattern)}${it.pattern_custom ? " (" + e(it.pattern_custom) + ")" : ""}</b>\n`;
+    msg += `• Розмір (В×Ш×Г): <b>${it.size_h}×${it.size_w}×${it.size_d}</b> мм\n`;
+    msg += `• Кількість: <b>${it.quantity} шт.</b>\n`;
+    if (it.price_total != null) msg += `• Вартість: <b>${num(it.price_total)} ₴</b>\n`;
+  });
+  const grand = order.price_total != null ? Number(order.price_total) : (price ? price.total : 0);
+  msg += `\n💰 <b>Разом за замовлення: ${num(grand)} ₴</b>\n`;
+  if (order.cost_total != null) msg += `<i>Собівартість: ${num(order.cost_total)} ₴ • Прибуток: ${num(order.profit)} ₴</i>\n`;
   const transport = order.transport === "Інше" ? order.transport_custom : order.transport;
   if (transport) msg += `• Доставка: ${e(transport)}\n`;
   if (order.delivery_address) msg += `• Адреса: ${e(order.delivery_address)}\n`;
