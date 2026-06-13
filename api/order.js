@@ -15,24 +15,36 @@ module.exports.config = config;
 // ============================================================
 // PRICE CALCULATOR (production price for internal use)
 // ============================================================
-const PRODUCTION_PRICE_PER_M2 = 2030;
 const COMPLEX_PATTERNS = ["K3", "K4", "K6", "K8", "K9"];
+const MARKUP = 1 / (1 - 0.2593); // ~1.3503 — та сама націнка, що у формі
 
 function calcPriceForMessage(order) {
+  // Єдине джерело правди — числа, пораховані формою. Якщо передані — беремо їх (форма = Telegram = Sheets).
+  if (order.price_total != null) {
+    return {
+      areaM2: order.area_m2 != null ? Number(order.area_m2).toFixed(2) : "—",
+      pricePerM2: order.price_per_m2 != null ? Math.round(Number(order.price_per_m2)) : null,
+      total: Math.round(Number(order.price_total)),                                  // клієнтська ціна
+      perUnit: order.price_per_unit != null ? Math.round(Number(order.price_per_unit)) : null,
+      costTotal: order.cost_total != null ? Math.round(Number(order.cost_total)) : null,
+      profit: order.profit != null ? Math.round(Number(order.profit)) : null,
+    };
+  }
+  // Фолбек для старих замовлень (без переданих чисел): рахуємо клієнтську ціну тією ж формулою.
   const w = Number(order.size_w) || 0;
   const h = Number(order.size_h) || 0;
   const d = Number(order.size_d) || 0;
   const qty = Number(order.quantity) || 1;
   if (!w || !h) return null;
-  const areaMm2 = w * h + 2 * d * h;
-  const areaM2 = areaMm2 / 1_000_000;
-  let pricePerM2 = PRODUCTION_PRICE_PER_M2;
-  if (order.basket_type?.toLowerCase().includes("антивандал")) pricePerM2 *= 1.35;
-  if (order.construction_type?.toLowerCase().includes("розбірний")) pricePerM2 = 2170;
-  if (order.pattern && COMPLEX_PATTERNS.includes(order.pattern)) pricePerM2 *= 1.15;
+  const areaM2 = (w * h + 2 * d * h) / 1_000_000;
+  let costPerM2 = order.construction_type?.toLowerCase().includes("розбірний") ? 2170 : 2030;
+  let pricePerM2 = Math.round(costPerM2 * MARKUP);
+  if (order.basket_type?.toLowerCase().includes("антивандал")) pricePerM2 = Math.round(pricePerM2 * 1.35);
+  if (order.pattern && COMPLEX_PATTERNS.includes(order.pattern)) pricePerM2 = Math.round(pricePerM2 * 1.15);
   const perUnit = Math.round(areaM2 * pricePerM2);
   const total = perUnit * qty;
-  return { areaM2: areaM2.toFixed(2), pricePerM2: Math.round(pricePerM2), total, perUnit };
+  const costTotal = Math.round(total / MARKUP);
+  return { areaM2: areaM2.toFixed(2), pricePerM2, total, perUnit, costTotal, profit: total - costTotal };
 }
 
 // ============================================================
@@ -93,8 +105,10 @@ function formatTelegramMessage(order) {
   msg += `• Кількість: <b>${order.quantity} шт.</b>\n`;
   if (price) {
     msg += `• Площа виробу: <b>${price.areaM2} м²</b>\n`;
-    msg += `• Ціна за 1 м²: <b>${price.pricePerM2.toLocaleString("uk-UA")} ₴</b>\n`;
-    msg += `• Вартість виробнича: <b>${price.total.toLocaleString("uk-UA")} ₴</b>\n`;
+    if (price.pricePerM2) msg += `• Ціна за 1 м²: <b>${price.pricePerM2.toLocaleString("uk-UA")} ₴</b>\n`;
+    msg += `• Вартість для клієнта: <b>${price.total.toLocaleString("uk-UA")} ₴</b>\n`;
+    if (price.costTotal != null) msg += `• Собівартість: <b>${price.costTotal.toLocaleString("uk-UA")} ₴</b>\n`;
+    if (price.profit != null) msg += `• Прибуток: <b>${price.profit.toLocaleString("uk-UA")} ₴</b>\n`;
   }
   const transport = order.transport === "Інше" ? order.transport_custom : order.transport;
   if (transport) msg += `• Доставка: ${e(transport)}\n`;

@@ -150,7 +150,10 @@
       const perUnit = Math.round(areaM2 * pricePerM2 * 100) / 100;
       const total = Math.round(perUnit * qty * 100) / 100;
       const prepayment = Math.round(total * 0.5 * 100) / 100;
-      return { total, prepayment, perUnit, areaM2: Math.round(areaM2 * 1000) / 1000, pricePerM2 };
+      // Внутрішні показники для менеджера (Telegram/Sheets):
+      const costTotal = Math.round(total / MARKUP);   // собівартість (зворотне зняття націнки)
+      const profit = Math.round(total - costTotal);    // прибуток
+      return { total, prepayment, perUnit, areaM2: Math.round(areaM2 * 1000) / 1000, pricePerM2, costTotal, profit };
     }
 
     function fmt(n) {
@@ -1080,6 +1083,17 @@
           size_h: Number(form.size_h) || 0,
           size_d: Number(form.size_d) || 0,
         };
+        // Рахуємо ціну ОДИН раз і передаємо готові числа далі (форма = Telegram = Sheets):
+        const priceCalc = calcPrice(order);
+        if (priceCalc) {
+          order.price_total = priceCalc.total;       // клієнтська ціна (з націнкою) — головна сума скрізь
+          order.price_per_unit = priceCalc.perUnit;
+          order.price_per_m2 = priceCalc.pricePerM2;
+          order.area_m2 = priceCalc.areaM2;
+          order.prepayment = priceCalc.prepayment;
+          order.cost_total = priceCalc.costTotal;     // собівартість (для менеджера)
+          order.profit = priceCalc.profit;            // прибуток (для менеджера)
+        }
         try {
           await submitOrder(order);
           setSubmitted(true);

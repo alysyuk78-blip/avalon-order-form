@@ -18,17 +18,28 @@ function doPost(e) {
 
     const data = JSON.parse(e.postData.contents);
 
-    // Розрахунок ціни
+    // Розрахунок ціни. Єдине джерело правди — числа, пораховані формою (форма = Telegram = Sheets).
     const w = Number(data.size_w) || 0, h = Number(data.size_h) || 0, d = Number(data.size_d) || 0;
     const qty = Number(data.quantity) || 1;
-    let areaM2 = 0, total = 0;
-    if (w && h) {
+    const MARKUP = 1 / (1 - 0.2593); // ~1.3503 — та сама націнка, що у формі
+    let areaM2 = 0, total = 0, costTotal = "", profit = "", prepay = "";
+    if (data.price_total != null) {
+      total = Math.round(Number(data.price_total));                                   // клієнтська ціна
+      areaM2 = data.area_m2 != null ? Number(data.area_m2) : 0;
+      costTotal = data.cost_total != null ? Math.round(Number(data.cost_total)) : "";
+      profit = data.profit != null ? Math.round(Number(data.profit)) : "";
+      prepay = data.prepayment != null ? Math.round(Number(data.prepayment)) : (total ? Math.round(total * 0.5) : "");
+    } else if (w && h) {
+      // Фолбек для старих замовлень: рахуємо клієнтську ціну тією ж формулою.
       areaM2 = (w * h + 2 * d * h) / 1000000;
-      let ppm2 = 2030; // Виробнича ціна
-      if ((data.basket_type||"").toLowerCase().indexOf("антивандал") >= 0) ppm2 *= 1.35;
-      if ((data.construction_type||"").toLowerCase().indexOf("розбірний") >= 0) ppm2 = 2170;
-      if (data.pattern && ["K3","K4","K6","K8","K9"].indexOf(data.pattern) >= 0) ppm2 *= 1.15;
+      let ppm2 = (data.construction_type||"").toLowerCase().indexOf("розбірний") >= 0 ? 2170 : 2030;
+      ppm2 = Math.round(ppm2 * MARKUP);
+      if ((data.basket_type||"").toLowerCase().indexOf("антивандал") >= 0) ppm2 = Math.round(ppm2 * 1.35);
+      if (data.pattern && ["K3","K4","K6","K8","K9"].indexOf(data.pattern) >= 0) ppm2 = Math.round(ppm2 * 1.15);
       total = Math.round(areaM2 * ppm2) * qty;
+      costTotal = Math.round(total / MARKUP);
+      profit = total - costTotal;
+      prepay = total ? Math.round(total * 0.5) : "";
     }
 
     const dateStr = Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm");
@@ -48,7 +59,9 @@ function doPost(e) {
       qty,
       areaM2 ? areaM2.toFixed(2) : "",
       total || "",
-      total ? Math.round(total * 0.5) : "",
+      prepay,
+      costTotal,
+      profit,
       data.transport || (data.transport_custom || ""),
       data.delivery_address || "",
       data.delivery_date || "",
@@ -67,6 +80,7 @@ function doPost(e) {
     sheet.getRange(lastRow, 3).setBackground("#FFF3CD").setFontColor("#856404").setFontWeight("bold").setHorizontalAlignment("center");
     sheet.getRange(lastRow, 16).setFontWeight("bold").setNumberFormat("#,##0 ₴");
     sheet.getRange(lastRow, 17).setNumberFormat("#,##0 ₴");
+    sheet.getRange(lastRow, 18, 1, 2).setNumberFormat("#,##0 ₴"); // Собівартість, Прибуток
     if (lastRow % 2 === 0) rr.setBackground("#F8F6F2");
     if (lastRow <= 5) sheet.autoResizeColumns(1, row.length);
 
@@ -81,7 +95,7 @@ function setupSheet(sheet) {
     "№ Замовлення","Дата/час","Статус","Клієнт","Телефон","Місто",
     "Тип кошика","Конструкція","Колір","Візерунок",
     "W (мм)","H (мм)","D (мм)","Кількість","Площа (м²)",
-    "Вартість","Передоплата 50%",
+    "Вартість","Передоплата 50%","Собівартість","Прибуток",
     "Доставка","Адреса","Дата доставки","Оплата","Як дізнались","Примітки"
   ];
   sheet.appendRow(headers);
