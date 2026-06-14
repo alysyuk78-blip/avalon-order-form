@@ -99,6 +99,7 @@ function formatTelegramMessage(order) {
     basket_type: order.basket_type, construction_type: order.construction_type,
     color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
     size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
+    block_w: order.block_w, block_h: order.block_h, block_d: order.block_d,
     ac_brand: order.ac_brand, ac_model: order.ac_model,
     price_total: order.price_total, area_m2: order.area_m2,
   }];
@@ -112,8 +113,9 @@ function formatTelegramMessage(order) {
     if (it.color) msg += `• Колір: <b>${e(it.color)}${it.color_custom ? " (" + e(it.color_custom) + ")" : ""}</b>\n`;
     if (it.pattern) msg += `• Візерунок: <b>${e(it.pattern)}${it.pattern_custom ? " (" + e(it.pattern_custom) + ")" : ""}</b>\n`;
     if (it.ac_brand || it.ac_model) msg += `• Кондиціонер: <b>${e([it.ac_brand, it.ac_model].filter(Boolean).join(" "))}</b>\n`;
-    if (Number(it.size_w) > 0) msg += `• Розмір кошика (В×Ш×Г): <b>${it.size_h}×${it.size_w}×${it.size_d}</b> мм\n`;
-    else msg += `• Розмір: <i>розрахує менеджер</i>\n`;
+    if (Number(it.block_w) > 0) msg += `• Габарити блоку (В×Ш×Г): <b>${it.block_h}×${it.block_w}×${it.block_d}</b> мм\n`;
+    if (Number(it.size_w) > 0) msg += `• Розмір кошика (В×Ш×Г)${Number(it.block_w) > 0 ? " — авторозрахунок" : ""}: <b>${it.size_h}×${it.size_w}×${it.size_d}</b> мм\n`;
+    else msg += `• Розмір кошика: <i>розрахує менеджер</i>\n`;
     msg += `• Кількість: <b>${it.quantity} шт.</b>\n`;
     if (Number(it.price_total) > 0) msg += `• Орієнт. вартість: <b>${num(it.price_total)} ₴</b>\n`;
   });
@@ -129,6 +131,30 @@ function formatTelegramMessage(order) {
   msg += `• Оплата: <i>${e(order.payment_method)}</i>\n`;
   if (order.how_found) msg += `• Як дізнались: ${e(order.how_found)}${order.how_found === "Інше" ? " (" + e(order.how_found_custom) + ")" : ""}\n`;
   if (order.notes) msg += `• Дод. інформація: <b>${e(order.notes)}</b>\n`;
+  return msg;
+}
+
+// ============================================================
+// PRODUCTION MESSAGE (чисте, для пересилання підряднику)
+// ============================================================
+function formatProductionMessage(order) {
+  const e = (v) => escHtml(v);
+  const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
+    basket_type: order.basket_type, construction_type: order.construction_type,
+    color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
+    size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
+    ac_brand: order.ac_brand, ac_model: order.ac_model,
+  }];
+  let msg = `🏭 <b>ДЛЯ ВИРОБНИЦТВА</b> · ${e(order.order_number)}\n`;
+  items.forEach((it, i) => {
+    const constr = (it.construction_type || "").split("(")[0].trim() || it.construction_type || "";
+    const color = (it.color === "Інші кольори" || it.color === "Інший") ? (it.color_custom || it.color) : it.color;
+    const pattern = it.pattern === "Інший" ? (it.pattern_custom || it.pattern) : it.pattern;
+    const size = Number(it.size_w) > 0
+      ? `${it.size_w}×${it.size_h}×${it.size_d} мм (Ш×В×Г)`
+      : `⚠️ розмір визначити${(it.ac_brand || it.ac_model) ? " — " + e([it.ac_brand, it.ac_model].filter(Boolean).join(" ")) : ""}`;
+    msg += `\n${i + 1}. <b>${size}</b>\n   ${e(constr)}, ${e(color)}, візерунок ${e(pattern)}, <b>${it.quantity} шт.</b>\n`;
+  });
   return msg;
 }
 
@@ -251,6 +277,17 @@ module.exports = async function handler(req, res) {
       } catch (err) {
         console.error("Telegram error:", err);
         results.push("tg:err");
+      }
+      // Окреме «виробниче» повідомлення — чисте, щоб менеджер переслав підряднику
+      try {
+        const prodText = formatProductionMessage(orderWithNumber);
+        await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: TG_CHAT_ID, text: prodText, parse_mode: "HTML" }),
+        });
+      } catch (err) {
+        console.error("Telegram production msg error:", err);
       }
     }
 

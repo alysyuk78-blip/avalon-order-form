@@ -182,6 +182,15 @@
       return n.toLocaleString("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
+    // Складання адреси з вулиці / будинку / під'їзду
+    function composeAddr(street, house, entrance) {
+      const parts = [];
+      if (street && street.trim()) parts.push("вул. " + street.trim());
+      if (house && house.trim()) parts.push("буд. " + house.trim());
+      if (entrance && entrance.trim()) parts.push("під'їзд " + entrance.trim());
+      return parts.join(", ");
+    }
+
     // ============================================================
     // WORKING DAYS / DELIVERY DATE
     // ============================================================
@@ -1007,8 +1016,8 @@
         first_name: "", last_name: "", phone: "", city: "",
         construction_type: "", basket_type: "", quantity: "",
         color: "", color_custom: "", pattern: "", pattern_custom: "",
-        size_w: "", size_h: "", size_d: "", ac_brand: "", ac_model: "",
-        transport: "", transport_custom: "", delivery_address: "", delivery_location: "",
+        size_w: "", size_h: "", size_d: "", ac_brand: "", ac_model: "", block_w: "", block_h: "", block_d: "",
+        transport: "", transport_custom: "", delivery_address: "", del_street: "", del_house: "", del_entrance: "", delivery_location: "",
         delivery_date: "", payment_method: "",
         terms_accepted: false, how_found: "", how_found_custom: "", notes: ""
       };
@@ -1045,11 +1054,16 @@
         fetch("/models.json").then(r => r.json()).then(d => setAcModels(d.models || [])).catch(() => {});
       }, []);
 
-      // Автоматичний перерахунок розміру кошика в режимі "ac" (габарити блоку)
+      // Автоматичний перерахунок розміру кошика в режимі "ac" (габарити блоку).
+      // Зберігаємо й самі габарити блоку (block_*) — для звірки в Telegram.
       useEffect(() => {
-        if (sizeMode !== "ac") return;
+        if (sizeMode !== "ac") {
+          setForm(f => ({ ...f, block_w: "", block_h: "", block_d: "" }));
+          return;
+        }
         const res = basketFromAC({ ac_w: acDims.w, ac_h: acDims.h, ac_d: acDims.d, premium, coversBrackets });
-        if (res) setForm(f => ({ ...f, size_w: res.size_w, size_h: res.size_h, size_d: res.size_d }));
+        setForm(f => ({ ...f, block_w: acDims.w, block_h: acDims.h, block_d: acDims.d,
+          ...(res ? { size_w: res.size_w, size_h: res.size_h, size_d: res.size_d } : {}) }));
       }, [sizeMode, acDims, premium, coversBrackets, selModel, acModels]);
 
       // Autosave on form change (debounced)
@@ -1104,6 +1118,7 @@
           construction_type: s.construction_type, basket_type: s.basket_type,
           color: s.color, color_custom: s.color_custom, pattern: s.pattern, pattern_custom: s.pattern_custom,
           size_w: Number(s.size_w) || 0, size_h: Number(s.size_h) || 0, size_d: Number(s.size_d) || 0,
+          block_w: Number(s.block_w) || 0, block_h: Number(s.block_h) || 0, block_d: Number(s.block_d) || 0,
           ac_brand: (s.ac_brand || "").trim(), ac_model: (s.ac_model || "").trim(),
           quantity: Number(s.quantity) || 1,
           price_total: p.total || 0, price_per_unit: p.perUnit || 0, price_per_m2: p.pricePerM2 || 0,
@@ -1113,7 +1128,7 @@
       const resetBasketFields = () => {
         setForm(f => ({ ...f, construction_type: "", basket_type: "", quantity: "",
           color: "", color_custom: "", pattern: "", pattern_custom: "", size_w: "", size_h: "", size_d: "",
-          ac_brand: "", ac_model: "" }));
+          ac_brand: "", ac_model: "", block_w: "", block_h: "", block_d: "" }));
         setSizeMode("basket"); setAcDims({ w: "", h: "", d: "" });
         setPremium(false); setCoversBrackets(false); setSelBrand(""); setSelModel(""); setPatternFile(null);
       };
@@ -1176,6 +1191,7 @@
           construction_type: f0.construction_type, basket_type: f0.basket_type,
           color: f0.color, color_custom: f0.color_custom, pattern: f0.pattern, pattern_custom: f0.pattern_custom,
           ac_brand: f0.ac_brand, ac_model: f0.ac_model,
+          block_w: f0.block_w, block_h: f0.block_h, block_d: f0.block_d,
         };
         try {
           await submitOrder(order);
@@ -1203,8 +1219,8 @@
           first_name: "", last_name: "", phone: "", city: "",
           construction_type: "", basket_type: "", quantity: "",
           color: "", color_custom: "", pattern: "", pattern_custom: "",
-          size_w: "", size_h: "", size_d: "", ac_brand: "", ac_model: "",
-          transport: "", transport_custom: "", delivery_address: "", delivery_location: "",
+          size_w: "", size_h: "", size_d: "", ac_brand: "", ac_model: "", block_w: "", block_h: "", block_d: "",
+          transport: "", transport_custom: "", delivery_address: "", del_street: "", del_house: "", del_entrance: "", delivery_location: "",
           delivery_date: "", payment_method: "",
           terms_accepted: false, how_found: "", how_found_custom: "", notes: ""
         });
@@ -1563,9 +1579,22 @@
                       </StyledSelect>
                     </Field>
                     {form.transport?.includes("Адресна") && (
-                      <Field label="Адреса доставки">
-                        <StyledInput placeholder="Вкажіть адресу в м. Хмельницький" value={form.delivery_address} onChange={e => set("delivery_address", e.target.value)} />
-                      </Field>
+                      <div className="space-y-3">
+                        <Field label="Вулиця *">
+                          <StyledInput placeholder="Напр.: Шевченка" value={form.del_street}
+                            onChange={e => { const v = e.target.value; setForm(f => ({ ...f, del_street: v, delivery_address: composeAddr(v, f.del_house, f.del_entrance) })); }} />
+                        </Field>
+                        <div className="grid grid-cols-2 gap-3">
+                          <Field label="Будинок №">
+                            <StyledInput placeholder="Напр.: 39" value={form.del_house}
+                              onChange={e => { const v = e.target.value; setForm(f => ({ ...f, del_house: v, delivery_address: composeAddr(f.del_street, v, f.del_entrance) })); }} />
+                          </Field>
+                          <Field label="Під'їзд">
+                            <StyledInput placeholder="Напр.: 2" value={form.del_entrance}
+                              onChange={e => { const v = e.target.value; setForm(f => ({ ...f, del_entrance: v, delivery_address: composeAddr(f.del_street, f.del_house, v) })); }} />
+                          </Field>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}
