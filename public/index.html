@@ -1096,6 +1096,9 @@
           case "ac_model": return sizeMode === "model" && !(form.ac_model || "").trim();
           case "delivery_location": return !form.delivery_location;
           case "transport": return !form.transport;
+          case "delivery_date": return !form.delivery_date;
+          case "del_street": return (form.transport || "").includes("Адресна") && !(form.del_street || "").trim();
+          case "del_house": return (form.transport || "").includes("Адресна") && !(form.del_house || "").trim();
           case "payment_method": return !form.payment_method;
           case "how_found": return !form.how_found;
           case "terms_accepted": return !form.terms_accepted;
@@ -1149,22 +1152,24 @@
       const removeBasket = (i) => setItems(prev => prev.filter((_, idx) => idx !== i));
 
       // Усі позиції = додані + поточний (якщо повністю заповнений)
-      const allItems = [...items, ...(basketComplete(form) ? [buildItem(form)] : [])];
-      const grandTotal = allItems.reduce((s, it) => s + (it.price_total || 0), 0);
+      // Кошики додаються ЛИШЕ кнопкою «Додати кошик» — список items = всі позиції замовлення.
+      const grandTotal = items.reduce((s, it) => s + (it.price_total || 0), 0);
 
+      // Для адресної доставки обов'язкові вулиця і будинок (під'їзд — за бажанням).
+      const addressOk = !(form.transport || "").includes("Адресна") || ((form.del_street || "").trim() && (form.del_house || "").trim());
       const commonValid =
         form.first_name.trim() && isValidPhoneUA(form.phone) &&
-        form.delivery_location && form.transport && form.payment_method &&
+        form.delivery_location && form.transport && addressOk && form.delivery_date && form.payment_method &&
         form.how_found && form.terms_accepted;
-      const isFormValid = commonValid && allItems.length >= 1 && (!basketTouched || basketComplete(form));
+      const isFormValid = commonValid && items.length >= 1 && !basketTouched;
 
       const handleSubmit = async (e) => {
         e.preventDefault();
         if (!isFormValid) {
           setShowErrors(true);
           let msg = "Заповніть всі обов'язкові поля, позначені *";
-          if (commonValid && allItems.length === 0) msg = "Додайте хоча б один кошик";
-          else if (basketTouched && !basketComplete(form)) msg = "Завершіть поточний кошик (або очистіть його поля) перед відправкою";
+          if (commonValid && basketTouched) msg = "Натисніть «Додати кошик», щоб додати поточний кошик до замовлення";
+          else if (commonValid && items.length === 0) msg = "Додайте кошик: заповніть параметри і натисніть «Додати кошик»";
           setToast({ message: msg, type: "error" });
           const el = document.querySelector(".field-error");
           if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1172,7 +1177,7 @@
         }
         setShowErrors(false);
         setSubmitting(true);
-        const orderItems = allItems;
+        const orderItems = items;
         const grand = orderItems.reduce((s, it) => s + (it.price_total || 0), 0);
         const costSum = orderItems.reduce((s, it) => s + (it.cost_total || 0), 0);
         const profitSum = orderItems.reduce((s, it) => s + (it.profit || 0), 0);
@@ -1493,7 +1498,7 @@
                     </label>
                     <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "#1B4332" }}>
                       <input type="checkbox" checked={coversBrackets} onChange={e => setCoversBrackets(e.target.checked)} />
-                      Кошик закриває кронштейни (+120 мм до висоти)
+                      Кошик закриває монтажні кронштейни (+120 мм до висоти)
                     </label>
                     <div className="rounded-xl p-3 text-center" style={{ backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0" }}>
                       <div className="text-xs" style={{ color: "#166534" }}>Розрахований розмір кошика (Ш×В×Г):</div>
@@ -1525,7 +1530,7 @@
                 <button type="button" onClick={addBasket}
                   className="w-full py-3 rounded-xl text-sm font-bold transition-colors"
                   style={{ backgroundColor: "#fff", color: "#1B4332", border: "2px dashed #1B4332" }}>
-                  + Додати ще кошик до замовлення
+                  + Додати кошик до замовлення
                 </button>
                 {items.length > 0 && (
                   <FormCard title={`Кошики в замовленні (${items.length})`}>
@@ -1544,7 +1549,7 @@
                         </div>
                       ))}
                     </div>
-                    <p className="text-xs mt-3" style={{ color: "#6B7280" }}>Поточний кошик додасться автоматично при відправці, якщо повністю заповнений. Вартість розрахує менеджер.</p>
+                    <p className="text-xs mt-3" style={{ color: "#6B7280" }}>Щоб додати ще один кошик іншого розміру — заповніть форму вище й знову натисніть «Додати кошик». Вартість розрахує менеджер.</p>
                   </FormCard>
                 )}
               </div>
@@ -1581,12 +1586,12 @@
                     {form.transport?.includes("Адресна") && (
                       <div className="space-y-3">
                         <Field label="Вулиця *">
-                          <StyledInput placeholder="Напр.: Шевченка" value={form.del_street}
+                          <StyledInput placeholder="Напр.: Шевченка" value={form.del_street} error={fieldError("del_street")}
                             onChange={e => { const v = e.target.value; setForm(f => ({ ...f, del_street: v, delivery_address: composeAddr(v, f.del_house, f.del_entrance) })); }} />
                         </Field>
                         <div className="grid grid-cols-2 gap-3">
-                          <Field label="Будинок №">
-                            <StyledInput placeholder="Напр.: 39" value={form.del_house}
+                          <Field label="Будинок № *">
+                            <StyledInput placeholder="Напр.: 39" value={form.del_house} error={fieldError("del_house")}
                               onChange={e => { const v = e.target.value; setForm(f => ({ ...f, del_house: v, delivery_address: composeAddr(f.del_street, v, f.del_entrance) })); }} />
                           </Field>
                           <Field label="Під'їзд">
@@ -1656,14 +1661,15 @@
                     )}
                   </div>
                 )}
-                <Field label="Бажана дата доставки">
+                <Field label="Бажана дата доставки *">
                   <p className="text-xs mb-1" style={{ color: "#9CA3AF" }}>5 робочих днів з моменту оплати. При оплаті до 13:00 — відлік з дня оплати.</p>
                   <button type="button" onClick={() => setShowCalendar(true)}
                     className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-sm text-left"
-                    style={{ borderColor: "#d1d5db", backgroundColor: "#fff", color: form.delivery_date ? "#111" : "#9CA3AF" }}>
+                    style={{ borderColor: fieldError("delivery_date") ? "#ef4444" : "#d1d5db", backgroundColor: "#fff", color: form.delivery_date ? "#111" : "#9CA3AF" }}>
                     <span style={{ color: "#1B4332", flexShrink: 0 }}><IconCalendar /></span>
                     {form.delivery_date ? formatDate(form.delivery_date) : "Оберіть дату"}
                   </button>
+                  {fieldError("delivery_date") && <div style={{ marginTop: 4, fontSize: 11, color: "#ef4444", fontWeight: 600 }}>Оберіть дату доставки</div>}
                 </Field>
               </FormCard>
 
