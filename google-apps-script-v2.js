@@ -24,6 +24,7 @@ function doPost(e) {
       basket_type: data.basket_type, construction_type: data.construction_type,
       color: data.color, color_custom: data.color_custom, pattern: data.pattern, pattern_custom: data.pattern_custom,
       size_w: data.size_w, size_h: data.size_h, size_d: data.size_d, quantity: data.quantity,
+      ac_brand: data.ac_brand, ac_model: data.ac_model,
       price_total: data.price_total, area_m2: data.area_m2, cost_total: data.cost_total, profit: data.profit, prepayment: data.prepayment
     }];
     const dateStr = Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm");
@@ -61,7 +62,8 @@ function doPost(e) {
         data.transport || (data.transport_custom || ""),
         data.delivery_address || "", data.delivery_date || "",
         data.payment_method || "", data.how_found || (data.how_found_custom || ""),
-        data.notes || ""
+        data.notes || "",
+        it.ac_brand || "", it.ac_model || ""
       ];
       sheet.appendRow(row);
       lastRow = sheet.getLastRow();
@@ -88,7 +90,8 @@ function setupSheet(sheet) {
     "Тип кошика","Конструкція","Колір","Візерунок",
     "W (мм)","H (мм)","D (мм)","Кількість","Площа (м²)",
     "Вартість","Передоплата 50%","Собівартість","Прибуток",
-    "Доставка","Адреса","Дата доставки","Оплата","Як дізнались","Примітки"
+    "Доставка","Адреса","Дата доставки","Оплата","Як дізнались","Примітки",
+    "Бренд кондиц.","Модель кондиц."
   ];
   sheet.appendRow(headers);
 

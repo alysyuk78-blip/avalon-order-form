@@ -1007,7 +1007,7 @@
         first_name: "", last_name: "", phone: "", city: "",
         construction_type: "", basket_type: "", quantity: "",
         color: "", color_custom: "", pattern: "", pattern_custom: "",
-        size_w: "", size_h: "", size_d: "",
+        size_w: "", size_h: "", size_d: "", ac_brand: "", ac_model: "",
         transport: "", transport_custom: "", delivery_address: "", delivery_location: "",
         delivery_date: "", payment_method: "",
         terms_accepted: false, how_found: "", how_found_custom: "", notes: ""
@@ -1045,16 +1045,10 @@
         fetch("/models.json").then(r => r.json()).then(d => setAcModels(d.models || [])).catch(() => {});
       }, []);
 
-      // Автоматичний перерахунок розміру кошика в режимах "ac" і "model"
+      // Автоматичний перерахунок розміру кошика в режимі "ac" (габарити блоку)
       useEffect(() => {
-        if (sizeMode === "basket") return;
-        let dims = null;
-        if (sizeMode === "ac") dims = { ac_w: acDims.w, ac_h: acDims.h, ac_d: acDims.d };
-        else if (sizeMode === "model" && selModel) {
-          const m = acModels.find(x => x.model === selModel);
-          if (m) dims = { ac_w: m.w, ac_h: m.h, ac_d: m.d };
-        }
-        const res = dims && basketFromAC({ ...dims, premium, coversBrackets });
+        if (sizeMode !== "ac") return;
+        const res = basketFromAC({ ac_w: acDims.w, ac_h: acDims.h, ac_d: acDims.d, premium, coversBrackets });
         if (res) setForm(f => ({ ...f, size_w: res.size_w, size_h: res.size_h, size_d: res.size_d }));
       }, [sizeMode, acDims, premium, coversBrackets, selModel, acModels]);
 
@@ -1081,9 +1075,11 @@
           case "quantity": return !(Number(form.quantity) >= 1);
           case "color": return !form.color;
           case "pattern": return !form.pattern;
-          case "size_w": return !(Number(form.size_w) > 0);
-          case "size_h": return !(Number(form.size_h) > 0);
-          case "size_d": return !(Number(form.size_d) > 0);
+          case "size_w": return sizeMode !== "model" && !(Number(form.size_w) > 0);
+          case "size_h": return sizeMode !== "model" && !(Number(form.size_h) > 0);
+          case "size_d": return sizeMode !== "model" && !(Number(form.size_d) > 0);
+          case "ac_brand": return sizeMode === "model" && !(form.ac_brand || "").trim();
+          case "ac_model": return sizeMode === "model" && !(form.ac_model || "").trim();
           case "delivery_location": return !form.delivery_location;
           case "transport": return !form.transport;
           case "payment_method": return !form.payment_method;
@@ -1094,17 +1090,21 @@
       };
 
       // ── Мультипозиційність: поточний кошик + список доданих ──
+      // Розмір можна задати РОЗМІРОМ КОШИКА, ГАБАРИТАМИ БЛОКУ або БРЕНД+МОДЕЛЬ.
+      const hasSize = (s) => Number(s.size_w) > 0 && Number(s.size_h) > 0 && Number(s.size_d) > 0;
+      const hasBrandModel = (s) => !!((s.ac_brand || "").trim() && (s.ac_model || "").trim());
       const basketComplete = (s) =>
-        !!(s.construction_type && s.basket_type && s.color && s.pattern &&
-           Number(s.size_w) > 0 && Number(s.size_h) > 0 && Number(s.size_d) > 0 && Number(s.quantity) >= 1);
+        !!(s.construction_type && s.basket_type && s.color && s.pattern && Number(s.quantity) >= 1 &&
+           (hasSize(s) || hasBrandModel(s)));
       const basketTouched = !!(form.construction_type || form.basket_type || form.color || form.pattern ||
-           form.size_w || form.size_h || form.size_d || (form.quantity && Number(form.quantity) > 0));
+           form.size_w || form.size_h || form.size_d || form.ac_brand || form.ac_model || (form.quantity && Number(form.quantity) > 0));
       const buildItem = (s) => {
-        const p = calcPrice(s) || {};
+        const p = hasSize(s) ? (calcPrice(s) || {}) : {};
         return {
           construction_type: s.construction_type, basket_type: s.basket_type,
           color: s.color, color_custom: s.color_custom, pattern: s.pattern, pattern_custom: s.pattern_custom,
           size_w: Number(s.size_w) || 0, size_h: Number(s.size_h) || 0, size_d: Number(s.size_d) || 0,
+          ac_brand: (s.ac_brand || "").trim(), ac_model: (s.ac_model || "").trim(),
           quantity: Number(s.quantity) || 1,
           price_total: p.total || 0, price_per_unit: p.perUnit || 0, price_per_m2: p.pricePerM2 || 0,
           area_m2: p.areaM2 || 0, cost_total: p.costTotal || 0, profit: p.profit || 0,
@@ -1112,7 +1112,8 @@
       };
       const resetBasketFields = () => {
         setForm(f => ({ ...f, construction_type: "", basket_type: "", quantity: "",
-          color: "", color_custom: "", pattern: "", pattern_custom: "", size_w: "", size_h: "", size_d: "" }));
+          color: "", color_custom: "", pattern: "", pattern_custom: "", size_w: "", size_h: "", size_d: "",
+          ac_brand: "", ac_model: "" }));
         setSizeMode("basket"); setAcDims({ w: "", h: "", d: "" });
         setPremium(false); setCoversBrackets(false); setSelBrand(""); setSelModel(""); setPatternFile(null);
       };
@@ -1174,6 +1175,7 @@
           size_w: f0.size_w, size_h: f0.size_h, size_d: f0.size_d, quantity: f0.quantity,
           construction_type: f0.construction_type, basket_type: f0.basket_type,
           color: f0.color, color_custom: f0.color_custom, pattern: f0.pattern, pattern_custom: f0.pattern_custom,
+          ac_brand: f0.ac_brand, ac_model: f0.ac_model,
         };
         try {
           await submitOrder(order);
@@ -1201,7 +1203,7 @@
           first_name: "", last_name: "", phone: "", city: "",
           construction_type: "", basket_type: "", quantity: "",
           color: "", color_custom: "", pattern: "", pattern_custom: "",
-          size_w: "", size_h: "", size_d: "",
+          size_w: "", size_h: "", size_d: "", ac_brand: "", ac_model: "",
           transport: "", transport_custom: "", delivery_address: "", delivery_location: "",
           delivery_date: "", payment_method: "",
           terms_accepted: false, how_found: "", how_found_custom: "", notes: ""
@@ -1459,7 +1461,7 @@
                 {/* Режим Б — габарити кондиціонера */}
                 {sizeMode === "ac" && (
                   <div className="space-y-3">
-                    <p className="text-sm italic" style={{ color: "#6B7280" }}>Вкажіть габарити ЗОВНІШНЬОГО блоку — розмір кошика порахується автоматично</p>
+                    <p className="text-sm italic" style={{ color: "#6B7280" }}>Вкажіть габарити ЗОВНІШНЬОГО блоку — розмір кошика порахується автоматично. Ширину міряйте з урахуванням виступу патрубків (місце під'єднання труб), або візьміть розміри з інструкції до кондиціонера.</p>
                     <div className="grid grid-cols-3 gap-3">
                       {[["w", "Ширина блоку"], ["h", "Висота блоку"], ["d", "Глибина блоку"]].map(([k, label]) => (
                         <div key={k} className="flex flex-col gap-1">
@@ -1489,31 +1491,15 @@
                 {/* Режим В — бренд + модель */}
                 {sizeMode === "model" && (
                   <div className="space-y-3">
-                    <p className="text-sm italic" style={{ color: "#6B7280" }}>Оберіть бренд і модель — габарити й розмір кошика підставляться автоматично</p>
-                    <Field label="Бренд">
-                      <StyledSelect value={selBrand} onChange={v => { setSelBrand(v); setSelModel(""); }} placeholder="Оберіть бренд">
-                        {[...new Set(acModels.map(m => m.brand))].map(b => <option key={b} value={b}>{b}</option>)}
-                      </StyledSelect>
+                    <p className="text-sm italic" style={{ color: "#6B7280" }}>Вкажіть бренд і модель кондиціонера — менеджер підбере точний розмір кошика</p>
+                    <Field label="Бренд кондиціонера *">
+                      <StyledInput placeholder="Напр.: Cooper&Hunter, Daikin, Gree" value={form.ac_brand}
+                        onChange={e => set("ac_brand", e.target.value)} error={fieldError("ac_brand")} />
                     </Field>
-                    {selBrand && (
-                      <Field label="Модель">
-                        <StyledSelect value={selModel} onChange={v => setSelModel(v)} placeholder="Оберіть модель">
-                          {acModels.filter(m => m.brand === selBrand).map(m => <option key={m.model} value={m.model}>{m.series} — {m.model} ({m.btu} BTU)</option>)}
-                        </StyledSelect>
-                      </Field>
-                    )}
-                    <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "#1B4332" }}>
-                      <input type="checkbox" checked={premium} onChange={e => setPremium(e.target.checked)} />
-                      Преміум-монтаж (зазор до стіни 100 мм)
-                    </label>
-                    {selModel && (
-                      <div className="rounded-xl p-3 text-center" style={{ backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0" }}>
-                        <div className="text-xs" style={{ color: "#166534" }}>Розрахований розмір кошика (Ш×В×Г):</div>
-                        <div className="text-lg font-bold" style={{ color: "#1B4332" }}>
-                          {form.size_w && form.size_h && form.size_d ? `${form.size_w} × ${form.size_h} × ${form.size_d} мм` : "—"}
-                        </div>
-                      </div>
-                    )}
+                    <Field label="Модель *">
+                      <StyledInput placeholder="Напр.: CH-S12FTXAM2S-SC" value={form.ac_model}
+                        onChange={e => set("ac_model", e.target.value)} error={fieldError("ac_model")} />
+                    </Field>
                   </div>
                 )}
               </FormCard>
@@ -1531,11 +1517,10 @@
                       {items.map((it, i) => (
                         <div key={i} className="flex items-center justify-between gap-2 p-3 rounded-lg" style={{ backgroundColor: "#f5f0e8", border: "1px solid #e2e0dc" }}>
                           <div className="text-sm" style={{ color: "#1B4332" }}>
-                            <div className="font-semibold">{i + 1}. {it.size_w}×{it.size_h}×{it.size_d} мм × {it.quantity} шт.</div>
+                            <div className="font-semibold">{i + 1}. {it.size_w > 0 ? `${it.size_w}×${it.size_h}×${it.size_d} мм` : [it.ac_brand, it.ac_model].filter(Boolean).join(" ")} × {it.quantity} шт.</div>
                             <div className="text-xs" style={{ color: "#6B7280" }}>
                               {[it.construction_type, it.basket_type, it.color, it.pattern].filter(Boolean).join(", ")}
                             </div>
-                            <div className="text-xs font-semibold mt-0.5" style={{ color: "#1B4332" }}>{fmt(it.price_total)} ₴</div>
                           </div>
                           <button type="button" onClick={() => removeBasket(i)} aria-label="Видалити"
                             className="flex-shrink-0 flex items-center justify-center"
@@ -1543,11 +1528,7 @@
                         </div>
                       ))}
                     </div>
-                    <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop: "2px solid #e2e0dc" }}>
-                      <span className="font-bold" style={{ color: "#1B4332" }}>Разом за замовлення:</span>
-                      <span className="font-bold text-lg" style={{ color: "#1B4332" }}>{fmt(grandTotal)} ₴</span>
-                    </div>
-                    <p className="text-xs mt-2" style={{ color: "#6B7280" }}>Поточний кошик додасться автоматично при відправці, якщо повністю заповнений.</p>
+                    <p className="text-xs mt-3" style={{ color: "#6B7280" }}>Поточний кошик додасться автоматично при відправці, якщо повністю заповнений. Вартість розрахує менеджер.</p>
                   </FormCard>
                 )}
               </div>
@@ -1709,9 +1690,6 @@
                   className="rounded-lg border text-sm resize-none focus:outline-none w-full p-3"
                   style={{ borderColor: "#d1d5db" }} />
               </FormCard>
-
-              {/* Price Calculator */}
-              <PriceCalculator form={form} />
 
               {/* Submit */}
               <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">

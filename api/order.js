@@ -99,6 +99,7 @@ function formatTelegramMessage(order) {
     basket_type: order.basket_type, construction_type: order.construction_type,
     color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
     size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
+    ac_brand: order.ac_brand, ac_model: order.ac_model,
     price_total: order.price_total, area_m2: order.area_m2,
   }];
   const multi = items.length > 1;
@@ -110,13 +111,17 @@ function formatTelegramMessage(order) {
     msg += `• Вид конструкції: <b>${e(it.construction_type)}</b>\n`;
     if (it.color) msg += `• Колір: <b>${e(it.color)}${it.color_custom ? " (" + e(it.color_custom) + ")" : ""}</b>\n`;
     if (it.pattern) msg += `• Візерунок: <b>${e(it.pattern)}${it.pattern_custom ? " (" + e(it.pattern_custom) + ")" : ""}</b>\n`;
-    msg += `• Розмір (В×Ш×Г): <b>${it.size_h}×${it.size_w}×${it.size_d}</b> мм\n`;
+    if (it.ac_brand || it.ac_model) msg += `• Кондиціонер: <b>${e([it.ac_brand, it.ac_model].filter(Boolean).join(" "))}</b>\n`;
+    if (Number(it.size_w) > 0) msg += `• Розмір кошика (В×Ш×Г): <b>${it.size_h}×${it.size_w}×${it.size_d}</b> мм\n`;
+    else msg += `• Розмір: <i>розрахує менеджер</i>\n`;
     msg += `• Кількість: <b>${it.quantity} шт.</b>\n`;
-    if (it.price_total != null) msg += `• Вартість: <b>${num(it.price_total)} ₴</b>\n`;
+    if (Number(it.price_total) > 0) msg += `• Орієнт. вартість: <b>${num(it.price_total)} ₴</b>\n`;
   });
   const grand = order.price_total != null ? Number(order.price_total) : (price ? price.total : 0);
-  msg += `\n💰 <b>Разом за замовлення: ${num(grand)} ₴</b>\n`;
-  if (order.cost_total != null) msg += `<i>Собівартість: ${num(order.cost_total)} ₴ • Прибуток: ${num(order.profit)} ₴</i>\n`;
+  if (grand > 0) {
+    msg += `\n💰 <b>Орієнт. разом: ${num(grand)} ₴</b>\n`;
+    if (order.cost_total != null) msg += `<i>Собівартість: ${num(order.cost_total)} ₴ • Прибуток: ${num(order.profit)} ₴</i>\n`;
+  }
   const transport = order.transport === "Інше" ? order.transport_custom : order.transport;
   if (transport) msg += `• Доставка: ${e(transport)}\n`;
   if (order.delivery_address) msg += `• Адреса: ${e(order.delivery_address)}\n`;
