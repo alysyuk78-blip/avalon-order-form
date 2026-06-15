@@ -15,24 +15,36 @@ module.exports.config = config;
 // ============================================================
 // PRICE CALCULATOR (production price for internal use)
 // ============================================================
-const PRODUCTION_PRICE_PER_M2 = 2030;
 const COMPLEX_PATTERNS = ["K3", "K4", "K6", "K8", "K9"];
+const MARKUP = 1 / (1 - 0.2593); // ~1.3503 — та сама націнка, що у формі
 
 function calcPriceForMessage(order) {
+  // Єдине джерело правди — числа, пораховані формою. Якщо передані — беремо їх (форма = Telegram = Sheets).
+  if (order.price_total != null) {
+    return {
+      areaM2: order.area_m2 != null ? Number(order.area_m2).toFixed(2) : "—",
+      pricePerM2: order.price_per_m2 != null ? Math.round(Number(order.price_per_m2)) : null,
+      total: Math.round(Number(order.price_total)),                                  // клієнтська ціна
+      perUnit: order.price_per_unit != null ? Math.round(Number(order.price_per_unit)) : null,
+      costTotal: order.cost_total != null ? Math.round(Number(order.cost_total)) : null,
+      profit: order.profit != null ? Math.round(Number(order.profit)) : null,
+    };
+  }
+  // Фолбек для старих замовлень (без переданих чисел): рахуємо клієнтську ціну тією ж формулою.
   const w = Number(order.size_w) || 0;
   const h = Number(order.size_h) || 0;
   const d = Number(order.size_d) || 0;
   const qty = Number(order.quantity) || 1;
   if (!w || !h) return null;
-  const areaMm2 = w * h + 2 * d * h;
-  const areaM2 = areaMm2 / 1_000_000;
-  let pricePerM2 = PRODUCTION_PRICE_PER_M2;
-  if (order.basket_type?.toLowerCase().includes("антивандал")) pricePerM2 *= 1.35;
-  if (order.construction_type?.toLowerCase().includes("розбірний")) pricePerM2 = 2170;
-  if (order.pattern && COMPLEX_PATTERNS.includes(order.pattern)) pricePerM2 *= 1.15;
+  const areaM2 = (w * h + 2 * d * h) / 1_000_000;
+  let costPerM2 = order.construction_type?.toLowerCase().includes("розбірний") ? 2170 : 2030;
+  let pricePerM2 = Math.round(costPerM2 * MARKUP);
+  if (order.basket_type?.toLowerCase().includes("антивандал")) pricePerM2 = Math.round(pricePerM2 * 1.35);
+  if (order.pattern && COMPLEX_PATTERNS.includes(order.pattern)) pricePerM2 = Math.round(pricePerM2 * 1.15);
   const perUnit = Math.round(areaM2 * pricePerM2);
   const total = perUnit * qty;
-  return { areaM2: areaM2.toFixed(2), pricePerM2: Math.round(pricePerM2), total, perUnit };
+  const costTotal = Math.round(total / MARKUP);
+  return { areaM2: areaM2.toFixed(2), pricePerM2, total, perUnit, costTotal, profit: total - costTotal };
 }
 
 // ============================================================
@@ -48,24 +60,29 @@ function formatDeliveryDate(dateStr) {
   return d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+// Дата/час у поясі Europe/Kyiv (сервер Vercel працює в UTC — не покладаємось на локаль).
+function kyivParts(date) {
+  const fmt = new Intl.DateTimeFormat("uk-UA", {
+    timeZone: "Europe/Kyiv",
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  });
+  const p = {};
+  for (const part of fmt.formatToParts(date)) p[part.type] = part.value;
+  return p; // { day, month, year, hour, minute }
+}
+
+// Формат ДД.ММ.РРРР ГГ:ХХ, київський час.
 function formatNow() {
-  const now = new Date();
-  const days = ["Нд", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
-  const dd = String(now.getDate()).padStart(2, "0");
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const yyyy = now.getFullYear();
-  const hh = String(now.getHours()).padStart(2, "0");
-  const min = String(now.getMinutes()).padStart(2, "0");
-  return `${days[now.getDay()]} ${dd}.${mm}.${yyyy}, ${hh}:${min}`;
+  const p = kyivParts(new Date());
+  return `${p.day}.${p.month}.${p.year} ${p.hour}:${p.minute}`;
 }
 
 function generateOrderNumber() {
-  const now = new Date();
-  const dd = String(now.getDate()).padStart(2, "0");
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const yy = String(now.getFullYear()).slice(-2);
+  const p = kyivParts(new Date());
+  const yy = p.year.slice(-2);
   const xxx = String(Math.floor(Math.random() * 900) + 100);
-  return `ORD-${dd}${mm}${yy}-${xxx}`;
+  return `ORD-${p.day}${p.month}${yy}-${xxx}`;
 }
 
 // ============================================================
@@ -82,19 +99,35 @@ function formatTelegramMessage(order) {
   msg += `📞 ${e(order.phone)}\n`;
   if (order.city) msg += `🏙 ${e(order.city)}\n`;
   msg += `\n`;
-  msg += `• Тип: <b>${e(basketType)}</b>\n`;
-  msg += `• Вид конструкції: <b>${e(order.construction_type)}</b>\n`;
-  if (order.color) msg += `• Колір: <b>${e(order.color)}${order.color_custom ? " (" + e(order.color_custom) + ")" : ""}</b>\n`;
-  if (order.pattern) msg += `• Візерунок: <b>${e(order.pattern)}${order.pattern_custom ? " (" + e(order.pattern_custom) + ")" : ""}</b>\n`;
-  msg += `• Розміри:\n`;
-  msg += `   Висота — H: <b>${order.size_h}</b> мм\n`;
-  msg += `   Ширина — W: <b>${order.size_w}</b> мм\n`;
-  msg += `   Глибина — D: <b>${order.size_d}</b> мм\n`;
-  msg += `• Кількість: <b>${order.quantity} шт.</b>\n`;
-  if (price) {
-    msg += `• Площа виробу: <b>${price.areaM2} м²</b>\n`;
-    msg += `• Ціна за 1 м²: <b>${price.pricePerM2.toLocaleString("uk-UA")} ₴</b>\n`;
-    msg += `• Вартість виробнича: <b>${price.total.toLocaleString("uk-UA")} ₴</b>\n`;
+  // Позиції замовлення (кілька кошиків) або один кошик (старий формат)
+  const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
+    basket_type: order.basket_type, construction_type: order.construction_type,
+    color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
+    size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
+    block_w: order.block_w, block_h: order.block_h, block_d: order.block_d,
+    ac_brand: order.ac_brand, ac_model: order.ac_model,
+    price_total: order.price_total, area_m2: order.area_m2,
+  }];
+  const multi = items.length > 1;
+  const num = (v) => Number(v || 0).toLocaleString("uk-UA");
+  items.forEach((it, i) => {
+    const bt = it.basket_type?.includes("Антивандальний") ? "Антивандальний" : it.basket_type;
+    if (multi) msg += `\n🧺 <b>Кошик ${i + 1}</b>\n`;
+    msg += `• Тип: <b>${e(bt)}</b>\n`;
+    msg += `• Вид конструкції: <b>${e(it.construction_type)}</b>\n`;
+    if (it.color) msg += `• Колір: <b>${e(it.color)}${it.color_custom ? " (" + e(it.color_custom) + ")" : ""}</b>\n`;
+    if (it.pattern) msg += `• Візерунок: <b>${e(it.pattern)}${it.pattern_custom ? " (" + e(it.pattern_custom) + ")" : ""}</b>\n`;
+    if (it.ac_brand || it.ac_model) msg += `• Кондиціонер: <b>${e([it.ac_brand, it.ac_model].filter(Boolean).join(" "))}</b>\n`;
+    if (Number(it.block_w) > 0) msg += `• Габарити блоку (В×Ш×Г): <b>${it.block_h}×${it.block_w}×${it.block_d}</b> мм\n`;
+    if (Number(it.size_w) > 0) msg += `• Розмір кошика (В×Ш×Г)${Number(it.block_w) > 0 ? " — авторозрахунок" : ""}: <b>${it.size_h}×${it.size_w}×${it.size_d}</b> мм\n`;
+    else msg += `• Розмір кошика: <i>розрахує менеджер</i>\n`;
+    msg += `• Кількість: <b>${it.quantity} шт.</b>\n`;
+    if (Number(it.price_total) > 0) msg += `• Орієнт. вартість: <b>${num(it.price_total)} ₴</b>\n`;
+  });
+  const grand = order.price_total != null ? Number(order.price_total) : (price ? price.total : 0);
+  if (grand > 0) {
+    msg += `\n💰 <b>Орієнт. разом: ${num(grand)} ₴</b>\n`;
+    if (order.cost_total != null) msg += `<i>Собівартість: ${num(order.cost_total)} ₴ • Прибуток: ${num(order.profit)} ₴</i>\n`;
   }
   const transport = order.transport === "Інше" ? order.transport_custom : order.transport;
   if (transport) msg += `• Доставка: ${e(transport)}\n`;
@@ -102,7 +135,32 @@ function formatTelegramMessage(order) {
   if (order.delivery_date) msg += `• Дата доставки: <b>${formatDeliveryDate(order.delivery_date)}</b>\n`;
   msg += `• Оплата: <i>${e(order.payment_method)}</i>\n`;
   if (order.how_found) msg += `• Як дізнались: ${e(order.how_found)}${order.how_found === "Інше" ? " (" + e(order.how_found_custom) + ")" : ""}\n`;
+  msg += `• Джерело заявки: <b>${e(order.referral_source || "direct")}</b>\n`;
   if (order.notes) msg += `• Дод. інформація: <b>${e(order.notes)}</b>\n`;
+  return msg;
+}
+
+// ============================================================
+// PRODUCTION MESSAGE (чисте, для пересилання підряднику)
+// ============================================================
+function formatProductionMessage(order) {
+  const e = (v) => escHtml(v);
+  const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
+    basket_type: order.basket_type, construction_type: order.construction_type,
+    color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
+    size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
+    ac_brand: order.ac_brand, ac_model: order.ac_model,
+  }];
+  let msg = `🏭 <b>ДЛЯ ВИРОБНИЦТВА</b> · ${e(order.order_number)}\n`;
+  items.forEach((it, i) => {
+    const constr = (it.construction_type || "").split("(")[0].trim() || it.construction_type || "";
+    const color = (it.color === "Інші кольори" || it.color === "Інший") ? (it.color_custom || it.color) : it.color;
+    const pattern = it.pattern === "Інший" ? (it.pattern_custom || it.pattern) : it.pattern;
+    const size = Number(it.size_w) > 0
+      ? `${it.size_w}×${it.size_h}×${it.size_d} мм (Ш×В×Г)`
+      : `⚠️ розмір визначити${(it.ac_brand || it.ac_model) ? " — " + e([it.ac_brand, it.ac_model].filter(Boolean).join(" ")) : ""}`;
+    msg += `\n${i + 1}. <b>${size}</b>\n   ${e(constr)}, ${e(color)}, візерунок ${e(pattern)}, <b>${it.quantity} шт.</b>\n`;
+  });
   return msg;
 }
 
@@ -124,6 +182,7 @@ function formatTrelloDescription(order, price) {
   if (order.delivery_address) d += `**Адреса:** ${order.delivery_address}\n`;
   if (order.delivery_date) d += `**Дата доставки:** ${formatDeliveryDate(order.delivery_date)}\n`;
   d += `**Оплата:** ${order.payment_method}\n`;
+  d += `**Джерело заявки:** ${order.referral_source || "direct"}\n`;
   if (order.notes) d += `\n**Примітки:** ${order.notes}\n`;
   return d;
 }
@@ -197,10 +256,6 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, order_number: "BOT-DETECTED" });
     }
 
-    // Generate order number
-    const orderNumber = generateOrderNumber();
-    const orderWithNumber = { ...order, order_number: orderNumber };
-
     // Read secrets from environment variables
     const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
     const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
@@ -210,6 +265,27 @@ module.exports = async function handler(req, res) {
     const TRELLO_LIST = process.env.TRELLO_LIST_ID;
 
     const results = [];
+
+    // --- Google Sheets (першим: Apps Script присвоює послідовний № ORD-ДДММРР-NNN і повертає його) ---
+    let orderNumber = null;
+    if (SHEETS_URL) {
+      try {
+        const shRes = await fetch(SHEETS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify({ timestamp: new Date().toISOString(), ...order }),
+        });
+        const shData = await shRes.json().catch(() => null);
+        if (shData && shData.order_number) orderNumber = shData.order_number;
+        results.push("gs:ok");
+      } catch (err) {
+        console.error("Google Sheets error:", err);
+        results.push("gs:err");
+      }
+    }
+    // Фолбек: Sheets не налаштовано/недоступний → локальний номер (без гарантії послідовності).
+    if (!orderNumber) orderNumber = generateOrderNumber();
+    const orderWithNumber = { ...order, order_number: orderNumber };
 
     // --- Telegram ---
     if (TG_TOKEN && TG_CHAT_ID) {
@@ -226,20 +302,16 @@ module.exports = async function handler(req, res) {
         console.error("Telegram error:", err);
         results.push("tg:err");
       }
-    }
-
-    // --- Google Sheets ---
-    if (SHEETS_URL) {
+      // Окреме «виробниче» повідомлення — чисте, щоб менеджер переслав підряднику
       try {
-        await fetch(SHEETS_URL, {
+        const prodText = formatProductionMessage(orderWithNumber);
+        await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
           method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: JSON.stringify({ timestamp: new Date().toISOString(), ...orderWithNumber }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: TG_CHAT_ID, text: prodText, parse_mode: "HTML" }),
         });
-        results.push("gs:ok");
       } catch (err) {
-        console.error("Google Sheets error:", err);
-        results.push("gs:err");
+        console.error("Telegram production msg error:", err);
       }
     }
 
