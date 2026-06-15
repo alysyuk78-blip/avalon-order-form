@@ -90,6 +90,8 @@
     .help-menu a { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 9px; color: #383E42; text-decoration: none; font-size: 13px; font-weight: 600; }
     .help-menu a:hover { background: #f2f2f2; }
     .optional-details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: #383E42; font-size: 13px; font-weight: 700; }
+    .metal-palette-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .metal-palette-grid img { display: block; width: 100%; height: auto; border: 1px solid #e2e0dc; border-radius: 8px; background: #fff; }
     .choice-row { min-height: 44px; }
     #form-start { scroll-margin-top: 100px; }
     @media (max-width: 420px) {
@@ -98,6 +100,7 @@
       .help-icon { display: inline; font-size: 20px; line-height: 1; }
       .step-nav { flex-direction: column-reverse; }
       .step-nav button { width: 100%; }
+      .metal-palette-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -143,9 +146,9 @@
         { label: "Білий (9016)", hex: "#F3F3F3" },
         { label: "Сірий (7016)", hex: "#373F43" },
         { label: "Чорний (9005)", hex: "#0A0A0A" },
-        { label: "Помаранчевий (2004)", hex: "#E55B13" },
         { label: "Інші кольори", hex: null }
       ],
+      metal_palette_images: Array.from({ length: 17 }, (_, i) => `assets/metal-palette/ral-${String(i + 1).padStart(2, "0")}.jpg`),
       patterns: ["K1", "K2", "K3", "K4", "K5", "K6", "K7", "K8", "K9", "K10", "Інший"],
       // Delivery: local (Khmelnytskyi) vs out-of-town
       local_city: "Хмельницький",
@@ -153,7 +156,7 @@
       local_delivery_paid_price: 300, // ₴
       transport_options_remote: ["Нова пошта", "Укрпошта", "Делівері", "Інше"],
       payment_methods: ["На карту", "На рахунок ФО-П", "На рахунок ТОВ"],
-      how_found_options: ["Голова ОСББ", "Соцмережі", "Оголошення", "Запропонували партнерство"]
+      how_found_options: ["Google / пошук", "Instagram / Facebook", "Реклама / оголошення", "Рекомендація знайомих", "Голова / чат ОСББ", "Партнер або підрядник"]
     };
 
     // ============================================================
@@ -196,11 +199,11 @@
     // ============================================================
     const BRACKET_LENGTHS = [450, 500, 600, 700]; // К1, К2, К3, К4 (мм)
     const roundUp10 = (v) => Math.ceil(v / 10) * 10;
-    function basketFromAC({ ac_w, ac_h, ac_d, premium = false, coversBrackets = false }) {
+    function basketFromAC({ ac_w, ac_h, ac_d, coversBrackets = false }) {
       const W = Number(ac_w) || 0, H = Number(ac_h) || 0, D = Number(ac_d) || 0;
       if (!W || !H || !D) return null;
       const FRONT_GAP = 50;
-      const wallGap = premium ? 100 : 150; // мін. зазор до стіни: 150 стандарт / 100 преміум
+      const wallGap = 150; // стандартний мінімальний зазор до стіни
       // Глибина: кронштейн має бути ≥ глибина блоку + зазор до стіни; беремо найближчий стандартний (К1–К4).
       const required = D + wallGap;
       const bracket = BRACKET_LENGTHS.find(b => b >= required) || required;
@@ -614,7 +617,7 @@
               <a href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> Зателефонувати {SETTINGS.phone_contact}</a>
             </div>
           )}
-          <button type="button" className="help-toggle" aria-label={open ? "Закрити допомогу" : "Потрібна допомога?"} aria-expanded={open} onClick={() => setOpen(v => !v)}>
+          <button type="button" className="help-toggle fx-btn" aria-label={open ? "Закрити допомогу" : "Потрібна допомога?"} aria-expanded={open} onClick={() => setOpen(v => !v)}>
             <span className="help-label">{open ? "Закрити" : "Потрібна допомога?"}</span>
             <span className="help-icon" aria-hidden="true">{open ? "×" : "?"}</span>
           </button>
@@ -822,13 +825,13 @@
     // FAQ BLOCK
     // ============================================================
     const FAQ_ITEMS = [
-      { q: "Які терміни виготовлення?", a: "Стандартний термін виготовлення — від 3 до 5 робочих днів з моменту внесення передоплати 50%. Складні або нестандартні замовлення можуть займати більше часу — уточнюємо індивідуально." },
+      { q: "Які терміни виготовлення?", a: "Стандартний термін виготовлення — від 3 до 5 робочих днів з моменту внесення передоплати 50%, за умови відсутності аварійних або планових відключень електроенергії. У разі введення графіків відключень, а також для складних чи нестандартних замовлень, термін може збільшитися — менеджер повідомить про це заздалегідь." },
       { q: "Як правильно виміряти кондиціонер?", a: "W (ширина) — горизонтальний розмір фасаду блоку з врахуванням пластикового виступу, місця з'єднання внутрішнього блоку з зовнішнім. H (висота) — вертикальний розмір. D (глибина) — виступ блоку від стіни в залежності від довжини монтажного кронштейну. Усі розміри вказуються в міліметрах. Рекомендуємо додавати +50 мм (min) до кожного виміру для зазору." },
-      { q: "Яка гарантія на виріб?", a: "Ми надаємо гарантію на порошкове покриття — 2 роки за умови правильної експлуатації. На металеву конструкцію — довічна гарантія від виробничих дефектів." },
+      { q: "Яка гарантія на виріб?", a: "Гарантійний строк та умови фіксуються під час підтвердження замовлення. Гарантія поширюється на погоджені виробничі дефекти металевої конструкції та покриття, але не поширюється на механічні пошкодження, неправильний монтаж або експлуатацію." },
       { q: "Чи є відмінність між декоративним та антивандальним кошиком?", a: "Декоративний кошик виготовляється зі стандартного металу і підходить для більшості об'єктів. Антивандальний має більшу товщину металу та посилений каркас — рекомендований для нижніх поверхів і громадських місць. Коштує дорожче." },
       { q: "Які способи оплати доступні?", a: "Ми приймаємо оплату на картку, на рахунок ФО-П або ТОВ. Передоплата 50% перед початком роботи, решта — в день готовності." },
       { q: "У чому переваги розбірного кошика?", a: "Розбірний кошик (з 3-х частин) має ряд переваг: дешевша доставка (суцільний варіант перевізник рахує як об'ємну вагу); зручніше перевезення навіть легковим авто; простіший монтаж та демонтаж." },
-      { q: "Чи можна замовити нестандартний колір або візерунок?", a: "Так! Оберіть «Інший» у розділі кольору або візерунку — ви зможете вказати будь-який код RAL або завантажити файл із прикладом. Менеджер уточнить деталі та вартість." },
+      { q: "Чи можна замовити нестандартний колір або візерунок?", a: "Так! Оберіть «Інші кольори» або «Інший» візерунок — ви зможете переглянути палітру, вказати код RAL або завантажити файл із прикладом. Менеджер уточнить деталі та вартість." },
       { q: "Як здійснюється доставка?", a: "В місті Хмельницький — безкоштовно на адресу пров. Шевченка, 39 (вивантаження біля будинку) або платна адресна доставка від 300 грн. По Україні — Нова пошта, Укрпошта або Делівері. Доставка можлива не раніше ніж через 5 робочих днів після оплати." }
     ];
 
@@ -946,7 +949,7 @@
             <ul className="list-disc ml-4 text-xs space-y-1 text-gray-600">
               <li><strong>Передоплата 50%</strong> – перед початком виконання</li>
               <li><strong>Розрахунок вартості</strong> – до 5 хв.</li>
-              <li><strong>Виготовлення</strong> – від 3 до 5 робочих днів</li>
+              <li><strong>Виготовлення</strong> – від 3 до 5 робочих днів за умови відсутності аварійних або планових відключень електроенергії; у разі введення графіків термін може збільшитися</li>
               <li><strong>Доплата:</strong> в м. Хмельницький – в день готовності замовлення, по Україні – в день готовності (згідно фото готового замовлення) або накладеним платежем</li>
             </ul>
           </div>
@@ -1147,7 +1150,6 @@
         return "model";
       });
       const [acDims, setAcDims] = useState({ w: "", h: "", d: "" });
-      const [premium, setPremium] = useState(false);
       const [coversBrackets, setCoversBrackets] = useState(false);
       const [acModels, setAcModels] = useState([]);
       const [selBrand, setSelBrand] = useState("");
@@ -1176,10 +1178,10 @@
           setForm(f => ({ ...f, block_w: "", block_h: "", block_d: "" }));
           return;
         }
-        const res = basketFromAC({ ac_w: acDims.w, ac_h: acDims.h, ac_d: acDims.d, premium, coversBrackets });
+        const res = basketFromAC({ ac_w: acDims.w, ac_h: acDims.h, ac_d: acDims.d, coversBrackets });
         setForm(f => ({ ...f, block_w: acDims.w, block_h: acDims.h, block_d: acDims.d,
           ...(res ? { size_w: res.size_w, size_h: res.size_h, size_d: res.size_d } : {}) }));
-      }, [sizeMode, acDims, premium, coversBrackets, selModel, acModels]);
+      }, [sizeMode, acDims, coversBrackets, selModel, acModels]);
 
       // У режимі "Бренд + модель" не використовуємо приховані розміри зі старої чернетки.
       useEffect(() => {
@@ -1211,7 +1213,7 @@
       // Field-level validation
       const fieldError = (field) => {
         if (!showErrors && !touched[field]) return false;
-        const basketFields = ["construction_type", "basket_type", "quantity", "color", "pattern", "size_w", "size_h", "size_d", "ac_brand", "ac_model"];
+        const basketFields = ["construction_type", "basket_type", "quantity", "color", "color_custom", "pattern", "size_w", "size_h", "size_d", "ac_brand", "ac_model"];
         if (basketFields.includes(field) && items.length > 0 && !basketTouched) return false;
         switch (field) {
           case "first_name": return !form.first_name.trim();
@@ -1220,6 +1222,7 @@
           case "basket_type": return !form.basket_type;
           case "quantity": return !(Number(form.quantity) >= 1);
           case "color": return !form.color;
+          case "color_custom": return (form.color === "Інші кольори" || form.color === "Інший") && !(form.color_custom || "").trim();
           case "pattern": return !form.pattern;
           case "size_w": return sizeMode !== "model" && !(Number(form.size_w) > 0);
           case "size_h": return sizeMode !== "model" && !(Number(form.size_h) > 0);
@@ -1232,6 +1235,8 @@
           case "del_street": return (form.transport || "").includes("Адресна") && !(form.del_street || "").trim();
           case "del_house": return (form.transport || "").includes("Адресна") && !(form.del_house || "").trim();
           case "payment_method": return !form.payment_method;
+          case "how_found": return !form.how_found;
+          case "how_found_custom": return form.how_found === "Інше" && !(form.how_found_custom || "").trim();
           case "terms_accepted": return !form.terms_accepted;
           default: return false;
         }
@@ -1241,8 +1246,9 @@
       // Розмір можна задати РОЗМІРОМ КОШИКА, ГАБАРИТАМИ БЛОКУ або БРЕНД+МОДЕЛЬ.
       const hasSize = (s) => Number(s.size_w) > 0 && Number(s.size_h) > 0 && Number(s.size_d) > 0;
       const hasBrandModel = (s) => !!((s.ac_brand || "").trim() && (s.ac_model || "").trim());
+      const colorComplete = (s) => !!(s.color && !((s.color === "Інші кольори" || s.color === "Інший") && !(s.color_custom || "").trim()));
       const basketComplete = (s) =>
-        !!(s.construction_type && s.basket_type && s.color && s.pattern && Number(s.quantity) >= 1 &&
+        !!(s.construction_type && s.basket_type && colorComplete(s) && s.pattern && Number(s.quantity) >= 1 &&
            (sizeMode === "model" ? hasBrandModel(s) : hasSize(s)));
       const basketTouched = !!(form.construction_type || form.basket_type || form.color || form.pattern ||
            form.size_w || form.size_h || form.size_d || form.ac_brand || form.ac_model || (form.quantity && Number(form.quantity) > 0));
@@ -1264,7 +1270,7 @@
           color: "", color_custom: "", pattern: "", pattern_custom: "", size_w: "", size_h: "", size_d: "",
           ac_brand: "", ac_model: "", block_w: "", block_h: "", block_d: "" }));
         setSizeMode("model"); setAcDims({ w: "", h: "", d: "" });
-        setPremium(false); setCoversBrackets(false); setSelBrand(""); setSelModel(""); setPatternFile(null);
+        setCoversBrackets(false); setSelBrand(""); setSelModel(""); setPatternFile(null);
       };
       const addBasket = () => {
         if (!basketComplete(form)) {
@@ -1288,14 +1294,16 @@
 
       // Для адресної доставки обов'язкові вулиця і будинок (під'їзд — за бажанням).
       const addressOk = !(form.transport || "").includes("Адресна") || ((form.del_street || "").trim() && (form.del_house || "").trim());
+      const howFoundOk = !!(form.how_found && (form.how_found !== "Інше" || (form.how_found_custom || "").trim()));
       const commonValid =
         form.first_name.trim() && isValidPhoneUA(form.phone) &&
         form.delivery_location && form.transport && addressOk && form.delivery_date && form.payment_method &&
-        form.terms_accepted;
+        howFoundOk && form.terms_accepted;
       const isFormValid = commonValid && items.length >= 1 && !basketTouched;
       const contactValid = !!(form.first_name.trim() && isValidPhoneUA(form.phone));
       const basketStepValid = items.length >= 1 && !basketTouched;
       const completedSteps = !contactValid ? 0 : !basketStepValid ? 1 : !isFormValid ? 2 : 3;
+      const deliveryDateLabel = form.delivery_location === "remote" ? "Бажана дата відправки" : "Бажана дата доставки";
 
       const goToStep = (nextStep) => {
         if (nextStep > 1 && !contactValid) {
@@ -1374,7 +1382,7 @@
         setItems([]);
         setCurrentStep(1);
         setSizeMode("model"); setAcDims({ w: "", h: "", d: "" });
-        setPremium(false); setCoversBrackets(false); setSelBrand(""); setSelModel("");
+        setCoversBrackets(false); setSelBrand(""); setSelModel("");
         clearDraft();
         setHasDraft(false);
         setForm({
@@ -1449,6 +1457,17 @@
           {/* Progress Bar */}
           <ProgressBar currentStep={currentStep} completedSteps={completedSteps} onStepChange={goToStep} />
 
+          <div className="max-w-2xl mx-auto px-4 pt-3">
+            <details className="optional-details bg-white rounded-xl px-4" style={{ boxShadow: "0 2px 12px rgba(56,62,66,0.08)" }}>
+              <summary>Коротка інструкція із заповнення</summary>
+              <ol className="list-decimal ml-5 pb-4 text-xs space-y-2" style={{ color: "#4B5563" }}>
+                <li>Залиште ім'я та номер телефону для підтвердження замовлення.</li>
+                <li>Налаштуйте кошик і натисніть «Додати цей кошик до замовлення».</li>
+                <li>Оберіть доставку, оплату та вкажіть, звідки ви про нас дізналися.</li>
+              </ol>
+            </details>
+          </div>
+
           {/* Draft restoration banner */}
           {hasDraft && !submitted && (
             <div className="max-w-2xl mx-auto px-4 pt-2">
@@ -1496,13 +1515,13 @@
               </FormCard>
 
               <div className="step-nav">
-                <button type="button" className="step-nav-primary fx-btn" onClick={() => goToStep(2)}>Далі: обрати кошик</button>
+                <button type="button" className="step-nav-primary fx-btn" onClick={() => goToStep(2)}>Далі: налаштувати кошик</button>
               </div>
               </section>
 
               {/* Параметри кошика */}
               <section className="space-y-4" style={{ display: currentStep === 2 ? "block" : "none" }}>
-              <StepIntro number="2" title="Оберіть кошик" description="Не знаєте розмірів? Просто вкажіть бренд і модель кондиціонера." />
+              <StepIntro number="2" title="Налаштуйте кошик" description="Не знаєте розмірів? Просто вкажіть бренд і модель кондиціонера." />
 
               <FormCard title="Параметри кошика">
                 <Field label="Конструкція кошика *" help="Суцільний кошик готовий до монтажу. Розбірний складається з трьох частин, його дешевше доставляти та зручніше монтувати.">
@@ -1569,8 +1588,18 @@
                       <span style={{ color: "#383E42" }}><IconPalette /></span>
                       <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#383E42" }}>Вкажіть колір або код RAL</span>
                     </div>
-                    <StyledInput placeholder="Наприклад: RAL 3020, синій, бежевий..." value={form.color_custom} onChange={e => set("color_custom", e.target.value)} />
-                    <p className="text-xs" style={{ color: "#9CA3AF" }}>Можна вказати назву, код RAL або опис кольору</p>
+                    <StyledInput aria-label="Колір або код RAL *" placeholder="Наприклад: RAL 3020, синій, бежевий..." value={form.color_custom}
+                      onChange={e => set("color_custom", e.target.value)} error={fieldError("color_custom")} />
+                    <details className="optional-details">
+                      <summary>Розгорнути палітру кольорів металу</summary>
+                      <div className="metal-palette-grid pb-3">
+                        {SETTINGS.metal_palette_images.map((src, i) => (
+                          <img key={src} loading="lazy" src={src} alt={`Палітра кольорів металу RAL, сторінка ${i + 1}`} />
+                        ))}
+                      </div>
+                    </details>
+                    <p className="text-xs" style={{ color: "#6B7280" }}>Можна вказати назву, код RAL або опис кольору.</p>
+                    <p className="text-xs" style={{ color: "#9CA3AF" }}>Зображення в каталозі є візуалізаціями та можуть несуттєво відрізнятися від фактичного виробу.</p>
                   </div>
                 )}
               </FormCard>
@@ -1615,7 +1644,7 @@
                 {/* Перемикач режиму вводу */}
                 <p className="text-xs" style={{ color: "#6B7280" }}>Рекомендовано: <strong>Бренд + модель</strong>, якщо ви не знаєте точних розмірів.</p>
                 <div className="grid grid-cols-3 gap-2 mb-4">
-                  {[{ id: "basket", label: "Розмір кошика" }, { id: "ac", label: "Розміри блоку" }, { id: "model", label: "Бренд + модель" }].map(m => (
+                  {[{ id: "ac", label: "Розміри зовнішнього блоку" }, { id: "model", label: "Бренд + модель" }, { id: "basket", label: "Розмір кошика" }].map(m => (
                     <button key={m.id} type="button" onClick={() => changeSizeMode(m.id)}
                       className="fx-btn py-2 px-1 rounded-lg text-xs font-semibold transition-colors"
                       style={{
@@ -1663,12 +1692,8 @@
                       ))}
                     </div>
                     <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "#383E42" }}>
-                      <input type="checkbox" checked={premium} onChange={e => setPremium(e.target.checked)} />
-                      Преміум-кондиціонер (зазор до стіни 100 мм замість 150)
-                    </label>
-                    <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "#383E42" }}>
                       <input type="checkbox" checked={coversBrackets} onChange={e => setCoversBrackets(e.target.checked)} />
-                      Кошик закриває монтажні кронштейни (+120 мм до висоти)
+                      Кошик закриває монтажні кронштейни — збільшена висота кошика, що впливає на вартість
                     </label>
                     <div className="rounded-xl p-3 text-center" style={{ backgroundColor: "#f2f3f4", border: "1px solid #d4d7da" }}>
                       <div className="text-xs" style={{ color: "#383E42" }}>Розрахований розмір кошика (Ш×В×Г):</div>
@@ -1842,15 +1867,15 @@
                     )}
                   </div>
                 )}
-                <Field label="Бажана дата доставки *">
-                  <p className="text-xs mb-1" style={{ color: "#9CA3AF" }}>5 робочих днів з моменту оплати. При оплаті до 13:00 — відлік з дня оплати.</p>
-                  <button type="button" aria-label="Бажана дата доставки *" onClick={() => setShowCalendar(true)}
+                <Field label={`${deliveryDateLabel} *`}>
+                  <p className="text-xs mb-1" style={{ color: "#9CA3AF" }}>Оберіть орієнтовну дату. Менеджер підтвердить її після перевірки замовлення та виробничого графіка.</p>
+                  <button type="button" aria-label={`${deliveryDateLabel} *`} onClick={() => setShowCalendar(true)}
                     className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-sm text-left"
                     style={{ minHeight: 44, borderColor: fieldError("delivery_date") ? "#ef4444" : "#d1d5db", backgroundColor: "#fff", color: form.delivery_date ? "#111" : "#9CA3AF" }}>
                     <span style={{ color: "#383E42", flexShrink: 0 }}><IconCalendar /></span>
                     {form.delivery_date ? formatDate(form.delivery_date) : "Оберіть дату"}
                   </button>
-                  {fieldError("delivery_date") && <div style={{ marginTop: 4, fontSize: 11, color: "#ef4444", fontWeight: 600 }}>Оберіть дату доставки</div>}
+                  {fieldError("delivery_date") && <div style={{ marginTop: 4, fontSize: 11, color: "#ef4444", fontWeight: 600 }}>Оберіть дату</div>}
                 </Field>
               </FormCard>
 
@@ -1861,10 +1886,37 @@
                 </StyledSelect>
               </FormCard>
 
+              {/* Як дізнались */}
+              <FormCard title="Звідки ви дізналися про нас? *">
+                <div className={`space-y-2 rounded-lg ${fieldError("how_found") ? "field-error p-2" : ""}`}
+                  style={{ backgroundColor: fieldError("how_found") ? "#fff5f5" : undefined }}>
+                  {SETTINGS.how_found_options.map(o => (
+                    <label key={o} className="choice-row flex items-center gap-3 cursor-pointer">
+                      <input type="radio" name="how_found" value={o} checked={form.how_found === o}
+                        onChange={() => set("how_found", o)} className="w-4 h-4" style={{ accentColor: "#383E42" }} />
+                      <span className="text-sm">{o}</span>
+                    </label>
+                  ))}
+                  <label className="choice-row flex items-center gap-3 cursor-pointer">
+                    <input type="radio" name="how_found" value="Інше" checked={form.how_found === "Інше"}
+                      onChange={() => set("how_found", "Інше")} className="w-4 h-4" style={{ accentColor: "#383E42" }} />
+                    <span className="text-sm">Інше</span>
+                  </label>
+                  {form.how_found === "Інше" && (
+                    <div className="ml-7">
+                      <StyledInput aria-label="Вкажіть джерело *" placeholder="Вкажіть, звідки ви про нас дізналися..." value={form.how_found_custom}
+                        onChange={e => set("how_found_custom", e.target.value)} error={fieldError("how_found_custom")} />
+                      {fieldError("how_found_custom") && <div style={{ marginTop: 4, fontSize: 11, color: "#ef4444", fontWeight: 600 }}>Вкажіть джерело</div>}
+                    </div>
+                  )}
+                  {fieldError("how_found") && <div style={{ fontSize: 11, color: "#ef4444", fontWeight: 600 }}>Оберіть один варіант</div>}
+                </div>
+              </FormCard>
+
               {/* Умови */}
               <FormCard title="Умови замовлення">
                 <div className="rounded-lg p-3 text-xs leading-relaxed" style={{ backgroundColor: "#f2f2f2", color: "#4B5563" }}>
-                  Передоплата 50%. Виготовлення зазвичай займає від 3 до 5 робочих днів. Точну вартість підтвердить менеджер.
+                  Передоплата 50%. Виготовлення зазвичай займає від 3 до 5 робочих днів за умови відсутності аварійних або планових відключень електроенергії. У разі введення графіків термін може збільшитися. Точну вартість і дату підтвердить менеджер.
                 </div>
                 <details className="optional-details">
                   <summary>Переглянути всі умови</summary>
@@ -1883,30 +1935,8 @@
               </FormCard>
 
               <details className="optional-details bg-white rounded-2xl px-5" style={{ boxShadow: "0 2px 12px rgba(56,62,66,0.08)" }}>
-              <summary>Додаткова інформація (необов'язково)</summary>
+              <summary>Додаткові примітки (необов'язково)</summary>
               <div className="space-y-4 pb-5">
-
-              {/* Як дізнались */}
-              <FormCard title="Звідки ви дізналися про нас? (необов'язково)">
-                <div className="space-y-2">
-                  {SETTINGS.how_found_options.map(o => (
-                    <label key={o} className="choice-row flex items-center gap-3 cursor-pointer">
-                      <input type="radio" name="how_found" value={o} checked={form.how_found === o}
-                        onChange={() => set("how_found", o)} className="w-4 h-4" style={{ accentColor: "#383E42" }} />
-                      <span className="text-sm">{o}</span>
-                    </label>
-                  ))}
-                  <label className="choice-row flex items-center gap-3 cursor-pointer">
-                    <input type="radio" name="how_found" value="Інше" checked={form.how_found === "Інше"}
-                      onChange={() => set("how_found", "Інше")} className="w-4 h-4" style={{ accentColor: "#383E42" }} />
-                    <span className="text-sm">Інше</span>
-                  </label>
-                  {form.how_found === "Інше" && (
-                    <StyledInput className="ml-7" placeholder="Ваш коментар..." value={form.how_found_custom}
-                      onChange={e => set("how_found_custom", e.target.value)} />
-                  )}
-                </div>
-              </FormCard>
 
               {/* Примітки */}
               <FormCard title="Додаткові примітки">
