@@ -130,6 +130,7 @@ function formatTelegramMessage(order) {
   if (order.delivery_date) msg += `• Дата доставки: <b>${formatDeliveryDate(order.delivery_date)}</b>\n`;
   msg += `• Оплата: <i>${e(order.payment_method)}</i>\n`;
   if (order.how_found) msg += `• Як дізнались: ${e(order.how_found)}${order.how_found === "Інше" ? " (" + e(order.how_found_custom) + ")" : ""}\n`;
+  msg += `• Джерело заявки: <b>${e(order.referral_source || "direct")}</b>\n`;
   if (order.notes) msg += `• Дод. інформація: <b>${e(order.notes)}</b>\n`;
   return msg;
 }
@@ -176,6 +177,7 @@ function formatTrelloDescription(order, price) {
   if (order.delivery_address) d += `**Адреса:** ${order.delivery_address}\n`;
   if (order.delivery_date) d += `**Дата доставки:** ${formatDeliveryDate(order.delivery_date)}\n`;
   d += `**Оплата:** ${order.payment_method}\n`;
+  d += `**Джерело заявки:** ${order.referral_source || "direct"}\n`;
   if (order.notes) d += `\n**Примітки:** ${order.notes}\n`;
   return d;
 }

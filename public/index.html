@@ -342,6 +342,20 @@
 
     const NP_MIN_WEIGHT_KG = 30;
 
+    // Кошик — важкий/габаритний вантаж. Лишаємо лише відділення, що його приймають:
+    // ховаємо поштомати (за категорією/назвою) та відділення з лімітом на 1 місце < 30 кг.
+    // placeMaxWeight === 0 трактуємо як «без явного ліміту» (вантажне відділення) → лишаємо.
+    function npIsPostomat(w) {
+      const cat = (w.categoryOfWarehouse || "").toLowerCase();
+      const desc = (w.description || "").toLowerCase();
+      return cat === "postomat" || desc.includes("поштомат");
+    }
+    function npAcceptsBasket(w) {
+      if (npIsPostomat(w)) return false;
+      const limit = w.placeMaxWeight; // PlaceMaxWeightAllowed — макс. вага на одне місце
+      return !(limit > 0 && limit < NP_MIN_WEIGHT_KG);
+    }
+
     // ============================================================
     // NP AUTOCOMPLETE COMPONENT
     // ============================================================
@@ -497,7 +511,7 @@
         if (cityRef) {
           npSearchWarehouses(cityRef, "").then(raw => {
             setTotalBefore(raw.length);
-            const filtered = raw.filter(w => w.totalMaxWeight >= NP_MIN_WEIGHT_KG);
+            const filtered = raw.filter(npAcceptsBasket);
             setAllWarehouses(filtered);
             setLoaded(true);
           });
@@ -531,7 +545,7 @@
               );
               if (filtered.length > 0) return filtered.slice(0, 50);
               const remote = await npSearchWarehouses(cityRef, q);
-              return remote.filter(w => w.totalMaxWeight >= NP_MIN_WEIGHT_KG);
+              return remote.filter(npAcceptsBasket);
             }}
             onSelect={(item, text) => {
               if (item) {
@@ -545,7 +559,7 @@
                 <div style={{ fontWeight: 500, color: "#111" }}>{item.description}</div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "2px" }}>
                   {item.shortAddress && <span style={{ fontSize: "11px", color: "#6b7280" }}>{item.shortAddress}</span>}
-                  <span style={{ fontSize: "10px", color: "#383e42", fontWeight: 500, whiteSpace: "nowrap", marginLeft: "8px" }}>до {item.totalMaxWeight} кг</span>
+                  <span style={{ fontSize: "10px", color: "#383e42", fontWeight: 500, whiteSpace: "nowrap", marginLeft: "8px" }}>{item.placeMaxWeight > 0 ? `до ${item.placeMaxWeight} кг` : "вантажне"}</span>
                 </div>
               </div>
             )}
@@ -1144,7 +1158,8 @@
         size_w: "", size_h: "", size_d: "", ac_brand: "", ac_model: "", block_w: "", block_h: "", block_d: "",
         transport: "", transport_custom: "", delivery_address: "", del_street: "", del_house: "", del_entrance: "", delivery_location: "",
         delivery_date: "", payment_method: "",
-        terms_accepted: false, how_found: "", how_found_custom: "", notes: ""
+        terms_accepted: false, how_found: "", how_found_custom: "", notes: "",
+        referral_source: "direct"
       };
       // Load draft from localStorage on first render
       const [form, setForm] = useState(() => {
@@ -1152,6 +1167,15 @@
         if (draft) return { ...defaultForm, ...draft, terms_accepted: false };
         return defaultForm;
       });
+      // Джерело заявки: GET-параметр ?ref= (ОСББ/партнер-реферали) — авторитетне джерело щовізиту.
+      // Без параметра — 'direct' (перекриває можливе старе значення з чернетки).
+      useEffect(() => {
+        try {
+          const ref = new URLSearchParams(window.location.search).get("ref");
+          const val = ref && ref.trim() ? ref.trim().slice(0, 60) : "direct";
+          setForm(f => ({ ...f, referral_source: val }));
+        } catch (e) { /* ignore */ }
+      }, []);
       const [submitting, setSubmitting] = useState(false);
       const [submitted, setSubmitted] = useState(false);
       const [patternFile, setPatternFile] = useState(null);
@@ -1378,6 +1402,7 @@
           delivery_address: form.delivery_address, delivery_location: form.delivery_location,
           delivery_date: form.delivery_date, payment_method: form.payment_method,
           how_found: form.how_found, how_found_custom: form.how_found_custom, notes: form.notes,
+          referral_source: form.referral_source || "direct",
           items: orderItems,
           price_total: grand, prepayment: Math.round(grand * 0.5), cost_total: costSum, profit: profitSum,
           // сумісність зі старим форматом (перша позиція):
@@ -1512,6 +1537,8 @@
               {/* Honeypot — invisible field to catch bots */}
               <div style={{ position: "absolute", left: "-9999px", opacity: 0, height: 0, overflow: "hidden" }} aria-hidden="true" tabIndex={-1}>
                 <input type="text" name="_hp_field" value={form._hp_field || ""} onChange={e => set("_hp_field", e.target.value)} autoComplete="off" tabIndex={-1} />
+                {/* Джерело заявки (?ref=) — приховане технічне поле для обліку ОСББ/партнер-рефералів */}
+                <input type="hidden" name="referral_source" value={form.referral_source || "direct"} readOnly />
               </div>
 
               <section className="space-y-4" style={{ display: currentStep === 1 ? "block" : "none" }}>
