@@ -167,18 +167,35 @@ function formatProductionMessage(order) {
 // ============================================================
 // TRELLO DESCRIPTION
 // ============================================================
-function formatTrelloDescription(order, price) {
+function formatTrelloDescription(order) {
+  const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
+    basket_type: order.basket_type, construction_type: order.construction_type,
+    color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
+    size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
+    ac_brand: order.ac_brand, ac_model: order.ac_model, price_total: order.price_total,
+  }];
+  const multi = items.length > 1;
+  const num = (v) => Number(v || 0).toLocaleString("uk-UA");
+
   let d = `**Клієнт:** ${order.first_name} ${order.last_name}\n`;
   d += `**Телефон:** ${order.phone}\n`;
-  if (order.city) d += `**Місто:** ${order.city}\n\n`;
-  d += `**Тип:** ${order.basket_type}\n`;
-  d += `**Конструкція:** ${order.construction_type}\n`;
-  d += `**Колір:** ${order.color}${order.color_custom ? " (" + order.color_custom + ")" : ""}\n`;
-  d += `**Візерунок:** ${order.pattern}${order.pattern_custom ? " (" + order.pattern_custom + ")" : ""}\n`;
-  d += `**Розміри:** W=${order.size_w}, H=${order.size_h}, D=${order.size_d} мм\n`;
-  d += `**Кількість:** ${order.quantity} шт.\n`;
-  if (price) d += `**Вартість:** ${price.total.toLocaleString("uk-UA")} ₴\n`;
-  d += `\n**Доставка:** ${order.transport}${order.transport_custom ? " (" + order.transport_custom + ")" : ""}\n`;
+  if (order.city) d += `**Місто:** ${order.city}\n`;
+  items.forEach((it, i) => {
+    const color = (it.color === "Інші кольори" || it.color === "Інший") ? (it.color_custom || it.color) : it.color;
+    const pattern = it.pattern === "Інший" ? (it.pattern_custom || it.pattern) : it.pattern;
+    d += multi ? `\n**🧺 Кошик ${i + 1}**\n` : `\n`;
+    d += `**Тип:** ${it.basket_type}\n`;
+    d += `**Конструкція:** ${it.construction_type}\n`;
+    if (color) d += `**Колір:** ${color}\n`;
+    if (pattern) d += `**Візерунок:** ${pattern}\n`;
+    if (Number(it.size_w) > 0) d += `**Розміри:** W=${it.size_w}, H=${it.size_h}, D=${it.size_d} мм\n`;
+    else d += `**Розмір:** розрахує менеджер${(it.ac_brand || it.ac_model) ? " — " + [it.ac_brand, it.ac_model].filter(Boolean).join(" ") : ""}\n`;
+    d += `**Кількість:** ${it.quantity} шт.\n`;
+    if (Number(it.price_total) > 0) d += `**Орієнт. вартість:** ${num(it.price_total)} ₴\n`;
+  });
+  const grand = order.price_total != null ? Number(order.price_total) : items.reduce((s, it) => s + (Number(it.price_total) || 0), 0);
+  if (grand > 0) d += `\n**💰 Орієнт. разом:** ${num(grand)} ₴\n`;
+  d += `\n**Доставка:** ${order.transport === "Інше" ? (order.transport_custom || "") : order.transport}\n`;
   if (order.delivery_address) d += `**Адреса:** ${order.delivery_address}\n`;
   if (order.delivery_date) d += `**Дата доставки:** ${formatDeliveryDate(order.delivery_date)}\n`;
   d += `**Оплата:** ${order.payment_method}\n`;
@@ -318,9 +335,11 @@ module.exports = async function handler(req, res) {
     // --- Trello ---
     if (TRELLO_KEY && TRELLO_TOKEN && TRELLO_LIST) {
       try {
-        const price = calcPriceForMessage(order);
-        const name = `${orderNumber} — ${order.first_name} ${order.last_name} — ${order.quantity} шт.`;
-        const desc = formatTrelloDescription(orderWithNumber, price);
+        const totalQty = (Array.isArray(order.items) && order.items.length)
+          ? order.items.reduce((s, it) => s + (Number(it.quantity) || 0), 0)
+          : (Number(order.quantity) || 0);
+        const name = `${orderNumber} — ${order.first_name} ${order.last_name} — ${totalQty} шт.`;
+        const desc = formatTrelloDescription(orderWithNumber);
         await fetch(`https://api.trello.com/1/cards?key=${TRELLO_KEY}&token=${TRELLO_TOKEN}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
