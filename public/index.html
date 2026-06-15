@@ -100,6 +100,14 @@
     .palette-details[open] .palette-summary svg { transform: rotate(180deg); }
     .metal-palette-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .metal-palette-grid img { display: block; width: 100%; height: auto; border: 1px solid #e2e0dc; border-radius: 8px; background: #fff; }
+    .size-mode-panel { animation: sizeModeIn 0.24s ease both; }
+    @keyframes sizeModeIn {
+      from { opacity: 0; transform: translateY(5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .size-mode-panel { animation: none; }
+    }
     .choice-row { min-height: 44px; }
     #form-start { scroll-margin-top: 100px; }
     @media (max-width: 420px) {
@@ -1156,7 +1164,7 @@
         if (draft?.ac_brand && draft?.ac_model) return "model";
         if (draft?.block_w && draft?.block_h && draft?.block_d) return "ac";
         if (draft?.size_w && draft?.size_h && draft?.size_d) return "basket";
-        return "model";
+        return "ac";
       });
       const [acDims, setAcDims] = useState({ w: "", h: "", d: "" });
       const [coversBrackets, setCoversBrackets] = useState(null);
@@ -1282,7 +1290,7 @@
         setForm(f => ({ ...f, construction_type: "", basket_type: "", quantity: "",
           color: "", color_custom: "", pattern: "", pattern_custom: "", size_w: "", size_h: "", size_d: "",
           ac_brand: "", ac_model: "", block_w: "", block_h: "", block_d: "" }));
-        setSizeMode("model"); setAcDims({ w: "", h: "", d: "" });
+        setSizeMode("ac"); setAcDims({ w: "", h: "", d: "" });
         setCoversBrackets(null); setSelBrand(""); setSelModel(""); setPatternFile(null);
       };
       const addBasket = () => {
@@ -1394,7 +1402,7 @@
         setTouched({});
         setItems([]);
         setCurrentStep(1);
-        setSizeMode("model"); setAcDims({ w: "", h: "", d: "" });
+        setSizeMode("ac"); setAcDims({ w: "", h: "", d: "" });
         setCoversBrackets(null); setSelBrand(""); setSelModel("");
         clearDraft();
         setHasDraft(false);
@@ -1657,9 +1665,9 @@
               </FormCard>
 
               {/* Розміри */}
-              <FormCard title="Розміри (мм) *" info="Найпростіший спосіб — обрати «Бренд + модель». Менеджер сам знайде потрібні габарити та підтвердить розмір кошика.">
+              <FormCard title="Розміри (мм) *" info="За замовчуванням вкажіть розміри зовнішнього блоку — кошик розрахується автоматично. Також можна перейти до вибору за брендом і моделлю або вказати готовий розмір кошика.">
                 {/* Перемикач режиму вводу */}
-                <p className="text-xs" style={{ color: "#6B7280" }}>Рекомендовано: <strong>Бренд + модель</strong>, якщо ви не знаєте точних розмірів.</p>
+                <p className="text-xs" style={{ color: "#6B7280" }}>Основний спосіб: <strong>Розміри зовнішнього блоку</strong>. За потреби перейдіть до іншого варіанта.</p>
                 <div className="grid grid-cols-3 gap-2 mb-4">
                   {[{ id: "ac", label: "Розміри зовнішнього блоку" }, { id: "model", label: "Бренд + модель" }, { id: "basket", label: "Розмір кошика" }].map(m => (
                     <button key={m.id} type="button" onClick={() => changeSizeMode(m.id)}
@@ -1676,7 +1684,7 @@
 
                 {/* Режим А — розмір кошика */}
                 {sizeMode === "basket" && (
-                  <>
+                  <div className="size-mode-panel">
                     <p className="text-sm mb-4 italic" style={{ color: "#6B7280" }}>Вкажіть ширину (W), висоту (H) та глибину (D) відповідно до схем нижче</p>
                     <div className="grid grid-cols-3 gap-3">
                       {[["size_w", "W — Ширина", 1], ["size_h", "H — Висота", 0], ["size_d", "D — Глибина", 2]].map(([field, label, idx]) => (
@@ -1692,12 +1700,12 @@
                         </div>
                       ))}
                     </div>
-                  </>
+                  </div>
                 )}
 
                 {/* Режим Б — габарити кондиціонера */}
                 {sizeMode === "ac" && (
-                  <div className="space-y-3">
+                  <div className="size-mode-panel space-y-3">
                     <p className="text-sm italic" style={{ color: "#6B7280" }}>Вкажіть габарити ЗОВНІШНЬОГО блоку — розмір кошика порахується автоматично. Ширину міряйте з урахуванням виступу патрубків (місце під'єднання труб), або візьміть розміри з інструкції до кондиціонера.</p>
                     <div className="grid grid-cols-3 gap-3">
                       {[["w", "Ширина блоку"], ["h", "Висота блоку"], ["d", "Глибина блоку"]].map(([k, label]) => (
@@ -1744,7 +1752,7 @@
 
                 {/* Режим В — бренд + модель */}
                 {sizeMode === "model" && (
-                  <div className="space-y-3">
+                  <div className="size-mode-panel space-y-3">
                     <p className="text-sm italic" style={{ color: "#6B7280" }}>Вкажіть бренд і модель кондиціонера — менеджер підбере точний розмір кошика</p>
                     <Field label="Бренд кондиціонера *">
                       <StyledInput placeholder="Напр.: Cooper&Hunter, Daikin, Gree" value={form.ac_brand}
