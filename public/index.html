@@ -1714,8 +1714,8 @@
                       <p className="text-xs mb-3" style={{ color: "#6B7280" }}>Оберіть один варіант. Закриті кронштейни виглядають естетичніше, але збільшують висоту кошика та його вартість.</p>
                       <div className="bracket-choice-grid grid grid-cols-2 gap-2">
                         {[
-                          { value: true, title: "Так, закрити кронштейни", note: "Рекомендуємо · естетичніший вигляд · доплата близько 600 ₴", recommended: true },
-                          { value: false, title: "Ні, залишити відкритими", note: "Стандартна висота · без доплати", recommended: false }
+                          { value: true, title: "Так, закрити кронштейни", note: "Рекомендуємо", recommended: true },
+                          { value: false, title: "Ні, залишити відкритими", note: "Економ варіант", recommended: false }
                         ].map(option => (
                           <button key={String(option.value)} type="button" onClick={() => setCoversBrackets(option.value)}
                             className="fx-btn rounded-lg px-3 py-3 text-left"
