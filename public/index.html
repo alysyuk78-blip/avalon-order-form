@@ -34,10 +34,8 @@
     @keyframes phoneShake { 0%,100%{transform:rotate(0deg)} 15%{transform:rotate(-15deg)} 30%{transform:rotate(12deg)} 45%{transform:rotate(-10deg)} 60%{transform:rotate(8deg)} 75%{transform:rotate(-5deg)} 90%{transform:rotate(3deg)} }
     .phone-shake { animation: phoneShake 0.7s ease infinite; display: inline-block; }
     @keyframes submitPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(56,62,66,0.5), 0 4px 20px rgba(56,62,66,0.35); } 50% { box-shadow: 0 0 0 10px rgba(56,62,66,0), 0 4px 20px rgba(56,62,66,0.35); } }
-    @keyframes submitShine { 0% { left: -100%; } 100% { left: 200%; } }
     @keyframes submitBounce { 0%, 100% { transform: translateY(0) scale(1); } 30% { transform: translateY(-4px) scale(1.04); } 60% { transform: translateY(-2px) scale(1.02); } }
     .submit-ready { position: relative; overflow: hidden; animation: submitPulse 2.2s ease-in-out infinite, submitBounce 3s ease-in-out infinite !important; }
-    .submit-ready::before { content: ''; position: absolute; top: 0; left: -100%; width: 60%; height: 100%; background: linear-gradient(120deg, transparent 0%, rgba(255,255,255,0.25) 50%, transparent 100%); animation: submitShine 2.5s ease-in-out infinite; pointer-events: none; }
     @media (hover: hover) { .submit-ready:hover:not(:disabled) { animation: none !important; transform: translateY(-2px) scale(1.04) !important; box-shadow: 0 8px 28px rgba(56,62,66,0.55) !important; } }
     .submit-ready:active:not(:disabled) { transform: scale(0.97) !important; animation: none !important; }
     .upload-zone { border: 2px dashed #383E4255; border-radius: 10px; padding: 16px; text-align: center; cursor: pointer; transition: all 0.2s ease; background: #f4f4f5; }
@@ -65,14 +63,15 @@
     .cal-day:disabled { color: #d1d5db; cursor: default; }
     .cal-day.selected { background: #383E42; color: #fff; }
     .cal-day.today { border: 1px solid #383E42; }
-    /* Спецефекти кнопок: плавний підйом, відгук на натискання, світловий блиск */
-    .fx-btn { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: transform 0.18s cubic-bezier(.2,.7,.3,1), box-shadow 0.22s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease !important; }
-    .fx-btn::after { content: ""; position: absolute; top: 0; left: -130%; width: 55%; height: 100%; background: linear-gradient(120deg, transparent, rgba(255,255,255,0.45), transparent); transform: skewX(-20deg); transition: left 0.6s ease; pointer-events: none; z-index: 1; }
+    /* Спецефекти кнопок: плавний підйом і відгук на натискання */
+    .fx-btn { position: relative; -webkit-tap-highlight-color: transparent; transition: transform 0.18s cubic-bezier(.2,.7,.3,1), box-shadow 0.22s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease !important; }
     @media (hover: hover) {
       .fx-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(56,62,66,0.18); }
-      .fx-btn:hover::after { left: 140%; }
     }
     .fx-btn:active { transform: translateY(0) scale(0.96); box-shadow: 0 2px 6px rgba(56,62,66,0.2); }
+    .faq-question { transition: transform 0.18s cubic-bezier(.2,.7,.3,1), box-shadow 0.22s ease, background-color 0.2s ease; -webkit-tap-highlight-color: transparent; }
+    @media (hover: hover) { .faq-question:hover { transform: translateY(-1px) scale(1.01); box-shadow: 0 4px 14px rgba(56,62,66,0.12); background-color: #fff; } }
+    .faq-question:active { transform: scale(0.99); }
   </style>
 </head>
 <body>
@@ -763,9 +762,9 @@
             {FAQ_ITEMS.map((item, i) => (
               <div key={i} style={{ borderBottom: i < FAQ_ITEMS.length - 1 ? "1px solid #ededed" : "none" }}>
                 <button type="button" onClick={() => setOpen(open === i ? null : i)}
-                  className="w-full flex items-center justify-between px-5 py-4 text-left transition-colors hover:bg-amber-50">
+                  className="faq-question w-full flex items-center justify-between px-5 py-4 text-left">
                   <span className="text-sm font-semibold pr-4" style={{ color: "#383E42" }}>{item.q}</span>
-                  <IconChevronDown style={{ color: "#FFFFFF", transition: "transform 0.3s", transform: open === i ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }} />
+                  <IconChevronDown style={{ color: "#383E42", transition: "transform 0.3s", transform: open === i ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }} />
                 </button>
                 {open === i && (
                   <div className="px-5 pb-4 text-sm leading-relaxed" style={{ color: "#4B5563", backgroundColor: "#f4f4f5" }}>
