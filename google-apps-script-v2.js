@@ -58,7 +58,7 @@ function doPost(e) {
       const row = [
         data.order_number || "", dateStr, "Нове",
         (data.first_name || "") + " " + (data.last_name || ""),
-        data.phone || "", data.city || "",
+        (data.phone ? "'" + data.phone : ""), data.city || "",
         it.basket_type || "", it.construction_type || "",
         it.color || (it.color_custom || ""), it.pattern || (it.pattern_custom || ""),
         w || "", h || "", d || "", qty,
@@ -171,7 +171,7 @@ function setupSourcesSheet(ss) {
 
   // Приклад-рядок + формули (Джерело в «Замовлення» — колонка AB).
   sheet.appendRow(["OSBB-Lvivska12", "ОСББ", "вул. Львівська 12", "[ПІБ]", "[тел]", 200, "", ""]);
-  sheet.getRange("G2").setFormula("=COUNTIF('Замовлення'!$AB:$AB, $A2)");
+  sheet.getRange("G2").setFormula("=COUNTIF('Замовлення'!$AB:$AB; $A2)");
   sheet.getRange("H2").setFormula("=G2*F2");
   sheet.getRange("F2:F").setNumberFormat("#,##0 \"грн\"");
   sheet.getRange("H2:H").setNumberFormat("#,##0 ₴");
