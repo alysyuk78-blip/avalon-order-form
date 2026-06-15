@@ -90,6 +90,14 @@
     .help-menu a { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 9px; color: #383E42; text-decoration: none; font-size: 13px; font-weight: 600; }
     .help-menu a:hover { background: #f2f2f2; }
     .optional-details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: #383E42; font-size: 13px; font-weight: 700; }
+    .palette-details summary::-webkit-details-marker { display: none; }
+    .palette-summary { justify-content: space-between; gap: 10px; padding: 0 14px; border: 1px solid #b8bec2; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(56,62,66,0.08); }
+    .palette-summary:hover { border-color: #383E42; background: #f8f8f8; }
+    .palette-summary-open { display: none; }
+    .palette-summary svg { flex-shrink: 0; transition: transform 0.2s ease; }
+    .palette-details[open] .palette-summary-closed { display: none; }
+    .palette-details[open] .palette-summary-open { display: inline; }
+    .palette-details[open] .palette-summary svg { transform: rotate(180deg); }
     .metal-palette-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .metal-palette-grid img { display: block; width: 100%; height: auto; border: 1px solid #e2e0dc; border-radius: 8px; background: #fff; }
     .choice-row { min-height: 44px; }
@@ -1590,8 +1598,12 @@
                     </div>
                     <StyledInput aria-label="Колір або код RAL *" placeholder="Наприклад: RAL 3020, синій, бежевий..." value={form.color_custom}
                       onChange={e => set("color_custom", e.target.value)} error={fieldError("color_custom")} />
-                    <details className="optional-details">
-                      <summary>Розгорнути палітру кольорів металу</summary>
+                    <details className="optional-details palette-details">
+                      <summary className="palette-summary fx-btn">
+                        <span className="palette-summary-closed">Палітра кольорів</span>
+                        <span className="palette-summary-open">Згорнути палітру кольорів</span>
+                        <IconChevronDown />
+                      </summary>
                       <div className="metal-palette-grid pb-3">
                         {SETTINGS.metal_palette_images.map((src, i) => (
                           <img key={src} loading="lazy" src={src} alt={`Палітра кольорів металу RAL, сторінка ${i + 1}`} />
