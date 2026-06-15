@@ -581,7 +581,7 @@
     function StyledInput({ className = "", error = false, ...props }) {
       return (
         <input
-          className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none transition-all ${error ? "field-error" : ""} ${className}`}
+          className={`w-full rounded-lg border px-3.5 py-2.5 text-sm focus:outline-none transition-all ${error ? "field-error" : ""} ${className}`}
           style={{ borderColor: error ? "#ef4444" : "#d1d5db", backgroundColor: error ? "#fff5f5" : undefined }}
           {...props}
         />
@@ -770,7 +770,12 @@
           <div className="p-5 border-t" style={{ borderColor: "#ededed", backgroundColor: "#f2f2f2" }}>
             <p className="text-xs text-gray-500 mb-3">Не знайшли відповідь? Напишіть нам у Telegram — відповімо швидко!</p>
             <a href="https://t.me/avalon_metal_design" target="_blank" rel="noopener noreferrer" className="tg-btn">
-              <span className="tg-shake"><IconMessageCircle /></span> Написати в Telegram
+              <span style={{ display: "inline-flex" }}>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="20" height="20" style={{ display: "block" }}>
+                  <circle cx="120" cy="120" r="120" fill="#229ED9" />
+                  <path fill="#fff" d="M44.7 116.9c34.8-15.1 58-25.1 69.6-30 33.1-13.8 40-16.2 44.5-16.2 1 0 3.2.2 4.6 1.4 1.2 1 1.5 2.3 1.7 3.3.2.9.4 3.1.2 4.7-1.8 18.8-9.5 64.5-13.5 85.6-1.7 8.9-5 11.9-8.2 12.2-6.9.6-12.2-4.6-18.9-9-10.5-6.9-16.4-11.2-26.6-17.9-11.8-7.8-4.1-12 2.6-19 1.8-1.8 32.3-29.6 32.9-32.1.1-.3.1-1.5-.6-2.1-.7-.6-1.7-.4-2.5-.2-1.1.2-17.8 11.3-50.4 33.3-4.8 3.3-9.1 4.9-12.9 4.8-4.3-.1-12.4-2.4-18.5-4.4-7.5-2.4-13.4-3.7-12.9-7.8.3-2.2 3.2-4.4 8.8-6.6z" />
+                </svg>
+              </span> Написати в Telegram
             </a>
           </div>
         </div>
@@ -1376,7 +1381,7 @@
                         style={{
                           backgroundColor: c.hex, color: isLight ? "#111" : "#fff",
                           border: selected ? "1px solid #383E42" : `1px solid ${isLight ? "#ccc" : "rgba(255,255,255,0.18)"}`,
-                          boxShadow: selected ? "0 0 0 2px rgba(56,62,66,0.4)" : "none",
+                          boxShadow: selected ? "0 0 0 2px #fff, 0 0 0 4px #383E42" : "none",
                           height: "60px", lineHeight: "1.2"
                         }}>
                         {c.label}
