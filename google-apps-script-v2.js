@@ -15,6 +15,7 @@ function doPost(e) {
       setupSheet(sheet);
     }
     if (sheet.getLastRow() === 0) setupSheet(sheet);
+    if (!ss.getSheetByName("Джерела")) setupSourcesSheet(ss);
 
     const data = JSON.parse(e.postData.contents);
 
@@ -63,7 +64,8 @@ function doPost(e) {
         data.delivery_address || "", data.delivery_date || "",
         data.payment_method || "", data.how_found || (data.how_found_custom || ""),
         data.notes || "",
-        it.ac_brand || "", it.ac_model || ""
+        it.ac_brand || "", it.ac_model || "",
+        data.referral_source || "direct"
       ];
       sheet.appendRow(row);
       lastRow = sheet.getLastRow();
@@ -91,7 +93,7 @@ function setupSheet(sheet) {
     "W (мм)","H (мм)","D (мм)","Кількість","Площа (м²)",
     "Вартість","Передоплата 50%","Собівартість","Прибуток",
     "Доставка","Адреса","Дата доставки","Оплата","Як дізнались","Примітки",
-    "Бренд кондиц.","Модель кондиц."
+    "Бренд кондиц.","Модель кондиц.","Джерело"
   ];
   sheet.appendRow(headers);
 
@@ -118,6 +120,37 @@ function setupSheet(sheet) {
     {t:"Завершено",bg:"#E2E3E5",fg:"#383D41"}, {t:"Скасовано",bg:"#F8D7DA",fg:"#721C24"}
   ].map(r => SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(r.t).setBackground(r.bg).setFontColor(r.fg).setBold(true).setRanges([sr]).build());
   sheet.setConditionalFormatRules(cfRules);
+}
+
+/**
+ * Задача 3 — реєстр джерел і облік комісій.
+ * Аркуш «Джерела»: КОД → ставка, к-сть замовлень (COUNTIF по колонці «Джерело»
+ * аркуша «Замовлення», col AB) і нараховано (Замовлень × Ставка).
+ * Комісія рахується за фактом замовлення, не за перехід.
+ * Запустити вручну один раз АБО створиться автоматично при першому замовленні.
+ */
+function setupSourcesSheet(ss) {
+  ss = ss || SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("Джерела");
+  if (sheet) return sheet; // наявний не перезаписуємо
+  sheet = ss.insertSheet("Джерела");
+
+  const headers = ["КОД","Тип","Адреса/назва","Відповідальний","Контакт","Ставка, грн","Замовлень","Нараховано"];
+  sheet.appendRow(headers);
+  const hr = sheet.getRange(1, 1, 1, headers.length);
+  hr.setFontWeight("bold").setBackground("#1B4332").setFontColor("#C9A84C")
+    .setHorizontalAlignment("center").setVerticalAlignment("middle").setWrap(true).setFontSize(10);
+  sheet.setRowHeight(1, 40);
+  sheet.setFrozenRows(1);
+  [160, 90, 220, 160, 140, 110, 100, 120].forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
+
+  // Приклад-рядок + формули (Джерело в «Замовлення» — колонка AB).
+  sheet.appendRow(["OSBB-Lvivska12", "ОСББ", "вул. Львівська 12", "[ПІБ]", "[тел]", 200, "", ""]);
+  sheet.getRange("G2").setFormula("=COUNTIF('Замовлення'!$AB:$AB, $A2)");
+  sheet.getRange("H2").setFormula("=G2*F2");
+  sheet.getRange("F2:F").setNumberFormat("#,##0 \"грн\"");
+  sheet.getRange("H2:H").setNumberFormat("#,##0 ₴");
+  return sheet;
 }
 
 function doGet(e) {
