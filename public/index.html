@@ -1158,7 +1158,7 @@
         return "model";
       });
       const [acDims, setAcDims] = useState({ w: "", h: "", d: "" });
-      const [coversBrackets, setCoversBrackets] = useState(false);
+      const [coversBrackets, setCoversBrackets] = useState(null);
       const [acModels, setAcModels] = useState([]);
       const [selBrand, setSelBrand] = useState("");
       const [selModel, setSelModel] = useState("");
@@ -1170,6 +1170,7 @@
         if (mode === sizeMode) return;
         setSizeMode(mode);
         setAcDims({ w: "", h: "", d: "" });
+        setCoversBrackets(null);
         setSelBrand(""); setSelModel("");
         setForm(f => ({ ...f, size_w: "", size_h: "", size_d: "", block_w: "", block_h: "", block_d: "", ac_brand: "", ac_model: "" }));
       };
@@ -1186,7 +1187,7 @@
           setForm(f => ({ ...f, block_w: "", block_h: "", block_d: "" }));
           return;
         }
-        const res = basketFromAC({ ac_w: acDims.w, ac_h: acDims.h, ac_d: acDims.d, coversBrackets });
+        const res = basketFromAC({ ac_w: acDims.w, ac_h: acDims.h, ac_d: acDims.d, coversBrackets: coversBrackets === true });
         setForm(f => ({ ...f, block_w: acDims.w, block_h: acDims.h, block_d: acDims.d,
           ...(res ? { size_w: res.size_w, size_h: res.size_h, size_d: res.size_d } : {}) }));
       }, [sizeMode, acDims, coversBrackets, selModel, acModels]);
@@ -1221,7 +1222,7 @@
       // Field-level validation
       const fieldError = (field) => {
         if (!showErrors && !touched[field]) return false;
-        const basketFields = ["construction_type", "basket_type", "quantity", "color", "color_custom", "pattern", "size_w", "size_h", "size_d", "ac_brand", "ac_model"];
+        const basketFields = ["construction_type", "basket_type", "quantity", "color", "color_custom", "pattern", "size_w", "size_h", "size_d", "ac_brand", "ac_model", "covers_brackets"];
         if (basketFields.includes(field) && items.length > 0 && !basketTouched) return false;
         switch (field) {
           case "first_name": return !form.first_name.trim();
@@ -1237,6 +1238,7 @@
           case "size_d": return sizeMode !== "model" && !(Number(form.size_d) > 0);
           case "ac_brand": return sizeMode === "model" && !(form.ac_brand || "").trim();
           case "ac_model": return sizeMode === "model" && !(form.ac_model || "").trim();
+          case "covers_brackets": return sizeMode === "ac" && coversBrackets === null;
           case "delivery_location": return !form.delivery_location;
           case "transport": return !form.transport;
           case "delivery_date": return !form.delivery_date;
@@ -1257,6 +1259,7 @@
       const colorComplete = (s) => !!(s.color && !((s.color === "Інші кольори" || s.color === "Інший") && !(s.color_custom || "").trim()));
       const basketComplete = (s) =>
         !!(s.construction_type && s.basket_type && colorComplete(s) && s.pattern && Number(s.quantity) >= 1 &&
+           (sizeMode !== "ac" || coversBrackets !== null) &&
            (sizeMode === "model" ? hasBrandModel(s) : hasSize(s)));
       const basketTouched = !!(form.construction_type || form.basket_type || form.color || form.pattern ||
            form.size_w || form.size_h || form.size_d || form.ac_brand || form.ac_model || (form.quantity && Number(form.quantity) > 0));
@@ -1268,6 +1271,7 @@
           size_w: Number(s.size_w) || 0, size_h: Number(s.size_h) || 0, size_d: Number(s.size_d) || 0,
           block_w: Number(s.block_w) || 0, block_h: Number(s.block_h) || 0, block_d: Number(s.block_d) || 0,
           ac_brand: (s.ac_brand || "").trim(), ac_model: (s.ac_model || "").trim(),
+          covers_brackets: coversBrackets === true,
           quantity: Number(s.quantity) || 1,
           price_total: p.total || 0, price_per_unit: p.perUnit || 0, price_per_m2: p.pricePerM2 || 0,
           area_m2: p.areaM2 || 0, cost_total: p.costTotal || 0, profit: p.profit || 0,
@@ -1278,7 +1282,7 @@
           color: "", color_custom: "", pattern: "", pattern_custom: "", size_w: "", size_h: "", size_d: "",
           ac_brand: "", ac_model: "", block_w: "", block_h: "", block_d: "" }));
         setSizeMode("model"); setAcDims({ w: "", h: "", d: "" });
-        setCoversBrackets(false); setSelBrand(""); setSelModel(""); setPatternFile(null);
+        setCoversBrackets(null); setSelBrand(""); setSelModel(""); setPatternFile(null);
       };
       const addBasket = () => {
         if (!basketComplete(form)) {
@@ -1390,7 +1394,7 @@
         setItems([]);
         setCurrentStep(1);
         setSizeMode("model"); setAcDims({ w: "", h: "", d: "" });
-        setCoversBrackets(false); setSelBrand(""); setSelModel("");
+        setCoversBrackets(null); setSelBrand(""); setSelModel("");
         clearDraft();
         setHasDraft(false);
         setForm({
@@ -1703,10 +1707,28 @@
                         </div>
                       ))}
                     </div>
-                    <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "#383E42" }}>
-                      <input type="checkbox" checked={coversBrackets} onChange={e => setCoversBrackets(e.target.checked)} />
-                      Кошик закриває монтажні кронштейни — збільшена висота кошика, що впливає на вартість
-                    </label>
+                    <div className={`rounded-xl p-3 ${fieldError("covers_brackets") ? "field-error" : ""}`}
+                      style={{ border: fieldError("covers_brackets") ? "1px solid #ef4444" : "1px solid #d4d7da", backgroundColor: fieldError("covers_brackets") ? "#fff5f5" : "#f8f8f8" }}>
+                      <p className="text-sm font-semibold mb-1" style={{ color: "#383E42" }}>Чи має кошик закривати монтажні кронштейни? *</p>
+                      <p className="text-xs mb-3" style={{ color: "#6B7280" }}>Оберіть один варіант. Закриті кронштейни збільшують висоту кошика та впливають на вартість.</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { value: false, label: "Ні, стандартна висота" },
+                          { value: true, label: "Так, закрити кронштейни" }
+                        ].map(option => (
+                          <button key={String(option.value)} type="button" onClick={() => setCoversBrackets(option.value)}
+                            className="fx-btn rounded-lg px-3 py-2 text-xs font-semibold"
+                            style={{
+                              backgroundColor: coversBrackets === option.value ? "#383E42" : "#fff",
+                              color: coversBrackets === option.value ? "#fff" : "#383E42",
+                              border: coversBrackets === option.value ? "1px solid #383E42" : "1px solid #b8bec2"
+                            }}>
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                      {fieldError("covers_brackets") && <div style={{ marginTop: 7, fontSize: 11, color: "#ef4444", fontWeight: 600 }}>Оберіть один із двох варіантів</div>}
+                    </div>
                     <div className="rounded-xl p-3 text-center" style={{ backgroundColor: "#f2f3f4", border: "1px solid #d4d7da" }}>
                       <div className="text-xs" style={{ color: "#383E42" }}>Розрахований розмір кошика (Ш×В×Г):</div>
                       <div className="text-lg font-bold" style={{ color: "#383E42" }}>
