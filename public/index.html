@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
-    * { font-family: 'Inter', 'Segoe UI', sans-serif !important; box-sizing: border-box; }
+    * { font-family: 'Inter', 'Segoe UI', sans-serif !important; box-sizing: border-box; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
     body { margin: 0; background-color: #f2f2f2; }
     .dim-card { transition: box-shadow 0.3s ease, transform 0.2s ease; }
     @media (hover: hover) { .dim-card:hover { box-shadow: 0 8px 32px rgba(56,62,66,0.18); transform: translateY(-2px); } }
@@ -28,9 +28,9 @@
     @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     .fade-in { animation: fadeInUp 0.55s ease both; }
     .header-glow { background: radial-gradient(ellipse at 50% 0%, rgba(56,62,66,0.12) 0%, transparent 70%); }
-    .call-btn { transition: all 0.2s ease; border: 1.5px solid #383E42; color: #383E42; background: transparent; border-radius: 10px; padding: 10px 22px; font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; letter-spacing: 0.04em; -webkit-tap-highlight-color: transparent; text-decoration: none; }
-    @media (hover: hover) { .call-btn:hover { background: #383E42; color: #383E42; box-shadow: 0 4px 16px rgba(56,62,66,0.3); transform: translateY(-1px); } }
-    .call-btn:active { background: #383E42; color: #383E42; transform: scale(0.97); }
+    .call-btn { transition: all 0.2s ease; border: 1px solid #383E42; color: #383E42; background: transparent; border-radius: 10px; padding: 10px 22px; font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; letter-spacing: 0.04em; -webkit-tap-highlight-color: transparent; text-decoration: none; }
+    @media (hover: hover) { .call-btn:hover { background: #383E42; color: #fff; box-shadow: 0 4px 16px rgba(56,62,66,0.3); transform: translateY(-1px); } }
+    .call-btn:active { background: #383E42; color: #fff; transform: scale(0.97); }
     @keyframes phoneShake { 0%,100%{transform:rotate(0deg)} 15%{transform:rotate(-15deg)} 30%{transform:rotate(12deg)} 45%{transform:rotate(-10deg)} 60%{transform:rotate(8deg)} 75%{transform:rotate(-5deg)} 90%{transform:rotate(3deg)} }
     .phone-shake { animation: phoneShake 0.7s ease infinite; display: inline-block; }
     @keyframes submitPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(56,62,66,0.5), 0 4px 20px rgba(56,62,66,0.35); } 50% { box-shadow: 0 0 0 10px rgba(56,62,66,0), 0 4px 20px rgba(56,62,66,0.35); } }
@@ -42,10 +42,10 @@
     .submit-ready:active:not(:disabled) { transform: scale(0.97) !important; animation: none !important; }
     .upload-zone { border: 2px dashed #383E4255; border-radius: 10px; padding: 16px; text-align: center; cursor: pointer; transition: all 0.2s ease; background: #f4f4f5; }
     .upload-zone:hover { border-color: #383E42; background: #efefef; }
-    input[type="text"], input[type="number"], textarea, select { border-radius: 10px !important; border: 1.5px solid #e2e0dc !important; transition: border-color 0.2s ease, box-shadow 0.2s ease !important; box-sizing: border-box !important; max-width: 100% !important; }
-    input[type="text"]:focus, input[type="number"]:focus, textarea:focus { border-color: #383E42 !important; box-shadow: 0 0 0 3px rgba(56,62,66,0.08) !important; outline: none !important; }
-    .tg-btn { transition: all 0.2s ease; border: 1.5px solid #229ED9; color: #229ED9; background: transparent; border-radius: 10px; padding: 10px 22px; font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; letter-spacing: 0.04em; text-decoration: none; }
-    .tg-btn:hover { background: #229ED9; color: #fff; box-shadow: 0 4px 16px rgba(34,158,217,0.3); transform: translateY(-1px); }
+    input[type="text"], input[type="number"], textarea, select { border-radius: 10px !important; border: 1px solid #e4e1db !important; letter-spacing: 0.01em !important; color: #1a1d1f !important; transition: border-color 0.2s ease, box-shadow 0.2s ease !important; box-sizing: border-box !important; max-width: 100% !important; }
+    input[type="text"]:focus, input[type="number"]:focus, textarea:focus { border-color: #383E42 !important; box-shadow: 0 0 0 2px rgba(56,62,66,0.06) !important; outline: none !important; }
+    .tg-btn { transition: all 0.2s ease; border: 1px solid #383E42; color: #383E42; background: transparent; border-radius: 10px; padding: 10px 22px; font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; letter-spacing: 0.04em; text-decoration: none; }
+    .tg-btn:hover { background: #383E42; color: #fff; box-shadow: 0 4px 16px rgba(56,62,66,0.3); transform: translateY(-1px); }
     @keyframes tgShake { 0%,100%{transform:rotate(0deg)} 15%{transform:rotate(-15deg)} 30%{transform:rotate(12deg)} 45%{transform:rotate(-10deg)} 60%{transform:rotate(8deg)} 75%{transform:rotate(-5deg)} 90%{transform:rotate(3deg)} }
     .tg-shake { animation: tgShake 0.7s ease infinite; display: inline-block; }
     .field-error input, .field-error select, input.field-error, select.field-error { border-color: #ef4444 !important; background-color: #fff5f5 !important; }
@@ -56,7 +56,7 @@
     .cal-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.3); }
     .cal-modal { background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.2); max-width: 340px; width: 90%; }
     .cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-    .cal-nav { background: none; border: 1.5px solid #e2e0dc; border-radius: 8px; width: 32px; height: 32px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; color: #383E42; }
+    .cal-nav { background: none; border: 1px solid #e2e0dc; border-radius: 8px; width: 32px; height: 32px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; color: #383E42; }
     .cal-nav:hover { background: #f2f2f2; }
     .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
     .cal-day-label { font-size: 11px; font-weight: 600; color: #9CA3AF; padding: 4px; }
@@ -64,7 +64,7 @@
     .cal-day:hover:not(:disabled) { background: #f2f2f2; }
     .cal-day:disabled { color: #d1d5db; cursor: default; }
     .cal-day.selected { background: #383E42; color: #fff; }
-    .cal-day.today { border: 1.5px solid #383E42; }
+    .cal-day.today { border: 1px solid #383E42; }
   </style>
 </head>
 <body>
@@ -628,7 +628,7 @@
           {open && ReactDOM.createPortal(
             <div ref={dropRef} style={{
               position: "fixed", top: pos.top, left: pos.left, width: pos.width, zIndex: 9999,
-              background: "#fff", border: "1.5px solid #e2e0dc", borderRadius: 10,
+              background: "#fff", border: "1px solid #e2e0dc", borderRadius: 10,
               boxShadow: "0 8px 24px rgba(0,0,0,0.12)", maxHeight: 220, overflowY: "auto"
             }}>
               {options.map(o => (
@@ -1375,7 +1375,7 @@
                         className="color-btn rounded-lg text-xs font-semibold flex items-center justify-center text-center px-1"
                         style={{
                           backgroundColor: c.hex, color: isLight ? "#111" : "#fff",
-                          border: selected ? "1.5px solid #383E42" : `1px solid ${isLight ? "#ccc" : "rgba(255,255,255,0.18)"}`,
+                          border: selected ? "1px solid #383E42" : `1px solid ${isLight ? "#ccc" : "rgba(255,255,255,0.18)"}`,
                           boxShadow: selected ? "0 0 0 2px rgba(56,62,66,0.4)" : "none",
                           height: "60px", lineHeight: "1.2"
                         }}>
@@ -1387,7 +1387,7 @@
                     className="color-btn rounded-lg text-xs font-semibold bg-gray-100 flex items-center justify-center text-center px-1"
                     style={{
                       color: "#111",
-                      border: form.color === "Інші кольори" ? "1.5px solid #383E42" : "1px solid #ccc",
+                      border: form.color === "Інші кольори" ? "1px solid #383E42" : "1px solid #ccc",
                       boxShadow: form.color === "Інші кольори" ? "0 0 0 2px rgba(56,62,66,0.4)" : "none",
                       height: "60px"
                     }}>
@@ -1451,7 +1451,7 @@
                       style={{
                         backgroundColor: sizeMode === m.id ? "#383E42" : "#fff",
                         color: sizeMode === m.id ? "#fff" : "#383E42",
-                        border: sizeMode === m.id ? "1.5px solid #383E42" : "1.5px solid #d1d5db"
+                        border: sizeMode === m.id ? "1px solid #383E42" : "1px solid #d1d5db"
                       }}>
                       {m.label}
                     </button>
@@ -1566,7 +1566,7 @@
                         style={{
                           backgroundColor: form.delivery_location === opt.val ? "#383E42" : "#fff",
                           color: form.delivery_location === opt.val ? "#fff" : "#383E42",
-                          border: form.delivery_location === opt.val ? "1.5px solid #383E42" : fieldError("delivery_location") ? "1.5px solid #ef4444" : "1.5px solid #d1d5db"
+                          border: form.delivery_location === opt.val ? "1px solid #383E42" : fieldError("delivery_location") ? "1px solid #ef4444" : "1px solid #d1d5db"
                         }}>
                         {opt.label}
                       </button>
