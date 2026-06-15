@@ -60,24 +60,29 @@ function formatDeliveryDate(dateStr) {
   return d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+// Дата/час у поясі Europe/Kyiv (сервер Vercel працює в UTC — не покладаємось на локаль).
+function kyivParts(date) {
+  const fmt = new Intl.DateTimeFormat("uk-UA", {
+    timeZone: "Europe/Kyiv",
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  });
+  const p = {};
+  for (const part of fmt.formatToParts(date)) p[part.type] = part.value;
+  return p; // { day, month, year, hour, minute }
+}
+
+// Формат ДД.ММ.РРРР ГГ:ХХ, київський час.
 function formatNow() {
-  const now = new Date();
-  const days = ["Нд", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
-  const dd = String(now.getDate()).padStart(2, "0");
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const yyyy = now.getFullYear();
-  const hh = String(now.getHours()).padStart(2, "0");
-  const min = String(now.getMinutes()).padStart(2, "0");
-  return `${days[now.getDay()]} ${dd}.${mm}.${yyyy}, ${hh}:${min}`;
+  const p = kyivParts(new Date());
+  return `${p.day}.${p.month}.${p.year} ${p.hour}:${p.minute}`;
 }
 
 function generateOrderNumber() {
-  const now = new Date();
-  const dd = String(now.getDate()).padStart(2, "0");
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const yy = String(now.getFullYear()).slice(-2);
+  const p = kyivParts(new Date());
+  const yy = p.year.slice(-2);
   const xxx = String(Math.floor(Math.random() * 900) + 100);
-  return `ORD-${dd}${mm}${yy}-${xxx}`;
+  return `ORD-${p.day}${p.month}${yy}-${xxx}`;
 }
 
 // ============================================================
