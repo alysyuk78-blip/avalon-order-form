@@ -109,6 +109,7 @@
       .step-nav { flex-direction: column-reverse; }
       .step-nav button { width: 100%; }
       .metal-palette-grid { grid-template-columns: 1fr; }
+      .bracket-choice-grid { grid-template-columns: 1fr !important; }
     }
   </style>
 </head>
@@ -1710,20 +1711,23 @@
                     <div className={`rounded-xl p-3 ${fieldError("covers_brackets") ? "field-error" : ""}`}
                       style={{ border: fieldError("covers_brackets") ? "1px solid #ef4444" : "1px solid #d4d7da", backgroundColor: fieldError("covers_brackets") ? "#fff5f5" : "#f8f8f8" }}>
                       <p className="text-sm font-semibold mb-1" style={{ color: "#383E42" }}>Чи має кошик закривати монтажні кронштейни? *</p>
-                      <p className="text-xs mb-3" style={{ color: "#6B7280" }}>Оберіть один варіант. Закриті кронштейни збільшують висоту кошика та впливають на вартість.</p>
-                      <div className="grid grid-cols-2 gap-2">
+                      <p className="text-xs mb-3" style={{ color: "#6B7280" }}>Оберіть один варіант. Закриті кронштейни виглядають естетичніше, але збільшують висоту кошика та його вартість.</p>
+                      <div className="bracket-choice-grid grid grid-cols-2 gap-2">
                         {[
-                          { value: false, label: "Ні, стандартна висота" },
-                          { value: true, label: "Так, закрити кронштейни" }
+                          { value: true, title: "Так, закрити кронштейни", note: "Рекомендуємо · естетичніший вигляд · доплата близько 600 ₴", recommended: true },
+                          { value: false, title: "Ні, залишити відкритими", note: "Стандартна висота · без доплати", recommended: false }
                         ].map(option => (
                           <button key={String(option.value)} type="button" onClick={() => setCoversBrackets(option.value)}
-                            className="fx-btn rounded-lg px-3 py-2 text-xs font-semibold"
+                            className="fx-btn rounded-lg px-3 py-3 text-left"
                             style={{
                               backgroundColor: coversBrackets === option.value ? "#383E42" : "#fff",
                               color: coversBrackets === option.value ? "#fff" : "#383E42",
-                              border: coversBrackets === option.value ? "1px solid #383E42" : "1px solid #b8bec2"
+                              border: coversBrackets === option.value ? "1px solid #383E42" : option.recommended ? "2px solid #383E42" : "1px solid #b8bec2"
                             }}>
-                            {option.label}
+                            <span className="block text-xs font-bold">{option.title}</span>
+                            <span className="block mt-1" style={{ fontSize: 10, lineHeight: 1.35, fontWeight: option.recommended ? 700 : 400, opacity: coversBrackets === option.value ? 0.82 : option.recommended ? 1 : 0.68 }}>
+                              {option.note}
+                            </span>
                           </button>
                         ))}
                       </div>
