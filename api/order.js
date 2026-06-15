@@ -256,10 +256,6 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, order_number: "BOT-DETECTED" });
     }
 
-    // Generate order number
-    const orderNumber = generateOrderNumber();
-    const orderWithNumber = { ...order, order_number: orderNumber };
-
     // Read secrets from environment variables
     const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
     const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
@@ -269,6 +265,27 @@ module.exports = async function handler(req, res) {
     const TRELLO_LIST = process.env.TRELLO_LIST_ID;
 
     const results = [];
+
+    // --- Google Sheets (першим: Apps Script присвоює послідовний № ORD-ДДММРР-NNN і повертає його) ---
+    let orderNumber = null;
+    if (SHEETS_URL) {
+      try {
+        const shRes = await fetch(SHEETS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify({ timestamp: new Date().toISOString(), ...order }),
+        });
+        const shData = await shRes.json().catch(() => null);
+        if (shData && shData.order_number) orderNumber = shData.order_number;
+        results.push("gs:ok");
+      } catch (err) {
+        console.error("Google Sheets error:", err);
+        results.push("gs:err");
+      }
+    }
+    // Фолбек: Sheets не налаштовано/недоступний → локальний номер (без гарантії послідовності).
+    if (!orderNumber) orderNumber = generateOrderNumber();
+    const orderWithNumber = { ...order, order_number: orderNumber };
 
     // --- Telegram ---
     if (TG_TOKEN && TG_CHAT_ID) {
@@ -295,21 +312,6 @@ module.exports = async function handler(req, res) {
         });
       } catch (err) {
         console.error("Telegram production msg error:", err);
-      }
-    }
-
-    // --- Google Sheets ---
-    if (SHEETS_URL) {
-      try {
-        await fetch(SHEETS_URL, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: JSON.stringify({ timestamp: new Date().toISOString(), ...orderWithNumber }),
-        });
-        results.push("gs:ok");
-      } catch (err) {
-        console.error("Google Sheets error:", err);
-        results.push("gs:err");
       }
     }
 

@@ -7,7 +7,9 @@
  */
 
 function doPost(e) {
+  const lock = LockService.getScriptLock();
   try {
+    lock.waitLock(30000); // атомарна нумерація при одночасних замовленнях
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     let sheet = ss.getSheetByName("Замовлення");
     if (!sheet) {
@@ -18,6 +20,7 @@ function doPost(e) {
     if (!ss.getSheetByName("Джерела")) setupSourcesSheet(ss);
 
     const data = JSON.parse(e.postData.contents);
+    data.order_number = nextOrderNumber(); // послідовний № ORD-ДДММРР-NNN (авторитетно, перекриває клієнтський)
 
     // Позиції: кілька кошиків (data.items) або один кошик (старий формат). Один рядок на кошик.
     const MARKUP = 1 / (1 - 0.2593); // ~1.3503 — та сама націнка, що у формі
@@ -80,10 +83,32 @@ function doPost(e) {
     });
     if (lastRow <= 6) sheet.autoResizeColumns(1, 25);
 
-    return ContentService.createTextOutput(JSON.stringify({ status: "ok", row: lastRow })).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({ status: "ok", order_number: data.order_number, row: lastRow })).setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
     return ContentService.createTextOutput(JSON.stringify({ status: "error", message: error.toString() })).setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
   }
+}
+
+/**
+ * Послідовний номер замовлення ORD-ДДММРР-NNN (v2.4).
+ * NNN — порядковий у межах поточного місяця (Europe/Kiev), обнуляється 1-го числа.
+ * Лічильник у PropertiesService; атомарність забезпечує LockService у doPost.
+ */
+function nextOrderNumber() {
+  const tz = "Europe/Kiev";
+  const now = new Date();
+  const ddmmyy = Utilities.formatDate(now, tz, "ddMMyy");
+  const mmyy = Utilities.formatDate(now, tz, "MMyy");
+  const props = PropertiesService.getScriptProperties();
+  const storedMonth = props.getProperty("ord_month");
+  let counter = parseInt(props.getProperty("ord_counter") || "0", 10);
+  if (storedMonth !== mmyy) counter = 0; // новий місяць — обнулення
+  counter += 1;
+  props.setProperty("ord_month", mmyy);
+  props.setProperty("ord_counter", String(counter));
+  return "ORD-" + ddmmyy + "-" + String(counter).padStart(3, "0");
 }
 
 function setupSheet(sheet) {
