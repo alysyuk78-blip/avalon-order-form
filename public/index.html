@@ -65,6 +65,14 @@
     .cal-day:disabled { color: #d1d5db; cursor: default; }
     .cal-day.selected { background: #383E42; color: #fff; }
     .cal-day.today { border: 1px solid #383E42; }
+    /* Спецефекти кнопок: плавний підйом, відгук на натискання, світловий блиск */
+    .fx-btn { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: transform 0.18s cubic-bezier(.2,.7,.3,1), box-shadow 0.22s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease !important; }
+    .fx-btn::after { content: ""; position: absolute; top: 0; left: -130%; width: 55%; height: 100%; background: linear-gradient(120deg, transparent, rgba(255,255,255,0.45), transparent); transform: skewX(-20deg); transition: left 0.6s ease; pointer-events: none; z-index: 1; }
+    @media (hover: hover) {
+      .fx-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(56,62,66,0.18); }
+      .fx-btn:hover::after { left: 140%; }
+    }
+    .fx-btn:active { transform: translateY(0) scale(0.96); box-shadow: 0 2px 6px rgba(56,62,66,0.2); }
   </style>
 </head>
 <body>
@@ -1452,7 +1460,7 @@
                 <div className="grid grid-cols-3 gap-2 mb-4">
                   {[{ id: "basket", label: "Розмір кошика" }, { id: "ac", label: "Розміри блоку" }, { id: "model", label: "Бренд + модель" }].map(m => (
                     <button key={m.id} type="button" onClick={() => setSizeMode(m.id)}
-                      className="py-2 px-1 rounded-lg text-xs font-semibold transition-colors"
+                      className="fx-btn py-2 px-1 rounded-lg text-xs font-semibold transition-colors"
                       style={{
                         backgroundColor: sizeMode === m.id ? "#383E42" : "#fff",
                         color: sizeMode === m.id ? "#fff" : "#383E42",
@@ -1533,7 +1541,7 @@
               {/* Додавання кошиків + список позицій */}
               <div className="space-y-3">
                 <button type="button" onClick={addBasket}
-                  className="w-full py-3 rounded-xl text-sm font-bold transition-colors"
+                  className="fx-btn w-full py-3 rounded-xl text-sm font-bold transition-colors"
                   style={{ backgroundColor: "#fff", color: "#383E42", border: "2px dashed #383E42" }}>
                   + Додати кошик до замовлення
                 </button>
@@ -1567,7 +1575,7 @@
                     {[{val: "local", label: `${SETTINGS.local_city}`}, {val: "remote", label: "Інше місто"}].map(opt => (
                       <button key={opt.val} type="button"
                         onClick={() => { set("delivery_location", opt.val); set("transport", ""); set("delivery_address", ""); }}
-                        className="flex-1 py-2 px-3 rounded-lg text-sm font-semibold transition-colors"
+                        className="fx-btn flex-1 py-2 px-3 rounded-lg text-sm font-semibold transition-colors"
                         style={{
                           backgroundColor: form.delivery_location === opt.val ? "#383E42" : "#fff",
                           color: form.delivery_location === opt.val ? "#fff" : "#383E42",
