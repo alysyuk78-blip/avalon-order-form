@@ -26,6 +26,7 @@
     .gold-divider { background: linear-gradient(90deg, transparent, #383E42, transparent); }
     @keyframes fadeInUp { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
     @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .avalon-spin { display: inline-flex; animation: spin 0.9s linear infinite; vertical-align: middle; }
     .fade-in { animation: fadeInUp 0.55s ease both; }
     .header-glow { background: radial-gradient(ellipse at 50% 0%, rgba(56,62,66,0.12) 0%, transparent 70%); }
     .call-btn { transition: all 0.2s ease; border: 1px solid #383E42; color: #383E42; background: transparent; border-radius: 10px; padding: 10px 22px; font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; letter-spacing: 0.04em; -webkit-tap-highlight-color: transparent; text-decoration: none; }
@@ -282,61 +283,62 @@
     // NOVA POSHTA API (через серверний проксі /api/np)
     // ============================================================
     const NP_PROXY_URL = "/api/np";
+    const NP_ERROR_MSG = "Сервіс Нової пошти тимчасово недоступний. Спробуйте пізніше або введіть № відділення / адресу вручну.";
 
     async function npSearchCities(query) {
       if (!query || query.length < 2) return [];
-      try {
-        const res = await fetch(NP_PROXY_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            modelName: "AddressGeneral",
-            calledMethod: "searchSettlements",
-            methodProperties: { CityName: query, Limit: "20", Page: "1" }
-          })
-        });
-        const data = await res.json();
-        if (data.success && data.data && data.data[0] && data.data[0].Addresses) {
-          return data.data[0].Addresses.map(a => ({
-            ref: a.DeliveryCity,
-            name: a.Present,
-            mainDescription: a.MainDescription,
-            area: a.Area,
-            region: a.Region
-          }));
-        }
-      } catch (e) { console.error("NP city search error:", e); }
+      // Помилки мережі/проксі НЕ глушимо — кидаємо, щоб UI показав «сервіс недоступний».
+      const res = await fetch(NP_PROXY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          modelName: "AddressGeneral",
+          calledMethod: "searchSettlements",
+          methodProperties: { CityName: query, Limit: "20", Page: "1" }
+        })
+      });
+      if (!res.ok) throw new Error("NP proxy HTTP " + res.status);
+      const data = await res.json();
+      if (data.success && data.data && data.data[0] && data.data[0].Addresses) {
+        return data.data[0].Addresses.map(a => ({
+          ref: a.DeliveryCity,
+          name: a.Present,
+          mainDescription: a.MainDescription,
+          area: a.Area,
+          region: a.Region
+        }));
+      }
       return [];
     }
 
     async function npSearchWarehouses(cityRef, query) {
       if (!cityRef) return [];
-      try {
-        const props = { CityRef: cityRef, Limit: "150", Page: "1" };
-        if (query && query.length > 0) props.FindByString = query;
-        const res = await fetch(NP_PROXY_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            modelName: "Address",
-            calledMethod: "getWarehouses",
-            methodProperties: props
-          })
-        });
-        const data = await res.json();
-        if (data.success && data.data) {
-          return data.data.map(w => ({
-            ref: w.Ref,
-            description: w.Description,
-            shortAddress: w.ShortAddress,
-            number: w.Number,
-            typeOfWarehouse: w.TypeOfWarehouse,
-            categoryOfWarehouse: w.CategoryOfWarehouse,
-            totalMaxWeight: parseFloat(w.TotalMaxWeightAllowed) || 0,
-            placeMaxWeight: parseFloat(w.PlaceMaxWeightAllowed) || 0
-          }));
-        }
-      } catch (e) { console.error("NP warehouse search error:", e); }
+      const props = { CityRef: cityRef, Limit: "150", Page: "1" };
+      if (query && query.length > 0) props.FindByString = query;
+      // Помилки мережі/проксі НЕ глушимо — кидаємо, щоб UI показав «сервіс недоступний».
+      const res = await fetch(NP_PROXY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          modelName: "Address",
+          calledMethod: "getWarehouses",
+          methodProperties: props
+        })
+      });
+      if (!res.ok) throw new Error("NP proxy HTTP " + res.status);
+      const data = await res.json();
+      if (data.success && data.data) {
+        return data.data.map(w => ({
+          ref: w.Ref,
+          description: w.Description,
+          shortAddress: w.ShortAddress,
+          number: w.Number,
+          typeOfWarehouse: w.TypeOfWarehouse,
+          categoryOfWarehouse: w.CategoryOfWarehouse,
+          totalMaxWeight: parseFloat(w.TotalMaxWeightAllowed) || 0,
+          placeMaxWeight: parseFloat(w.PlaceMaxWeightAllowed) || 0
+        }));
+      }
       return [];
     }
 
@@ -365,6 +367,7 @@
       const [loading, setLoading] = useState(false);
       const [open, setOpen] = useState(false);
       const [focused, setFocused] = useState(false);
+      const [npError, setNpError] = useState(false);
       const wrapperRef = useRef(null);
       const debounceRef = useRef(null);
 
@@ -387,8 +390,15 @@
         if (text.length >= minChars) {
           setLoading(true);
           debounceRef.current = setTimeout(async () => {
-            const items = await onSearch(text);
-            setResults(items);
+            try {
+              const items = await onSearch(text);
+              setResults(items);
+              setNpError(false);
+            } catch (e) {
+              console.error("NP search error:", e);
+              setResults([]);
+              setNpError(true);
+            }
             setLoading(false);
             setOpen(true);
           }, 350);
@@ -449,7 +459,10 @@
           </div>
           {open && (
             <div style={dropdownStyle}>
-              {results.length === 0 && !loading && query.length >= minChars && (
+              {npError && !loading && (
+                <div style={{ padding: "12px", color: "#b45309", backgroundColor: "#fffbeb", fontSize: "12px", lineHeight: 1.4 }}>⚠️ {NP_ERROR_MSG}</div>
+              )}
+              {!npError && results.length === 0 && !loading && query.length >= minChars && (
                 <div style={{ padding: "12px", color: "#9CA3AF", fontSize: "13px", textAlign: "center" }}>{noResultsText}</div>
               )}
               {results.map((item, i) => (
@@ -503,16 +516,22 @@
       const [loaded, setLoaded] = useState(false);
       const [allWarehouses, setAllWarehouses] = useState([]);
       const [totalBefore, setTotalBefore] = useState(0);
+      const [loadError, setLoadError] = useState(false);
 
       useEffect(() => {
         setLoaded(false);
         setAllWarehouses([]);
         setTotalBefore(0);
+        setLoadError(false);
         if (cityRef) {
           npSearchWarehouses(cityRef, "").then(raw => {
             setTotalBefore(raw.length);
             const filtered = raw.filter(npAcceptsBasket);
             setAllWarehouses(filtered);
+            setLoaded(true);
+          }).catch(err => {
+            console.error("NP warehouses load error:", err);
+            setLoadError(true);
             setLoaded(true);
           });
         }
@@ -534,7 +553,7 @@
       return (
         <div>
           <NpAutocomplete
-            placeholder={loaded ? `${allWarehouses.length} відділень (від ${NP_MIN_WEIGHT_KG} кг) — введіть номер...` : "Завантаження відділень..."}
+            placeholder={loadError ? "Введіть № відділення або адресу вручну" : (loaded ? `${allWarehouses.length} відділень (від ${NP_MIN_WEIGHT_KG} кг) — введіть номер...` : "Завантаження відділень...")}
             value={value}
             minChars={0}
             onSearch={async (q) => {
@@ -570,6 +589,9 @@
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               Приховано {excluded} поштоматів/відділень з обмеженням ваги до {NP_MIN_WEIGHT_KG} кг
             </div>
+          )}
+          {loadError && (
+            <div style={{ marginTop: "4px", fontSize: "11px", color: "#b45309", lineHeight: 1.4 }}>⚠️ {NP_ERROR_MSG}</div>
           )}
         </div>
       );
@@ -1177,6 +1199,7 @@
         } catch (e) { /* ignore */ }
       }, []);
       const [submitting, setSubmitting] = useState(false);
+      const submittingRef = useRef(false); // синхронний захист від подвійного кліку (state оновлюється асинхронно)
       const [submitted, setSubmitted] = useState(false);
       const [patternFile, setPatternFile] = useState(null);
       const [showErrors, setShowErrors] = useState(false);
@@ -1377,6 +1400,7 @@
 
       const handleSubmit = async (e) => {
         e.preventDefault();
+        if (submittingRef.current) return; // вже відправляється — ігноруємо повторний клік
         if (!isFormValid) {
           setShowErrors(true);
           let msg = "Заповніть всі обов'язкові поля, позначені *";
@@ -1389,6 +1413,7 @@
           return;
         }
         setShowErrors(false);
+        submittingRef.current = true;
         setSubmitting(true);
         const orderItems = items;
         const grand = orderItems.reduce((s, it) => s + (it.price_total || 0), 0);
@@ -1422,6 +1447,7 @@
           setToast({ message: "Помилка при відправці. Спробуйте ще раз або зателефонуйте нам.", type: "error" });
         }
         setSubmitting(false);
+        submittingRef.current = false;
       };
 
       const resetForm = () => {
@@ -2033,7 +2059,11 @@
                 <button type="submit" disabled={submitting}
                   className={`submit-btn w-full sm:w-auto px-10 py-3 rounded-lg font-semibold text-white uppercase tracking-widest text-sm disabled:opacity-60${isFormValid ? " submit-ready" : ""}`}
                   style={{ backgroundColor: "#383E42" }}>
-                  {submitting ? "Надсилання..." : "Надіслати замовлення"}
+                  {submitting ? (
+                    <span className="inline-flex items-center justify-center gap-2">
+                      <span className="avalon-spin"><AvalonLogo size={18} /></span> Надсилання…
+                    </span>
+                  ) : "Надіслати замовлення"}
                 </button>
                 {SETTINGS.phone_contact && (
                   <a href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`} className="call-btn">
