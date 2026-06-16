@@ -26,8 +26,8 @@ var RAL7016 = "#383E42";   // заливка шапок
 var HDR_TEXT = "#FFFFFF";  // текст шапок
 var HDR_FONT = "Google Sans";
 
-// Календар для подій доставки. Шукаємо за назвою (підрядок); якщо не знайдено — дефолтний.
-var CAL_KEY = "Замовлення AVALON";
+// Календар для подій доставки. Шукаємо за словом у назві (без регістру); якщо немає — дефолтний.
+var CAL_KEY = "AVALON";
 
 function doPost(e) {
   var lock = LockService.getScriptLock();
@@ -138,9 +138,10 @@ function nextOrderNumber() {
 /** Календар «Замовлення AVALON» (за назвою-підрядком); якщо немає — дефолтний. */
 function getCal() {
   try {
+    var key = CAL_KEY.toLowerCase();
     var all = CalendarApp.getAllCalendars();
     for (var i = 0; i < all.length; i++) {
-      if (all[i].getName().indexOf(CAL_KEY) >= 0) return all[i];
+      if (all[i].getName().toLowerCase().indexOf(key) >= 0) return all[i];
     }
   } catch (e) {}
   return CalendarApp.getDefaultCalendar();
