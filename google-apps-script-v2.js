@@ -29,6 +29,7 @@ function doPost(e) {
     var sheet = ss.getSheetByName(SHEET_ORDERS);
     if (!sheet) { sheet = ss.insertSheet(SHEET_ORDERS); setupOrders(sheet); }
     if (sheet.getLastRow() === 0) setupOrders(sheet);
+    if (!ss.getSheetByName(SHEET_PAYOUTS)) setupPayouts(ss); // Дропшипери посилається на Виплати
     if (!ss.getSheetByName(SHEET_DROP)) setupDropshippers(ss);
 
     var data = JSON.parse(e.postData.contents);
@@ -274,13 +275,13 @@ function setupDashboard(ss) {
   for (var r = 15; r < 27; r++) {
     if (r === 15) sh.getRange(r, 1).setValue(curMonth);
     var m = "$A" + r;
-    sh.getRange(r, 2).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*N(' + O + '!$V$2:$V$5000)))');
-    sh.getRange(r, 3).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*N(' + O + '!$T$2:$T$5000)))');
-    sh.getRange(r, 4).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*N(' + O + '!$W$2:$W$5000)))');
+    sh.getRange(r, 2).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*' + O + '!$V$2:$V$5000))');
+    sh.getRange(r, 3).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*' + O + '!$T$2:$T$5000))');
+    sh.getRange(r, 4).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*' + O + '!$W$2:$W$5000))');
     sh.getRange(r, 5).setFormula('=IFERROR(D' + r + '/B' + r + ';"")');
-    sh.getRange(r, 6).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*N(' + O + '!$Y$2:$Y$5000)))');
+    sh.getRange(r, 6).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*' + O + '!$Y$2:$Y$5000))');
     // Витрати помісячно — через TEXT дати (Витрати!A = реальна дата)
-    sh.getRange(r, 7).setFormula('=IF(' + m + '="";"";SUMPRODUCT((TEXT(' + E + '!$A$2:$A$2000;"MM.yyyy")=' + m + ')*N(' + E + '!$D$2:$D$2000)))');
+    sh.getRange(r, 7).setFormula('=IF(' + m + '="";"";SUMPRODUCT((TEXT(' + E + '!$A$2:$A$2000;"MM.yyyy")=' + m + ')*' + E + '!$D$2:$D$2000))');
     // Чистий прибуток = Валовий − Комісії − Витрати
     sh.getRange(r, 8).setFormula('=IF(' + m + '="";"";D' + r + '-F' + r + '-G' + r + ')');
   }
