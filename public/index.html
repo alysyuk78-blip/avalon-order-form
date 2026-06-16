@@ -10,6 +10,29 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  <!-- Сторож: миттєве сповіщення власнику в Telegram при проблемах із формою -->
+  <script>
+    (function () {
+      var ALERT_URL = "/api/alert";
+      function alertOwner(type, message, details) {
+        try {
+          var k = "alert_" + type, now = Date.now();
+          if (now - (+(localStorage.getItem(k) || 0)) < 600000) return; // не частіше 1/10хв на браузер
+          localStorage.setItem(k, String(now));
+          var body = JSON.stringify({ type: type, message: message || "", details: details || "", url: location.href, ua: navigator.userAgent });
+          if (navigator.sendBeacon) navigator.sendBeacon(ALERT_URL, new Blob([body], { type: "application/json" }));
+          else fetch(ALERT_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: body, keepalive: true });
+        } catch (e) {}
+      }
+      window.__alertOwner = alertOwner;
+      window.addEventListener("error", function (e) { alertOwner("js_error", (e.message || "") + " @ " + (e.filename || "") + ":" + (e.lineno || ""), String((e.error && e.error.stack) || "")); });
+      window.addEventListener("unhandledrejection", function (e) { alertOwner("js_reject", String(e.reason || "")); });
+      setTimeout(function () {
+        var root = document.getElementById("root");
+        if (!root || root.children.length === 0) alertOwner("not_rendered", "Форма не відрендерилась (білий екран) за 15 секунд");
+      }, 15000);
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
@@ -1445,6 +1468,8 @@
         } catch (err) {
           console.error(err);
           setToast({ message: "Помилка при відправці. Спробуйте ще раз або зателефонуйте нам.", type: "error" });
+          // Сповістити власника з даними замовлення — щоб не загубити клієнта
+          try { if (window.__alertOwner) window.__alertOwner("submit_failed", "Не вдалось надіслати замовлення: " + (err && err.message || err), JSON.stringify(order)); } catch (_) {}
         }
         setSubmitting(false);
         submittingRef.current = false;
