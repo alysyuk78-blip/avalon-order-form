@@ -412,6 +412,12 @@ function rebuildAll() {
   SpreadsheetApp.flush();
 }
 
+/** Запусти один раз, щоб надати дозвіл на Google Календар (нова інтеграція). */
+function authorize() {
+  CalendarApp.getDefaultCalendar().getName();
+  SpreadsheetApp.getActiveSpreadsheet().getName();
+}
+
 function jsonOut(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
