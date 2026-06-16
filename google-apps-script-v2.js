@@ -178,6 +178,27 @@ function setupDropshippers(ss) {
   sh.getRange("J2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";H2:H-I2:I))');
   sh.getRange("E2:E").setNumberFormat("#,##0 ₴");
   sh.getRange("G2:J").setNumberFormat("#,##0 ₴");
+
+  // Інструкція (праворуч від даних, колонка L)
+  var info = [
+    ["📖 ЯК ПРАЦЮЮТЬ РЕФЕРАЛЬНІ ПОСИЛАННЯ (?ref=КОД)"],
+    ["Кожен партнер має унікальний КОД. Замовлення з його посилання автоматично привʼязується до нього і нараховує комісію."],
+    [""],
+    ["1) Додай рядок: КОД · Назва · Тип · Контакт · Ставка за кошик (стовпці A–E). Стовпці F–J рахуються самі."],
+    ["2) Дай партнеру його посилання або QR:"],
+    ["       https://avalon-order-form.vercel.app/?ref=КОД        (напр. …/?ref=OSBB-Lvivska12)"],
+    ["3) Партнер поширює посилання/QR (під'їзд, чат ОСББ, соцмережі)."],
+    ["4) Замовлення з його посилання → колонка «Джерело» = КОД → комісія нараховується в цьому рядку."],
+    ["5) Коли виплатив — запиши в аркуш «Виплати» (КОД + сума). «Залишок до виплати» оновиться сам."],
+    [""],
+    ["Схема КОДів:  ОСББ → OSBB-Вулиця№ (напр. OSBB-Lvivska12) ·  партнер → PARTNER-Імʼя ·  по під'їздах → OSBB-Вулиця№-podN"],
+    ["Без ?ref= замовлення має джерело «direct» — комісія 0."],
+    ["QR-код: будь-який безкоштовний генератор (напр. qr-code-generator.com) → встав посилання → друк наклейок."]
+  ];
+  var c = 12; // L
+  sh.getRange(1, c, info.length, 1).setValues(info).setWrap(true).setVerticalAlignment("top").setBackground("#FBF8EF");
+  sh.setColumnWidth(c, 640);
+  sh.getRange(1, c).setFontWeight("bold").setFontSize(11).setFontColor("#1B4332");
   return sh;
 }
 
