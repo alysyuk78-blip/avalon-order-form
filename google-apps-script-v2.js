@@ -26,6 +26,9 @@ var RAL7016 = "#383E42";   // заливка шапок
 var HDR_TEXT = "#FFFFFF";  // текст шапок
 var HDR_FONT = "Google Sans";
 
+// Календар для подій доставки. Шукаємо за назвою (підрядок); якщо не знайдено — дефолтний.
+var CAL_KEY = "Замовлення AVALON";
+
 function doPost(e) {
   var lock = LockService.getScriptLock();
   try {
@@ -132,6 +135,17 @@ function nextOrderNumber() {
 
 // ===================== GOOGLE КАЛЕНДАР =====================
 
+/** Календар «Замовлення AVALON» (за назвою-підрядком); якщо немає — дефолтний. */
+function getCal() {
+  try {
+    var all = CalendarApp.getAllCalendars();
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].getName().indexOf(CAL_KEY) >= 0) return all[i];
+    }
+  } catch (e) {}
+  return CalendarApp.getDefaultCalendar();
+}
+
 /**
  * Створює подію доставки/відправлення в Google Календарі (08:30 у день дати).
  * Нагадування: за 2 дні (о 08:30) і в сам день (о 08:30) — popup + email.
@@ -157,7 +171,7 @@ function addDeliveryEvent(order) {
       (order.delivery_address ? "\nАдреса: " + order.delivery_address : "") +
       "\nДжерело: " + (order.referral_source || "direct");
 
-    var cal = CalendarApp.getDefaultCalendar();
+    var cal = getCal();
     var ev = cal.createEvent(title, start, end, { description: desc });
     ev.removeAllReminders();
     ev.addPopupReminder(0);          // у день події, о 08:30
@@ -186,7 +200,7 @@ function onEditDelivery(e) {
     if (!orderNumber) return;
     var iso = toISODate(range.getValue());
 
-    var cal = CalendarApp.getDefaultCalendar();
+    var cal = getCal();
     var id = PropertiesService.getScriptProperties().getProperty("evt_" + orderNumber);
     var ev = id ? cal.getEventById(id) : null;
 
