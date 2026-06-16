@@ -303,11 +303,15 @@ function rebuildAll() {
   var old = ss.getSheetByName(SHEET_ORDERS);
   if (old) old.setName("Замовлення (архів " + Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM HH:mm") + ")");
   setupOrders(ss.insertSheet(SHEET_ORDERS, 0));
-  // порядок важливий: Дропшипери/Виплати/Витрати до Зведення (формули посилаються)
-  if (!ss.getSheetByName(SHEET_DROP)) setupDropshippers(ss);
-  if (!ss.getSheetByName(SHEET_PAYOUTS)) setupPayouts(ss);
-  if (!ss.getSheetByName(SHEET_EXPENSES)) setupExpenses(ss);
-  if (!ss.getSheetByName(SHEET_DASH)) setupDashboard(ss);
+  // Порядок важливий: Виплати раніше за Дропшипери (Дропшипери.I посилається на Виплати).
+  setupExpenses(ss);
+  setupPayouts(ss);
+  setupDropshippers(ss);
+  setupDashboard(ss);
+  // Перевстановити крос-формулу (тепер усі аркуші існують) — щоб уникнути застряглого #REF.
+  ss.getSheetByName(SHEET_PAYOUTS).getRange("C2")
+    .setFormula('=ARRAYFORMULA(IF(B2:B="";"";IFERROR(VLOOKUP(B2:B;' + SHEET_DROP + '!A:B;2;0);"")))');
+  SpreadsheetApp.flush();
 }
 
 function jsonOut(obj) {
