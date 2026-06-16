@@ -107,6 +107,8 @@ function doPost(e) {
       if (lastRow % 2 === 0) rr.setBackground("#F8F6F2");
     });
 
+    addDeliveryEvent(data); // подія в Google Календарі + нагадування (за 2 дні і в день о 08:30)
+
     return jsonOut({ status: "ok", order_number: data.order_number, row: lastRow });
   } catch (error) {
     return jsonOut({ status: "error", message: error.toString() });
@@ -126,6 +128,45 @@ function nextOrderNumber() {
   props.setProperty("ord_month", mmyy);
   props.setProperty("ord_counter", String(counter));
   return "ORD-" + ddmmyy + "-" + String(counter).padStart(3, "0");
+}
+
+// ===================== GOOGLE КАЛЕНДАР =====================
+
+/**
+ * Створює подію доставки/відправлення в Google Календарі (08:30 у день дати).
+ * Нагадування: за 2 дні (о 08:30) і в сам день (о 08:30) — popup + email.
+ * Помилки календаря не валять замовлення.
+ */
+function addDeliveryEvent(order) {
+  try {
+    if (!order.delivery_date) return;
+    var p = String(order.delivery_date).split("-"); // формат yyyy-MM-dd
+    if (p.length !== 3) return;
+    var y = parseInt(p[0], 10), mo = parseInt(p[1], 10) - 1, da = parseInt(p[2], 10);
+    if (!y || isNaN(mo) || !da) return;
+    var start = new Date(y, mo, da, 8, 30, 0);
+    var end = new Date(y, mo, da, 9, 0, 0);
+
+    var who = ((order.first_name || "") + " " + (order.last_name || "")).trim();
+    var transport = order.transport === "Інше" ? (order.transport_custom || "") : (order.transport || "");
+    var title = "📦 " + (order.order_number || "Замовлення") + " — " + who + (order.city ? " (" + order.city + ")" : "");
+    var desc = "Доставка / відправлення замовлення " + (order.order_number || "") +
+      "\nКлієнт: " + who +
+      "\nТелефон: " + (order.phone || "") +
+      "\nДоставка: " + transport +
+      (order.delivery_address ? "\nАдреса: " + order.delivery_address : "") +
+      "\nДжерело: " + (order.referral_source || "direct");
+
+    var cal = CalendarApp.getDefaultCalendar();
+    var ev = cal.createEvent(title, start, end, { description: desc });
+    ev.removeAllReminders();
+    ev.addPopupReminder(0);          // у день події, о 08:30
+    ev.addPopupReminder(2 * 24 * 60); // за 2 дні, о 08:30
+    ev.addEmailReminder(0);
+    ev.addEmailReminder(2 * 24 * 60);
+  } catch (err) {
+    console.error("Calendar error: " + err);
+  }
 }
 
 // ===================== АРКУШІ =====================
