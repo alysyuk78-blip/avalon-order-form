@@ -164,9 +164,79 @@ function addDeliveryEvent(order) {
     ev.addPopupReminder(2 * 24 * 60); // за 2 дні, о 08:30
     ev.addEmailReminder(0);
     ev.addEmailReminder(2 * 24 * 60);
+    // Запамʼятовуємо ID події за номером замовлення — щоб оновлювати при зміні дати в таблиці
+    PropertiesService.getScriptProperties().setProperty("evt_" + (order.order_number || ""), ev.getId());
   } catch (err) {
     console.error("Calendar error: " + err);
   }
+}
+
+/**
+ * Тригер onEdit (встановлюваний): при ручній зміні «Дати доставки» (колонка AC)
+ * у аркуші «Замовлення» — оновлює дату події в Google Календарі та синхронізує
+ * дату в усіх рядках цього ж замовлення. Встанови один раз через installTrigger().
+ */
+function onEditDelivery(e) {
+  try {
+    var range = e.range, sh = range.getSheet();
+    if (sh.getName() !== SHEET_ORDERS) return;
+    if (range.getColumn() !== 29 || range.getRow() < 2) return; // AC = «Дата доставки»
+    var row = range.getRow();
+    var orderNumber = sh.getRange(row, 1).getValue();
+    if (!orderNumber) return;
+    var iso = toISODate(range.getValue());
+
+    var cal = CalendarApp.getDefaultCalendar();
+    var id = PropertiesService.getScriptProperties().getProperty("evt_" + orderNumber);
+    var ev = id ? cal.getEventById(id) : null;
+
+    if (!iso) { // дату очистили — видаляємо подію
+      if (ev) { ev.deleteEvent(); PropertiesService.getScriptProperties().deleteProperty("evt_" + orderNumber); }
+      return;
+    }
+    var p = iso.split("-");
+    var start = new Date(+p[0], +p[1] - 1, +p[2], 8, 30, 0);
+    var end = new Date(+p[0], +p[1] - 1, +p[2], 9, 0, 0);
+
+    if (ev) {
+      ev.setTime(start, end); // нагадування (за 2 дні / в день) зсунуться автоматично
+    } else {
+      addDeliveryEvent({
+        order_number: orderNumber,
+        first_name: sh.getRange(row, 5).getValue(), last_name: "",
+        phone: sh.getRange(row, 6).getValue(), city: sh.getRange(row, 7).getValue(),
+        transport: sh.getRange(row, 27).getValue(), delivery_address: sh.getRange(row, 28).getValue(),
+        referral_source: sh.getRange(row, 4).getValue(), delivery_date: iso
+      });
+    }
+
+    // Синхронізувати дату в усіх рядках того самого замовлення
+    var col = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), 1).getValues();
+    for (var i = 0; i < col.length; i++) {
+      var rr = i + 2;
+      if (col[i][0] === orderNumber && rr !== row) sh.getRange(rr, 29).setValue(range.getValue());
+    }
+  } catch (err) { console.error("onEditDelivery: " + err); }
+}
+
+function toISODate(v) {
+  if (v instanceof Date) {
+    return v.getFullYear() + "-" + ("0" + (v.getMonth() + 1)).slice(-2) + "-" + ("0" + v.getDate()).slice(-2);
+  }
+  var s = String(v || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  var m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})/); // dd.MM.yyyy
+  if (m) return m[3] + "-" + m[2] + "-" + m[1];
+  return "";
+}
+
+/** Встанови один раз: створює тригер onEdit для синхронізації дат із календарем. */
+function installTrigger() {
+  var trg = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < trg.length; i++) {
+    if (trg[i].getHandlerFunction() === "onEditDelivery") ScriptApp.deleteTrigger(trg[i]);
+  }
+  ScriptApp.newTrigger("onEditDelivery").forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet()).onEdit().create();
 }
 
 // ===================== АРКУШІ =====================
