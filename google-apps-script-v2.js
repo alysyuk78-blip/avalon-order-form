@@ -20,6 +20,11 @@ var SHEET_DROP = "Дропшипери";
 var SHEET_PAYOUTS = "Виплати";
 var SHEET_EXPENSES = "Витрати";
 var SHEET_DASH = "Зведення";
+var SHEET_INFO = "Інструкція";
+
+var RAL7016 = "#383E42";   // заливка шапок
+var HDR_TEXT = "#FFFFFF";  // текст шапок
+var HDR_FONT = "Google Sans";
 
 function doPost(e) {
   var lock = LockService.getScriptLock();
@@ -127,7 +132,7 @@ function nextOrderNumber() {
 
 function headerStyle(sheet, n) {
   var hr = sheet.getRange(1, 1, 1, n);
-  hr.setFontWeight("bold").setBackground("#1B4332").setFontColor("#C9A84C")
+  hr.setFontWeight("bold").setBackground(RAL7016).setFontColor(HDR_TEXT).setFontFamily(HDR_FONT)
     .setHorizontalAlignment("center").setVerticalAlignment("middle").setWrap(true).setFontSize(10);
   sheet.setRowHeight(1, 42);
   sheet.setFrozenRows(1);
@@ -293,8 +298,59 @@ function setupDashboard(ss) {
 
 function headerStyleAt(sheet, rowIdx, n) {
   var hr = sheet.getRange(rowIdx, 1, 1, n);
-  hr.setFontWeight("bold").setBackground("#1B4332").setFontColor("#C9A84C")
+  hr.setFontWeight("bold").setBackground(RAL7016).setFontColor(HDR_TEXT).setFontFamily(HDR_FONT)
     .setHorizontalAlignment("center").setVerticalAlignment("middle").setWrap(true).setFontSize(10);
+}
+
+function setupInstructions(ss) {
+  ss = ss || SpreadsheetApp.getActiveSpreadsheet();
+  if (ss.getSheetByName(SHEET_INFO)) return ss.getSheetByName(SHEET_INFO);
+  var sh = ss.insertSheet(SHEET_INFO, 0); // перший аркуш зліва
+  sh.setHiddenGridlines(true);
+  var lines = [
+    "📘 ІНСТРУКЦІЯ — ОБЛІКОВА СИСТЕМА AVALON (кошики)",
+    "",
+    "Система з 5 аркушів. Замовлення приходять автоматично з онлайн-форми, фінанси рахуються самі.",
+    "",
+    "━━━ АРКУШІ ━━━",
+    "• Замовлення — лог усіх замовлень (1 рядок = 1 кошик). Наповнюється сам. Ти лише міняєш Статус (випадайка).",
+    "• Дропшипери — партнери за ?ref-кодом. Заповнюєш A–E: КОД · Назва · Тип · Контакт · Ставка за кошик. Решта (продано, виручка, нараховано, виплачено, залишок) — рахується.",
+    "• Виплати — лог виплат партнерам: Дата · КОД дропшипера · Сума. Оновлює «Залишок до виплати».",
+    "• Витрати — реклама та інші витрати: Дата · Категорія · Опис · Сума.",
+    "• Зведення — підсумки: виручка, собівартість, маржинальність, комісії, чистий прибуток (загалом + помісячно).",
+    "",
+    "━━━ ЯК ПРАЦЮЮТЬ РЕФЕРАЛЬНІ ПОСИЛАННЯ (?ref=КОД) ━━━",
+    "Кожен партнер має унікальний КОД. Замовлення з його посилання автоматично привʼязується до нього й нараховує комісію.",
+    "1) Додай партнера в аркуш «Дропшипери» (КОД + ставка за кошик).",
+    "2) Дай йому посилання:   https://avalon-order-form.vercel.app/?ref=КОД   (напр. …/?ref=OSBB-Lvivska12)",
+    "3) Партнер поширює посилання або QR (під'їзд, чат ОСББ, соцмережі).",
+    "4) Замовлення з посилання → колонка «Джерело» = КОД → комісія = Кількість × Ставка.",
+    "5) Виплатив партнеру — запиши в аркуш «Виплати». «Залишок до виплати» оновиться сам.",
+    "Схема КОДів:  ОСББ → OSBB-Вулиця№ (напр. OSBB-Lvivska12) ·  партнер → PARTNER-Імʼя ·  по під'їздах → OSBB-Вулиця№-podN",
+    "Без ?ref= замовлення має джерело «direct» — комісія 0.",
+    "QR-код: будь-який безкоштовний генератор (напр. qr-code-generator.com) → встав посилання → друк наклейок у під'їзди.",
+    "",
+    "━━━ ФІНАНСИ ━━━",
+    "Комісія дропш. = Кількість × Ставка партнера.    Чистий прибуток (рядок) = Валовий прибуток − Комісія.",
+    "Маржинальність % = Валовий прибуток ÷ Виручка.    Чистий прибуток (Зведення) = Валовий − Комісії − Витрати.",
+    "",
+    "Питання чи зміни — звертайся."
+  ];
+  sh.getRange(1, 1, lines.length, 1).setValues(lines.map(function (t) { return [t]; }));
+  sh.setColumnWidth(1, 980);
+  var all = sh.getRange(1, 1, lines.length, 1);
+  all.setWrap(true).setVerticalAlignment("top").setFontFamily(HDR_FONT).setFontSize(11);
+  // Заголовок
+  sh.getRange("A1").setFontSize(15).setFontWeight("bold").setFontColor(HDR_TEXT).setBackground(RAL7016);
+  sh.setRowHeight(1, 40);
+  // Підзаголовки секцій (рядки, що починаються з ━━━)
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].indexOf("━━━") === 0) {
+      sh.getRange(i + 1, 1).setFontWeight("bold").setFontColor(RAL7016).setFontSize(12);
+    }
+  }
+  sh.setFrozenRows(1);
+  return sh;
 }
 
 /** Повне перестворення: архівує старий «Замовлення», створює всі аркуші заново. Запусти ОДИН раз. */
@@ -308,6 +364,7 @@ function rebuildAll() {
   setupPayouts(ss);
   setupDropshippers(ss);
   setupDashboard(ss);
+  setupInstructions(ss);
   // Перевстановити крос-формулу (тепер усі аркуші існують) — щоб уникнути застряглого #REF.
   ss.getSheetByName(SHEET_PAYOUTS).getRange("C2")
     .setFormula('=ARRAYFORMULA(IF(B2:B="";"";IFERROR(VLOOKUP(B2:B;' + SHEET_DROP + '!A:B;2;0);"")))');
