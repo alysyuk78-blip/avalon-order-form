@@ -39,6 +39,11 @@ const DIAG = {
     title: "⚠️ <b>Помилка в формі</b> (необроблений promise)",
     cause: "Помилка в коді форми (асинхронна).",
     fix: "Скопіюй промт нижче і встав Claude Code."
+  },
+  lead_fallback: {
+    title: "📞 <b>НОВИЙ ЛІД</b> — форма не відкрилась, але клієнт залишив номер. ПЕРЕДЗВОНИ!",
+    cause: "",
+    fix: ""
   }
 };
 
@@ -77,7 +82,8 @@ module.exports = async function handler(req, res) {
     body = body || {};
     const type = String(body.type || "unknown").slice(0, 40);
 
-    if (throttled("t_" + type, 5 * 60 * 1000)) return res.status(200).json({ ok: true, throttled: true });
+    // Ліди НЕ троттлимо — кожен клієнт важливий
+    if (type !== "lead_fallback" && throttled("t_" + type, 5 * 60 * 1000)) return res.status(200).json({ ok: true, throttled: true });
 
     const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
     const TG_CHAT = process.env.TELEGRAM_ALERT_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
@@ -93,11 +99,13 @@ module.exports = async function handler(req, res) {
     if (d.fix) text += "\n🛠 <b>Що зробити:</b>\n" + esc(d.fix);
     if (cdns) text += "\n\n📦 <b>Підключені CDN зараз:</b>\n<code>" + esc(cdns) + "</code>";
 
-    // ГОТОВИЙ ПРОМТ — у <pre> (тап → копіювати)
-    text += "\n\n📋 <b>Скопіюй це і встав у Claude Code:</b>\n<pre>" + esc(buildPrompt(type, body, cdns)) + "</pre>";
+    // ГОТОВИЙ ПРОМТ — у <pre> (тап → копіювати). Для ліда промт не потрібен.
+    if (type !== "lead_fallback") {
+      text += "\n\n📋 <b>Скопіюй це і встав у Claude Code:</b>\n<pre>" + esc(buildPrompt(type, body, cdns)) + "</pre>";
+    }
 
     if (body.url) text += "\n🔗 Сторінка: " + esc(body.url);
-    text += "\n🔧 Vercel: " + VERCEL_PROJECT;
+    if (type !== "lead_fallback") text += "\n🔧 Vercel: " + VERCEL_PROJECT;
     text += "\n🕐 " + new Date().toISOString();
 
     await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
