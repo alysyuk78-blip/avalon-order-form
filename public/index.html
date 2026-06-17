@@ -37,7 +37,7 @@
         d.innerHTML =
           '<div style="max-width:420px;width:100%;background:#fff;border:1px solid #ececec;border-radius:18px;box-shadow:0 10px 40px rgba(0,0,0,.08);padding:30px 26px;">' +
             '<img src="/images/logo.png" alt="AVALON" style="display:block;margin:0 auto 20px;height:76px;border-radius:10px;" />' +
-            '<div style="font-size:15px;color:#374151;line-height:1.55;text-align:center;margin-bottom:22px;">Форма з технічних причин не завантажилась. Спробуйте за <b>10 хвилин</b>, зателефонуйте нам або залиште номер — ми звʼяжемось з вами.<br><span style="color:#9ca3af;font-size:13px;">Вибачте за незручності 🙏</span></div>' +
+            '<div style="font-size:15px;color:#374151;line-height:1.55;text-align:center;margin-bottom:22px;">Форма з технічних причин не завантажилась. Спробуйте за <b>10 хвилин</b>, зателефонуйте нам або залиште номер — ми звʼяжемось з вами.<br><span style="color:#9ca3af;font-size:13px;">Вибачте за незручності</span></div>' +
             '<a href="tel:+380673804588" style="' + BTN + 'margin-bottom:10px;">Зателефонувати&nbsp;&nbsp;067 380 45 88</a>' +
             '<a href="https://t.me/avalon_metal_design" style="' + BTN + '">Написати в Telegram</a>' +
             '<div style="height:1px;background:#f0f0f0;margin:22px 0;"></div>' +
@@ -69,6 +69,9 @@
           showFallback();
         }
       }, 15000);
+      if (/[?&]_fallback/.test(location.search)) { // демо: …/?_fallback показує резервну панель
+        if (document.body) showFallback(); else document.addEventListener("DOMContentLoaded", showFallback);
+      }
     })();
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
