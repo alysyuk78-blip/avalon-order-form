@@ -27,9 +27,50 @@
       window.__alertOwner = alertOwner;
       window.addEventListener("error", function (e) { alertOwner("js_error", (e.message || "") + " @ " + (e.filename || "") + ":" + (e.lineno || ""), String((e.error && e.error.stack) || "")); });
       window.addEventListener("unhandledrejection", function (e) { alertOwner("js_reject", String(e.reason || "")); });
+      function showFallback() {
+        if (document.getElementById("avalon-fallback")) return;
+        var d = document.createElement("div");
+        d.id = "avalon-fallback";
+        d.setAttribute("style", "position:fixed;inset:0;z-index:99999;overflow:auto;background:#f2f2f2;font-family:-apple-system,Segoe UI,Roboto,sans-serif;display:flex;align-items:center;justify-content:center;padding:20px;");
+        d.innerHTML =
+          '<div style="max-width:440px;width:100%;background:#fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.12);overflow:hidden;">' +
+            '<div style="background:#383E42;color:#fff;padding:22px;text-align:center;">' +
+              '<div style="font-size:22px;font-weight:700;letter-spacing:3px;">AVALON</div>' +
+              '<div style="font-size:13px;opacity:.85;margin-top:4px;">Замовлення кошика для кондиціонера</div>' +
+            '</div>' +
+            '<div style="padding:22px;">' +
+              '<div style="font-size:15px;color:#374151;line-height:1.5;margin-bottom:16px;">Вибачте, форма тимчасово не завантажилась. Залиште номер — ми <b>передзвонимо</b>, або звʼяжіться з нами зараз:</div>' +
+              '<a href="tel:+380673804588" style="display:block;text-align:center;background:#383E42;color:#fff;text-decoration:none;padding:13px;border-radius:10px;font-weight:600;margin-bottom:10px;">📞 Зателефонувати 067 380 45 88</a>' +
+              '<a href="https://t.me/avalon_metal_design" style="display:block;text-align:center;background:#229ED9;color:#fff;text-decoration:none;padding:13px;border-radius:10px;font-weight:600;margin-bottom:18px;">✈️ Написати в Telegram</a>' +
+              '<div style="height:1px;background:#e5e7eb;margin:4px 0 16px;"></div>' +
+              '<div id="avalon-fb-form">' +
+                '<div style="font-size:13px;color:#6b7280;margin-bottom:8px;">Або залиште номер — передзвонимо:</div>' +
+                '<input id="fb-name" placeholder="Ваше імʼя" style="width:100%;padding:12px;border:1px solid #d1d5db;border-radius:10px;margin-bottom:8px;font-size:15px;box-sizing:border-box;" />' +
+                '<input id="fb-phone" type="tel" placeholder="+380 XX XXX XX XX" style="width:100%;padding:12px;border:1px solid #d1d5db;border-radius:10px;margin-bottom:10px;font-size:15px;box-sizing:border-box;" />' +
+                '<button id="fb-send" style="width:100%;background:#16A34A;color:#fff;border:0;padding:13px;border-radius:10px;font-weight:600;font-size:15px;cursor:pointer;">Передзвоніть мені</button>' +
+              '</div>' +
+              '<div id="avalon-fb-done" style="display:none;text-align:center;color:#16A34A;font-weight:600;padding:14px;">✅ Дякуємо! Ми звʼяжемось з вами найближчим часом.</div>' +
+            '</div>' +
+          '</div>';
+        document.body.appendChild(d);
+        d.querySelector("#fb-send").addEventListener("click", function () {
+          var name = (d.querySelector("#fb-name").value || "").trim();
+          var phone = (d.querySelector("#fb-phone").value || "").trim();
+          if (phone.replace(/\D/g, "").length < 9) { d.querySelector("#fb-phone").style.borderColor = "#ef4444"; return; }
+          try {
+            var b = JSON.stringify({ type: "lead_fallback", message: "Клієнт залишив номер на резервній панелі (основна форма не відкрилась)", details: "Імʼя: " + name + "\nТелефон: " + phone, url: location.href });
+            fetch("/api/alert", { method: "POST", headers: { "Content-Type": "application/json" }, body: b, keepalive: true });
+          } catch (e) {}
+          d.querySelector("#avalon-fb-form").style.display = "none";
+          d.querySelector("#avalon-fb-done").style.display = "block";
+        });
+      }
       setTimeout(function () {
         var root = document.getElementById("root");
-        if (!root || root.children.length === 0) alertOwner("not_rendered", "Форма не відрендерилась (білий екран) за 15 секунд");
+        if (!root || root.children.length === 0) {
+          alertOwner("not_rendered", "Форма не відрендерилась (білий екран) за 15 секунд");
+          showFallback();
+        }
       }, 15000);
     })();
   </script>
