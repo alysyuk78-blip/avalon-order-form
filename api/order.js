@@ -1,5 +1,5 @@
 // api/order.js — Vercel Serverless Function
-// Handles secure order submission: Telegram + Google Sheets + Trello
+// Handles secure order submission: Telegram + Google Sheets
 // API keys are stored as Vercel Environment Variables (not in client code)
 
 const config = {
@@ -87,22 +87,6 @@ function generateOrderNumber() {
   const yy = p.year.slice(-2);
   const xxx = String(Math.floor(Math.random() * 900) + 100);
   return `ORD-${p.day}${p.month}${yy}-${xxx}`;
-}
-
-// Повідомити власника, що картка Trello не створилась (через канал /api/alert).
-async function notifyTrelloFail(req, orderNumber, status, details) {
-  try {
-    const host = (req && req.headers && req.headers.host) || "avalon-order-form.vercel.app";
-    await fetch(`https://${host}/api/alert`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "trello_failed",
-        message: `Замовлення ${orderNumber} НЕ потрапило в Trello (код ${status}).`,
-        details: String(details || "").slice(0, 500),
-      }),
-    });
-  } catch (e) { /* алерт не критичний — мовчки ігноруємо */ }
 }
 
 // ============================================================
@@ -208,45 +192,6 @@ function formatProductionMessage(order) {
   return msg;
 }
 
-// ============================================================
-// TRELLO DESCRIPTION
-// ============================================================
-function formatTrelloDescription(order) {
-  const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
-    basket_type: order.basket_type, construction_type: order.construction_type,
-    color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
-    size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
-    ac_brand: order.ac_brand, ac_model: order.ac_model, price_total: order.price_total,
-  }];
-  const multi = items.length > 1;
-  const num = (v) => Number(v || 0).toLocaleString("uk-UA");
-
-  let d = `**Клієнт:** ${order.first_name} ${order.last_name}\n`;
-  d += `**Телефон:** ${order.phone}\n`;
-  if (order.city) d += `**Місто:** ${order.city}\n`;
-  items.forEach((it, i) => {
-    const color = (it.color === "Інші кольори" || it.color === "Інший") ? (it.color_custom || it.color) : it.color;
-    const pattern = it.pattern === "Інший" ? (it.pattern_custom || it.pattern) : it.pattern;
-    d += multi ? `\n**🧺 Кошик ${i + 1}**\n` : `\n`;
-    d += `**Тип:** ${it.basket_type}\n`;
-    d += `**Конструкція:** ${it.construction_type}\n`;
-    if (color) d += `**Колір:** ${color}\n`;
-    if (pattern) d += `**Візерунок:** ${pattern}\n`;
-    if (Number(it.size_w) > 0) d += `**Розміри:** W=${it.size_w}, H=${it.size_h}, D=${it.size_d} мм\n`;
-    else d += `**Розмір:** розрахує менеджер${(it.ac_brand || it.ac_model) ? " — " + [it.ac_brand, it.ac_model].filter(Boolean).join(" ") : ""}\n`;
-    d += `**Кількість:** ${it.quantity} шт.\n`;
-    if (Number(it.price_total) > 0) d += `**Орієнт. вартість:** ${num(it.price_total)} ₴\n`;
-  });
-  const grand = order.price_total != null ? Number(order.price_total) : items.reduce((s, it) => s + (Number(it.price_total) || 0), 0);
-  if (grand > 0) d += `\n**💰 Орієнт. разом:** ${num(grand)} ₴\n`;
-  d += `\n**Доставка:** ${order.transport === "Інше" ? (order.transport_custom || "") : order.transport}\n`;
-  if (order.delivery_address) d += `**Адреса:** ${order.delivery_address}\n`;
-  if (order.delivery_date) d += `**Дата доставки:** ${formatDeliveryDate(order.delivery_date)}\n`;
-  d += `**Оплата:** ${order.payment_method}\n`;
-  d += `**Джерело заявки:** ${order.referral_source || "direct"}\n`;
-  if (order.notes) d += `\n**Примітки:** ${order.notes}\n`;
-  return d;
-}
 
 // ============================================================
 // MAIN HANDLER
@@ -321,9 +266,6 @@ module.exports = async function handler(req, res) {
     const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
     const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
     const SHEETS_URL = process.env.GOOGLE_SHEET_URL;
-    const TRELLO_KEY = process.env.TRELLO_API_KEY;
-    const TRELLO_TOKEN = process.env.TRELLO_TOKEN;
-    const TRELLO_LIST = process.env.TRELLO_LIST_ID;
 
     const results = [];
 
@@ -365,36 +307,7 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // --- Trello ---
-    if (TRELLO_KEY && TRELLO_TOKEN && TRELLO_LIST) {
-      try {
-        const totalQty = (Array.isArray(order.items) && order.items.length)
-          ? order.items.reduce((s, it) => s + (Number(it.quantity) || 0), 0)
-          : (Number(order.quantity) || 0);
-        const name = `${orderNumber} — ${order.first_name} ${order.last_name} — ${totalQty} шт.`;
-        const desc = formatTrelloDescription(orderWithNumber);
-        const trRes = await fetch(`https://api.trello.com/1/cards?key=${TRELLO_KEY}&token=${TRELLO_TOKEN}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idList: TRELLO_LIST, name, desc }),
-        });
-        if (trRes.ok) {
-          results.push("trello:ok");
-        } else {
-          // Раніше збій був «тихий» (картка не створювалась, а код писав ok).
-          const errText = await trRes.text().catch(() => "");
-          console.error("Trello HTTP", trRes.status, errText);
-          results.push("trello:err");
-          await notifyTrelloFail(req, orderNumber, trRes.status, errText);
-        }
-      } catch (err) {
-        console.error("Trello error:", err);
-        results.push("trello:err");
-        await notifyTrelloFail(req, orderNumber, "fetch", String(err));
-      }
-    }
-
-    if (results.includes("tg:ok") || results.includes("gs:ok") || results.includes("trello:ok")) {
+    if (results.includes("tg:ok") || results.includes("gs:ok")) {
       return res.status(200).json({ ok: true, order_number: orderNumber, results });
     }
 
