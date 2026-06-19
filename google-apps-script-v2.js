@@ -111,7 +111,9 @@ function doPost(e) {
     });
 
     addDeliveryEvent(data); // подія в Google Календарі + нагадування (за 2 дні і в день о 08:30)
-    try { createOrderTopic_(data); } catch (e) { console.error("Topic: " + e); } // тема + специфікація в групу підрядника
+    // У групу підрядника замовлення НЕ йде автоматично — лише коли менеджер
+    // поставить статус «В роботі» (див. onEditDelivery). Так підрядник не бачить
+    // попередніх/неопрацьованих запитів.
 
     return jsonOut({ status: "ok", order_number: data.order_number, row: lastRow });
   } catch (error) {
@@ -196,7 +198,22 @@ function onEditDelivery(e) {
   try {
     var range = e.range, sh = range.getSheet();
     if (sh.getName() !== SHEET_ORDERS) return;
-    if (range.getColumn() !== 29 || range.getRow() < 2) return; // AC = «Дата доставки»
+    if (range.getRow() < 2) return;
+    var col = range.getColumn();
+
+    // Статус «В роботі» → передати замовлення підряднику (тема + специфікація), один раз.
+    if (col === 3) {
+      if (String(range.getValue() || "").trim() === "В роботі") {
+        var onum = sh.getRange(range.getRow(), 1).getValue();
+        if (onum && !PropertiesService.getScriptProperties().getProperty("thread_" + onum)) {
+          var ord = buildOrderFromRows_(sh, onum);
+          if (ord) { try { createOrderTopic_(ord); } catch (er) { console.error("Send to contractor: " + er); } }
+        }
+      }
+      return;
+    }
+
+    if (col !== 29) return; // далі — лише «Дата доставки» (AC)
     var row = range.getRow();
     var orderNumber = sh.getRange(row, 1).getValue();
     if (!orderNumber) return;
@@ -325,13 +342,39 @@ function createOrderTopic_(data) {
   var chat = p.getProperty("TG_CONTRACTOR_CHAT");
   if (!p.getProperty("TG_TOKEN") || !chat) return; // підрядницький чат не налаштовано
   var num = String(data.order_number || "").trim();
+  if (num && p.getProperty("thread_" + num)) return; // вже надсилали — не дублюємо
   var threadId = null;
   var r = tgApi_("createForumTopic", { chat_id: chat, name: num || "Замовлення" });
-  if (r && r.ok && r.result && r.result.message_thread_id) {
-    threadId = r.result.message_thread_id;
-    if (num) p.setProperty("thread_" + num, String(threadId));
-  } // якщо Теми вимкнені / бот не адмін — threadId лишиться null, повідомлення піде в загальний чат
+  if (r && r.ok && r.result && r.result.message_thread_id) threadId = r.result.message_thread_id;
+  // якщо Теми вимкнені / бот не адмін — threadId лишиться null, повідомлення піде в загальний чат
   tgSendTo_(chat, buildProductionMsg_(data), threadId);
+  if (num) p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
+}
+
+/** Збирає всі рядки одного замовлення в обʼєкт data (для надсилання підряднику з таблиці). */
+function buildOrderFromRows_(sh, orderNumber) {
+  var last = sh.getLastRow();
+  if (last < 2) return null;
+  var vals = sh.getRange(2, 1, last - 1, 32).getValues();
+  var order = null;
+  for (var i = 0; i < vals.length; i++) {
+    var r = vals[i];
+    if (String(r[0]).trim() !== String(orderNumber).trim()) continue;
+    if (!order) {
+      order = {
+        order_number: r[0], first_name: r[4], last_name: "",
+        phone: String(r[5] || "").replace(/^'/, ""), city: r[6], referral_source: r[3],
+        transport: r[26], delivery_address: r[27],
+        delivery_date: toISODate(r[28]), payment_method: r[29], notes: r[31], items: []
+      };
+    }
+    order.items.push({
+      basket_type: r[7], construction_type: r[8], color: r[9], pattern: r[10],
+      ac_brand: r[11], ac_model: r[12], size_w: r[13], size_h: r[14], size_d: r[15],
+      quantity: r[16], area_m2: r[17], cost_total: r[19]
+    });
+  }
+  return order;
 }
 
 /** Повідомлення-специфікація для підрядника (4 секції) — дзеркало формату з api/order.js. */
@@ -437,11 +480,12 @@ function sendDeliveryReminders() {
     if (o.done) return;
     var diff = dayDiff_(todayIso, o.iso);
     if (REMIND_BEFORE.indexOf(diff) < 0) return;
+    var thread = props.getProperty("thread_" + num); // створюється, коли замовлення передали підряднику
+    if (!thread) return; // ще не підтверджене (статус не «В роботі») — не нагадуємо
     var guard = "rem_" + num + "_" + todayIso;
     if (props.getProperty(guard)) return; // вже слали сьогодні
     var chat = props.getProperty("TG_CONTRACTOR_CHAT") || props.getProperty("TG_CHAT");
-    var thread = props.getProperty("thread_" + num); // тема (гілка) цього замовлення
-    tgSendTo_(chat, buildReminder_(o, diff, tz), thread);
+    tgSendTo_(chat, buildReminder_(o, diff, tz), thread === "0" ? null : thread);
     props.setProperty(guard, "1");
   });
 }
