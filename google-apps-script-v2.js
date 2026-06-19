@@ -302,6 +302,17 @@ function setTelegram() {
              ", запасний чат=" + (p.getProperty("TG_CHAT") || "НЕМАЄ"));
 }
 
+// «Сторож»: сповіщає власника, якщо щось пішло не так (через наявний канал /api/alert у Vercel).
+var ALERT_URL = "https://avalon-order-form.vercel.app/api/alert";
+function alertOwner_(message, details) {
+  try {
+    UrlFetchApp.fetch(ALERT_URL, {
+      method: "post", contentType: "application/json", muteHttpExceptions: true,
+      payload: JSON.stringify({ type: "contractor_failed", message: message, details: details || "" })
+    });
+  } catch (e) { console.error("alertOwner_: " + e); }
+}
+
 // Базовий виклик Telegram Bot API. Повертає розпарсену відповідь або null.
 function tgApi_(method, payload) {
   var token = PropertiesService.getScriptProperties().getProperty("TG_TOKEN");
@@ -348,8 +359,13 @@ function createOrderTopic_(data) {
   if (r && r.ok && r.result && r.result.message_thread_id) threadId = r.result.message_thread_id;
   // якщо Теми вимкнені / бот не адмін — threadId лишиться null, повідомлення піде в загальний чат
   var sent = tgSendTo_(chat, buildProductionMsg_(data), threadId);
-  // Маркер ставимо ЛИШЕ при успіху — інакше тимчасовий збій назавжди заблокував би повтор
-  if (num && sent && sent.ok) p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
+  if (num && sent && sent.ok) {
+    p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
+  } else {
+    // СТОРОЖ: підтверджене замовлення не дійшло підряднику — одразу сигнал власнику
+    alertOwner_("Замовлення " + (num || "?") + " НЕ надіслано підряднику в групу.",
+                "Відповідь Telegram: " + JSON.stringify(sent));
+  }
 }
 
 /** Збирає всі рядки одного замовлення в обʼєкт data (для надсилання підряднику з таблиці). */
@@ -489,6 +505,19 @@ function sendDeliveryReminders() {
     tgSendTo_(chat, buildReminder_(o, diff, tz), thread === "0" ? null : thread);
     props.setProperty(guard, "1");
   });
+
+  // СТОРОЖ (щоденний запобіжник): замовлення у статусі «В роботі», які не дійшли підряднику.
+  try {
+    var ar = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues(); // A=№, C=Статус
+    var miss = [], seen = {};
+    for (var k = 0; k < ar.length; k++) {
+      var n = String(ar[k][0] || "").trim();
+      if (!n || seen[n]) continue; seen[n] = true;
+      if (String(ar[k][2] || "").trim() === "В роботі" && !props.getProperty("thread_" + n)) miss.push(n);
+    }
+    if (miss.length) alertOwner_("⚠️ Не дійшли підряднику (статус «В роботі», але без гілки): " + miss.join(", "),
+                                 "Перевір право бота «Керувати гілками» або постав статус «В роботі» повторно.");
+  } catch (e) { console.error("watchdog: " + e); }
 }
 
 function buildReminder_(o, diff, tz) {
