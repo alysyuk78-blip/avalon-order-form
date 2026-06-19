@@ -559,6 +559,26 @@
     // NP CITY SEARCH COMPONENT
     // ============================================================
     function NpCitySearch({ value, cityRef, onSelect }) {
+      // Авто-привʼязка: якщо місто вже введене (напр. з блоку 1), але ще НЕ обране з
+      // довідника НП (cityRef порожній) — самі знаходимо збіг і підставляємо, щоб
+      // відділення вантажились одразу, без ручного редагування назви.
+      const autoTried = useRef("");
+      useEffect(() => {
+        const city = (value || "").trim();
+        if (!city || cityRef) return;
+        const key = city.toLowerCase();
+        if (autoTried.current === key) return; // не шукати повторно для того самого тексту
+        autoTried.current = key;
+        const norm = (s) => String(s || "").toLowerCase().replace(/^м\.?\s*/, "").trim();
+        const target = norm(city);
+        npSearchCities(city).then((list) => {
+          if (!list || !list.length) return;
+          const pick = list.find((it) => norm(it.mainDescription) === target || norm(it.name) === target)
+                    || (list.length === 1 ? list[0] : null);
+          if (pick) onSelect({ name: pick.mainDescription, ref: pick.ref, fullName: pick.name });
+        }).catch(() => {});
+      }, [value, cityRef]);
+
       return (
         <NpAutocomplete
           placeholder="Почніть вводити назву міста..."
