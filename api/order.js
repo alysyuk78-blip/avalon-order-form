@@ -107,51 +107,64 @@ function formatTelegramMessage(order) {
   // ── Заголовок ──
   let msg = `📌 <b>Замовлення №${e(order.order_number)}</b>\n`;
   msg += `🕐 ${formatNow()}\n`;
-  msg += `👤 ${e(order.first_name)} ${e(order.last_name)}\n`;
+
+  // ── ЗАМОВНИК ──
+  msg += `\n👤 <b>ЗАМОВНИК</b>\n`;
+  msg += `${e(order.first_name)} ${e(order.last_name)}\n`;
   if (order.phone) msg += `📞 ${e(order.phone)}\n`;
   if (order.city) msg += `🏙 ${e(order.city)}\n`;
 
-  // ── БЛОК 1: ВИРОБНИЦТВО ──
-  msg += `\n━━━━━ 🏭 <b>ВИРОБНИЦТВО</b> ━━━━━\n`;
+  // ── ВИРОБНИЦТВО (специфікація) ──
+  msg += `\n🏭 <b>ВИРОБНИЦТВО</b>\n`;
   items.forEach((it, i) => {
     const color = it.color ? e(it.color) + (it.color_custom ? " (" + e(it.color_custom) + ")" : "") : "";
     const pattern = it.pattern ? e(it.pattern) + (it.pattern_custom ? " (" + e(it.pattern_custom) + ")" : "") : "";
-    const qty = Number(it.quantity) || 1;
-    const area = Number(it.area_m2) || 0;
-    const cost = Number(it.cost_total) || 0;
-    const perM2 = (area > 0 && qty > 0 && cost > 0) ? Math.round(cost / (area * qty)) : 0;
     if (multi) msg += `\n🧺 <b>Кошик ${i + 1}</b>\n`;
     msg += `• Тип: <b>${e(it.basket_type)}</b>\n`;
-    msg += `• Вид конструкції: <b>${e(it.construction_type)}</b>\n`;
+    msg += `• Конструкція: <b>${e(it.construction_type)}</b>\n`;
     if (color) msg += `• Колір: <b>${color}</b>\n`;
     if (pattern) msg += `• Візерунок: <b>${pattern}</b>\n`;
     if (it.ac_brand || it.ac_model) msg += `• Кондиціонер: <b>${e([it.ac_brand, it.ac_model].filter(Boolean).join(" "))}</b>\n`;
     if (Number(it.size_w) > 0) {
-      msg += `• Розміри:\n`;
-      msg += `   Висота — <b>${it.size_h}</b> мм\n`;
-      msg += `   Ширина — <b>${it.size_w}</b> мм\n`;
-      msg += `   Глибина — <b>${it.size_d}</b> мм\n`;
+      msg += `• Розміри:\n   Висота — <b>${it.size_h}</b> мм\n   Ширина — <b>${it.size_w}</b> мм\n   Глибина — <b>${it.size_d}</b> мм\n`;
     } else {
       msg += `• Розміри: <i>розрахує менеджер</i>\n`;
     }
-    msg += `• Кількість: <b>${qty} шт.</b>\n`;
-    if (area > 0) msg += `• Площа виробу: <b>${area.toFixed(2)}</b> м²\n`;
-    if (perM2 > 0) msg += `• Ціна за 1 м²: <b>${num(perM2)} ₴</b>\n`;
-    if (cost > 0) msg += `• Вартість виробнича загальна: <b>${num(cost)} ₴</b>\n`;
+    msg += `• Кількість: <b>${Number(it.quantity) || 1} шт.</b>\n`;
   });
 
-  // ── БЛОК 2: РЕШТА (логістика / оплата / джерело) ──
-  msg += `\n━━━━━ 📋 <b>ЗАМОВЛЕННЯ</b> ━━━━━\n`;
-  const transport = order.transport === "Інше" ? (order.transport_custom || "") : order.transport;
-  if (transport) msg += `• Доставка: <b>${e(transport)}</b>\n`;
-  if (order.delivery_address) msg += `• Адреса: ${e(order.delivery_address)}\n`;
-  if (order.delivery_date) msg += `• Дата доставки: <b>${formatDeliveryDate(order.delivery_date)}</b>\n`;
+  // ── ФІНАНСИ (виробнича вартість + оплата) ──
+  msg += `\n💰 <b>ФІНАНСИ</b>\n`;
+  const perM2of = (it) => {
+    const qty = Number(it.quantity) || 1, area = Number(it.area_m2) || 0, cost = Number(it.cost_total) || 0;
+    return (area > 0 && qty > 0 && cost > 0) ? Math.round(cost / (area * qty)) : 0;
+  };
+  let grandCost = 0;
+  if (multi) {
+    items.forEach((it, i) => {
+      const area = Number(it.area_m2) || 0, cost = Number(it.cost_total) || 0, p = perM2of(it);
+      grandCost += cost;
+      if (cost > 0) msg += `• Кошик ${i + 1}: ${area ? area.toFixed(2) + " м² × " + num(p) + " ₴ = " : ""}<b>${num(cost)} ₴</b>\n`;
+    });
+    if (grandCost > 0) msg += `• <b>Разом виробнича: ${num(grandCost)} ₴</b>\n`;
+  } else {
+    const it = items[0], area = Number(it.area_m2) || 0, cost = Number(it.cost_total) || 0, p = perM2of(it);
+    if (area > 0) msg += `• Площа виробу: <b>${area.toFixed(2)}</b> м²\n`;
+    if (p > 0) msg += `• Ціна за 1 м²: <b>${num(p)} ₴</b>\n`;
+    if (cost > 0) msg += `• Вартість виробнича: <b>${num(cost)} ₴</b>\n`;
+  }
   if (order.payment_method) msg += `• Оплата: <b>${e(order.payment_method)}</b>\n`;
-  if (order.how_found) msg += `• Як дізнались: ${e(order.how_found)}${order.how_found === "Інше" ? " (" + e(order.how_found_custom) + ")" : ""}\n`;
-  msg += `• Джерело заявки: ${e(order.referral_source || "direct")}\n`;
-  if (order.notes) msg += `• Дод. інформація: <b>${e(order.notes)}</b>\n`;
-  const grand = order.price_total != null ? Number(order.price_total) : 0;
-  if (grand > 0) msg += `\n💰 <b>Разом до сплати клієнтом: ${num(grand)} ₴</b>\n`;
+
+  // ── ДОСТАВКА ──
+  msg += `\n🚚 <b>ДОСТАВКА</b>\n`;
+  const transport = order.transport === "Інше" ? (order.transport_custom || "") : order.transport;
+  if (transport) msg += `• Спосіб: <b>${e(transport)}</b>\n`;
+  if (order.delivery_address) msg += `• Адреса: ${e(order.delivery_address)}\n`;
+  if (order.delivery_date) msg += `• Дата: <b>${formatDeliveryDate(order.delivery_date)}</b>\n`;
+  if (order.notes) msg += `• Примітка: ${e(order.notes)}\n`;
+
+  // ── Джерело (мета) ──
+  msg += `\n🔖 Джерело заявки: ${e(order.referral_source || "direct")}\n`;
   return msg;
 }
 
