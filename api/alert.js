@@ -44,6 +44,11 @@ const DIAG = {
     title: "📞 <b>НОВИЙ ЛІД</b> — форма не відкрилась, але клієнт залишив номер. ПЕРЕДЗВОНИ!",
     cause: "",
     fix: ""
+  },
+  trello_failed: {
+    title: "📋 <b>Замовлення НЕ потрапило в Trello</b>\n(в Telegram і таблиці воно є — лише картка Trello не створилась).",
+    cause: "Найчастіше — прострочений/відкликаний TRELLO_TOKEN, або змінений/архівований список (TRELLO_LIST_ID), або невірний TRELLO_API_KEY.",
+    fix: "1) Створи НОВИЙ токен Trello з терміном «Never» і онови TRELLO_TOKEN у Vercel → Settings → Environment Variables → Redeploy.\n2) Якщо не допомогло — скопіюй промт нижче і встав Claude Code."
   }
 };
 
@@ -56,6 +61,9 @@ function buildPrompt(type, body, cdns) {
   }
   if (type === "submit_failed") {
     return base + "Не надсилаються замовлення — /api/order повертає помилку. Знайди причину (логи Vercel функції order, env-змінні TELEGRAM_*/GOOGLE_SHEET_URL/TRELLO_*, інтеграції), виправ і задеплой. Дані спроби: " + (det || "(немає)");
+  }
+  if (type === "trello_failed") {
+    return base + "Замовлення приходять у Telegram і Google Sheets, але картки НЕ створюються в Trello (api/order.js, блок Trello). Найімовірніше прострочений TRELLO_TOKEN або змінений TRELLO_LIST_ID. Перевір env-змінні TRELLO_API_KEY/TRELLO_TOKEN/TRELLO_LIST_ID у Vercel, виклич Trello API для діагностики (GET /1/members/me/boards), підкажи як згенерувати новий безстроковий токен і де його оновити. Відповідь Trello: " + (det || "(немає)");
   }
   return base + "JS-помилка у формі під час роботи: " + (det || body.message || "(без тексту)") + ". Знайди в public/index.html, виправ і задеплой у прод.";
 }
