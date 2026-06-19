@@ -197,7 +197,7 @@ function addDeliveryEvent(order) {
 function onEditDelivery(e) {
   try {
     var range = e.range, sh = range.getSheet();
-    if (sh.getName() !== SHEET_ORDERS) return;
+    if (sh.getName().toLowerCase() !== SHEET_ORDERS.toLowerCase()) return; // без різниці у регістрі назви
     if (range.getRow() < 2) return;
     var col = range.getColumn();
 
