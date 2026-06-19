@@ -566,6 +566,15 @@ function testReminderNow() {
   sendDeliveryReminders();
 }
 
+/** Дозволити повторне надсилання підряднику: знімає «позначку надіслано» для вказаних
+ *  замовлень. Запусти вручну, потім постав цим замовленням статус «В роботі» знову. */
+function resendToContractor() {
+  var nums = ["ORD-190626-009"]; // ← впиши номери через кому, які треба надіслати ще раз
+  var p = PropertiesService.getScriptProperties();
+  nums.forEach(function (n) { p.deleteProperty("thread_" + String(n).trim()); });
+  Logger.log("Знято позначки: " + nums.join(", ") + ". Тепер постав їм статус «В роботі» знову.");
+}
+
 // ===================== АРКУШІ =====================
 
 function headerStyle(sheet, n) {
