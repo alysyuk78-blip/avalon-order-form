@@ -89,6 +89,22 @@ function generateOrderNumber() {
   return `ORD-${p.day}${p.month}${yy}-${xxx}`;
 }
 
+// Повідомити власника, що картка Trello не створилась (через канал /api/alert).
+async function notifyTrelloFail(req, orderNumber, status, details) {
+  try {
+    const host = (req && req.headers && req.headers.host) || "avalon-order-form.vercel.app";
+    await fetch(`https://${host}/api/alert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "trello_failed",
+        message: `Замовлення ${orderNumber} НЕ потрапило в Trello (код ${status}).`,
+        details: String(details || "").slice(0, 500),
+      }),
+    });
+  } catch (e) { /* алерт не критичний — мовчки ігноруємо */ }
+}
+
 // ============================================================
 // TELEGRAM MESSAGE
 // ============================================================
@@ -357,15 +373,24 @@ module.exports = async function handler(req, res) {
           : (Number(order.quantity) || 0);
         const name = `${orderNumber} — ${order.first_name} ${order.last_name} — ${totalQty} шт.`;
         const desc = formatTrelloDescription(orderWithNumber);
-        await fetch(`https://api.trello.com/1/cards?key=${TRELLO_KEY}&token=${TRELLO_TOKEN}`, {
+        const trRes = await fetch(`https://api.trello.com/1/cards?key=${TRELLO_KEY}&token=${TRELLO_TOKEN}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ idList: TRELLO_LIST, name, desc }),
         });
-        results.push("trello:ok");
+        if (trRes.ok) {
+          results.push("trello:ok");
+        } else {
+          // Раніше збій був «тихий» (картка не створювалась, а код писав ok).
+          const errText = await trRes.text().catch(() => "");
+          console.error("Trello HTTP", trRes.status, errText);
+          results.push("trello:err");
+          await notifyTrelloFail(req, orderNumber, trRes.status, errText);
+        }
       } catch (err) {
         console.error("Trello error:", err);
         results.push("trello:err");
+        await notifyTrelloFail(req, orderNumber, "fetch", String(err));
       }
     }
 
