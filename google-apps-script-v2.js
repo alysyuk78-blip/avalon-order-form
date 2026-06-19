@@ -254,6 +254,133 @@ function installTrigger() {
   ScriptApp.newTrigger("onEditDelivery").forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet()).onEdit().create();
 }
 
+// ===================== TELEGRAM-НАГАДУВАННЯ ПІДРЯДНИКУ =====================
+//
+// Бот сам пише в Telegram нагадування про дату відправки/доставки, щоб
+// підрядник не забув виготовити й надіслати вчасно. Працює за щоденним
+// тригером о 08:30 (див. installReminderTrigger).
+//
+// НАЛАШТУВАННЯ (один раз):
+//   1) Встав токен і chat_id у setTelegram() нижче → запусти setTelegram() →
+//      прибери значення назад на "" і збережи.
+//   2) Запусти installReminderTrigger() один раз (створить щоденний тригер 08:30).
+//   3) Перевір: Налаштування проєкту → Часовий пояс = (GMT+02:00) Київ.
+//
+// За скільки днів до дати слати (0 = у сам день). Хочеш лише 2 — постав [2, 0].
+var REMIND_BEFORE = [2, 1, 0];
+var REMIND_DONE = ["Відправлено", "Завершено", "Скасовано"]; // такі замовлення не нагадуємо
+
+/** ОДИН раз: встав значення, запусти, потім прибери назад на "" (вони вже збережені). */
+function setTelegram() {
+  var TOKEN = "";    // ← токен бота (той самий, що у Vercel TELEGRAM_BOT_TOKEN)
+  var CHAT_ID = "";  // ← chat_id, куди слати нагадування (як TELEGRAM_CHAT_ID)
+  var p = PropertiesService.getScriptProperties();
+  if (TOKEN) p.setProperty("TG_TOKEN", TOKEN);
+  if (CHAT_ID) p.setProperty("TG_CHAT", CHAT_ID);
+  Logger.log("Telegram: token=" + (p.getProperty("TG_TOKEN") ? "збережено" : "НЕМАЄ") +
+             ", chat=" + (p.getProperty("TG_CHAT") || "НЕМАЄ"));
+}
+
+function tgSend_(text) {
+  var p = PropertiesService.getScriptProperties();
+  var token = p.getProperty("TG_TOKEN"), chat = p.getProperty("TG_CHAT");
+  if (!token || !chat) { console.error("Telegram не налаштовано — запусти setTelegram()"); return; }
+  UrlFetchApp.fetch("https://api.telegram.org/bot" + token + "/sendMessage", {
+    method: "post", contentType: "application/json", muteHttpExceptions: true,
+    payload: JSON.stringify({ chat_id: chat, text: text, parse_mode: "HTML", disable_web_page_preview: true })
+  });
+}
+
+function esc_(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function ymd_(d, tz) { return Utilities.formatDate(d, tz, "yyyy-MM-dd"); }
+function dayDiff_(isoFrom, isoTo) { // isoTo − isoFrom, у днях (через UTC-північ — без DST-сюрпризів)
+  var a = new Date(isoFrom + "T00:00:00Z").getTime();
+  var b = new Date(isoTo + "T00:00:00Z").getTime();
+  return Math.round((b - a) / 86400000);
+}
+function daysWord_(n) { return (n % 10 >= 2 && n % 10 <= 4 && (n < 10 || n > 20)) ? "дні" : "днів"; }
+
+/** Щоденний прохід: знаходить замовлення з датою сьогодні / через N днів і шле нагадування. */
+function sendDeliveryReminders() {
+  var tz = "Europe/Kiev";
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_ORDERS);
+  if (!sh || sh.getLastRow() < 2) return;
+  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 29).getValues();
+  var todayIso = ymd_(new Date(), tz);
+  var props = PropertiesService.getScriptProperties();
+
+  // Групуємо рядки за номером замовлення
+  var orders = {}, order;
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i], num = String(r[0] || "").trim();
+    if (!num) continue;
+    var iso = toISODate(r[28]); // AC — Дата доставки
+    if (!iso) continue;
+    if (!orders[num]) {
+      orders[num] = { num: num, iso: iso, done: false, client: r[4], city: r[6],
+                      transport: r[26], address: r[27], items: [] };
+    }
+    order = orders[num];
+    if (REMIND_DONE.indexOf(String(r[2] || "").trim()) >= 0) order.done = true; // C — Статус
+    order.items.push({ type: r[7], constr: r[8], color: r[9], pattern: r[10],
+                       w: r[13], h: r[14], d: r[15], qty: r[16] });
+  }
+
+  Object.keys(orders).forEach(function (num) {
+    var o = orders[num];
+    if (o.done) return;
+    var diff = dayDiff_(todayIso, o.iso);
+    if (REMIND_BEFORE.indexOf(diff) < 0) return;
+    var guard = "rem_" + num + "_" + todayIso;
+    if (props.getProperty(guard)) return; // вже слали сьогодні
+    tgSend_(buildReminder_(o, diff, tz));
+    props.setProperty(guard, "1");
+  });
+}
+
+function buildReminder_(o, diff, tz) {
+  var ddmm = Utilities.formatDate(new Date(o.iso + "T00:00:00Z"), "Etc/UTC", "dd.MM.yyyy");
+  var head;
+  if (diff === 0) head = "🔴 <b>СЬОГОДНІ відправка / доставка!</b>";
+  else if (diff === 1) head = "🟠 <b>ЗАВТРА відправка</b> — " + ddmm;
+  else head = "🟡 <b>Нагадування: відправка через " + diff + " " + daysWord_(diff) + "</b> — " + ddmm;
+
+  var msg = head + "\n📌 <b>№" + esc_(o.num) + "</b>";
+  if (o.client) msg += "\n👤 " + esc_(o.client) + (o.city ? " (" + esc_(o.city) + ")" : "");
+  var multi = o.items.length > 1;
+  o.items.forEach(function (it, idx) {
+    msg += "\n";
+    if (multi) msg += "\n🧺 <b>Кошик " + (idx + 1) + "</b>";
+    var spec = [it.type, it.constr, it.color, it.pattern].filter(function (x) { return x; }).map(esc_).join(", ");
+    if (spec) msg += "\n• " + spec;
+    if (Number(it.w) > 0) msg += "\n• Розміри (мм): В " + it.h + " × Ш " + it.w + " × Г " + it.d;
+    msg += "\n• Кількість: <b>" + (Number(it.qty) || 1) + " шт.</b>";
+  });
+  var transport = o.transport === "Інше" ? "" : (o.transport || "");
+  if (transport) msg += "\n\n🚚 " + esc_(transport) + (o.address ? " — " + esc_(o.address) : "");
+  msg += "\n📅 Дата: <b>" + ddmm + "</b>";
+  msg += "\n\n⚠️ Підрядник, перевір готовність і відправ вчасно.";
+  return msg;
+}
+
+/** Встанови ОДИН раз: щоденний тригер о 08:30 для sendDeliveryReminders. */
+function installReminderTrigger() {
+  var trg = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < trg.length; i++) {
+    if (trg[i].getHandlerFunction() === "sendDeliveryReminders") ScriptApp.deleteTrigger(trg[i]);
+  }
+  ScriptApp.newTrigger("sendDeliveryReminders").timeBased().atHour(8).nearMinute(30).everyDays(1).create();
+  Logger.log("Тригер нагадувань встановлено на ~08:30 щодня.");
+}
+
+/** Тест: надсилає нагадування по всіх майбутніх замовленнях зараз (ігнорує час). */
+function testReminderNow() {
+  sendDeliveryReminders();
+}
+
 // ===================== АРКУШІ =====================
 
 function headerStyle(sheet, n) {

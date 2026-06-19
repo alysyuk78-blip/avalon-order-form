@@ -126,7 +126,7 @@ function formatTelegramMessage(order) {
     if (pattern) msg += `• Візерунок: <b>${pattern}</b>\n`;
     if (it.ac_brand || it.ac_model) msg += `• Кондиціонер: <b>${e([it.ac_brand, it.ac_model].filter(Boolean).join(" "))}</b>\n`;
     if (Number(it.size_w) > 0) {
-      msg += `• Розміри:\n   Висота — <b>${it.size_h}</b> мм\n   Ширина — <b>${it.size_w}</b> мм\n   Глибина — <b>${it.size_d}</b> мм\n`;
+      msg += `• Розміри (мм):\n   Висота — <b>${it.size_h}</b>\n   Ширина — <b>${it.size_w}</b>\n   Глибина — <b>${it.size_d}</b>\n`;
     } else {
       msg += `• Розміри: <i>розрахує менеджер</i>\n`;
     }
