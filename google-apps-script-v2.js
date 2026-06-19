@@ -347,8 +347,9 @@ function createOrderTopic_(data) {
   var r = tgApi_("createForumTopic", { chat_id: chat, name: num || "Замовлення" });
   if (r && r.ok && r.result && r.result.message_thread_id) threadId = r.result.message_thread_id;
   // якщо Теми вимкнені / бот не адмін — threadId лишиться null, повідомлення піде в загальний чат
-  tgSendTo_(chat, buildProductionMsg_(data), threadId);
-  if (num) p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
+  var sent = tgSendTo_(chat, buildProductionMsg_(data), threadId);
+  // Маркер ставимо ЛИШЕ при успіху — інакше тимчасовий збій назавжди заблокував би повтор
+  if (num && sent && sent.ok) p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
 }
 
 /** Збирає всі рядки одного замовлення в обʼєкт data (для надсилання підряднику з таблиці). */
