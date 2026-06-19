@@ -111,6 +111,7 @@ function doPost(e) {
     });
 
     addDeliveryEvent(data); // подія в Google Календарі + нагадування (за 2 дні і в день о 08:30)
+    try { createOrderTopic_(data); } catch (e) { console.error("Topic: " + e); } // тема + специфікація в групу підрядника
 
     return jsonOut({ status: "ok", order_number: data.order_number, row: lastRow });
   } catch (error) {
@@ -272,27 +273,129 @@ var REMIND_DONE = ["Відправлено", "Завершено", "Скасов
 
 /** ОДИН раз: встав значення, запусти, потім прибери назад на "" (вони вже збережені). */
 function setTelegram() {
-  var TOKEN = "";    // ← токен бота (той самий, що у Vercel TELEGRAM_BOT_TOKEN)
-  var CHAT_ID = "";  // ← chat_id, куди слати нагадування (як TELEGRAM_CHAT_ID)
+  var TOKEN = "";              // ← токен бота (той самий, що у Vercel TELEGRAM_BOT_TOKEN)
+  var CONTRACTOR_CHAT_ID = ""; // ← chat_id ГРУПИ з підрядником (з увімкненими Темами), напр. -1001234567890
+  var OWNER_CHAT_ID = "";      // ← (необов'язково) запасний чат, якщо групи підрядника немає
   var p = PropertiesService.getScriptProperties();
   if (TOKEN) p.setProperty("TG_TOKEN", TOKEN);
-  if (CHAT_ID) p.setProperty("TG_CHAT", CHAT_ID);
+  if (CONTRACTOR_CHAT_ID) p.setProperty("TG_CONTRACTOR_CHAT", CONTRACTOR_CHAT_ID);
+  if (OWNER_CHAT_ID) p.setProperty("TG_CHAT", OWNER_CHAT_ID);
   Logger.log("Telegram: token=" + (p.getProperty("TG_TOKEN") ? "збережено" : "НЕМАЄ") +
-             ", chat=" + (p.getProperty("TG_CHAT") || "НЕМАЄ"));
+             ", група підрядника=" + (p.getProperty("TG_CONTRACTOR_CHAT") || "НЕМАЄ") +
+             ", запасний чат=" + (p.getProperty("TG_CHAT") || "НЕМАЄ"));
 }
 
-function tgSend_(text) {
-  var p = PropertiesService.getScriptProperties();
-  var token = p.getProperty("TG_TOKEN"), chat = p.getProperty("TG_CHAT");
-  if (!token || !chat) { console.error("Telegram не налаштовано — запусти setTelegram()"); return; }
-  UrlFetchApp.fetch("https://api.telegram.org/bot" + token + "/sendMessage", {
+// Базовий виклик Telegram Bot API. Повертає розпарсену відповідь або null.
+function tgApi_(method, payload) {
+  var token = PropertiesService.getScriptProperties().getProperty("TG_TOKEN");
+  if (!token) { console.error("Telegram не налаштовано — запусти setTelegram()"); return null; }
+  var res = UrlFetchApp.fetch("https://api.telegram.org/bot" + token + "/" + method, {
     method: "post", contentType: "application/json", muteHttpExceptions: true,
-    payload: JSON.stringify({ chat_id: chat, text: text, parse_mode: "HTML", disable_web_page_preview: true })
+    payload: JSON.stringify(payload)
   });
+  try { return JSON.parse(res.getContentText()); } catch (e) { return null; }
+}
+
+// Надіслати повідомлення в чат і (опційно) в конкретну тему (гілку).
+function tgSendTo_(chatId, text, threadId) {
+  if (!chatId) { console.error("Немає chat_id для надсилання"); return null; }
+  var payload = { chat_id: chatId, text: text, parse_mode: "HTML", disable_web_page_preview: true };
+  if (threadId) payload.message_thread_id = Number(threadId);
+  return tgApi_("sendMessage", payload);
 }
 
 function esc_(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function money_(v) { return String(Math.round(Number(v) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, " "); }
+function fmtDate_(v) { var s = toISODate(v); if (!s) return ""; var p = s.split("-"); return p[2] + "." + p[1] + "." + p[0]; }
+function nowKyiv_() {
+  var tz = "Europe/Kiev", now = new Date();
+  var wd = { 1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб", 7: "Нд" }[Number(Utilities.formatDate(now, tz, "u"))] || "";
+  return wd + " " + Utilities.formatDate(now, tz, "dd.MM.yyyy, HH:mm");
+}
+
+/**
+ * Створює в групі підрядника тему (гілку) з назвою = номер замовлення,
+ * постить туди специфікацію і запам'ятовує message_thread_id (для нагадувань).
+ * Якщо групу не налаштовано — нічого не робить. Помилки не валять замовлення.
+ */
+function createOrderTopic_(data) {
+  var p = PropertiesService.getScriptProperties();
+  var chat = p.getProperty("TG_CONTRACTOR_CHAT");
+  if (!p.getProperty("TG_TOKEN") || !chat) return; // підрядницький чат не налаштовано
+  var num = String(data.order_number || "").trim();
+  var threadId = null;
+  var r = tgApi_("createForumTopic", { chat_id: chat, name: num || "Замовлення" });
+  if (r && r.ok && r.result && r.result.message_thread_id) {
+    threadId = r.result.message_thread_id;
+    if (num) p.setProperty("thread_" + num, String(threadId));
+  } // якщо Теми вимкнені / бот не адмін — threadId лишиться null, повідомлення піде в загальний чат
+  tgSendTo_(chat, buildProductionMsg_(data), threadId);
+}
+
+/** Повідомлення-специфікація для підрядника (4 секції) — дзеркало формату з api/order.js. */
+function buildProductionMsg_(data) {
+  var items = (Array.isArray(data.items) && data.items.length) ? data.items : [{
+    basket_type: data.basket_type, construction_type: data.construction_type,
+    color: data.color, color_custom: data.color_custom, pattern: data.pattern, pattern_custom: data.pattern_custom,
+    size_w: data.size_w, size_h: data.size_h, size_d: data.size_d, quantity: data.quantity,
+    ac_brand: data.ac_brand, ac_model: data.ac_model, area_m2: data.area_m2, cost_total: data.cost_total
+  }];
+  var multi = items.length > 1;
+  function perM2(it) { var q = Number(it.quantity) || 1, a = Number(it.area_m2) || 0, c = Number(it.cost_total) || 0; return (a > 0 && q > 0 && c > 0) ? Math.round(c / (a * q)) : 0; }
+
+  var m = "📌 <b>Замовлення №" + esc_(data.order_number) + "</b>\n";
+  m += "🕐 " + nowKyiv_() + "\n";
+
+  m += "\n👤 <b>ЗАМОВНИК</b>\n";
+  m += esc_(((data.first_name || "") + " " + (data.last_name || "")).trim()) + "\n";
+  if (data.phone) m += "📞 " + esc_(data.phone) + "\n";
+  if (data.city) m += "🏙 " + esc_(data.city) + "\n";
+
+  m += "\n🏭 <b>ВИРОБНИЦТВО</b>\n";
+  items.forEach(function (it, i) {
+    var color = it.color ? esc_(it.color) + (it.color_custom ? " (" + esc_(it.color_custom) + ")" : "") : "";
+    var pattern = it.pattern ? esc_(it.pattern) + (it.pattern_custom ? " (" + esc_(it.pattern_custom) + ")" : "") : "";
+    if (multi) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
+    m += "• Тип: <b>" + esc_(it.basket_type) + "</b>\n";
+    m += "• Конструкція: <b>" + esc_(it.construction_type) + "</b>\n";
+    if (color) m += "• Колір: <b>" + color + "</b>\n";
+    if (pattern) m += "• Візерунок: <b>" + pattern + "</b>\n";
+    if (it.ac_brand || it.ac_model) m += "• Кондиціонер: <b>" + esc_([it.ac_brand, it.ac_model].filter(function (x) { return x; }).join(" ")) + "</b>\n";
+    if (Number(it.size_w) > 0) {
+      m += "• Розміри (мм):\n   Висота — <b>" + it.size_h + "</b>\n   Ширина — <b>" + it.size_w + "</b>\n   Глибина — <b>" + it.size_d + "</b>\n";
+    } else {
+      m += "• Розміри: <i>розрахує менеджер</i>\n";
+    }
+    m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " шт.</b>\n";
+  });
+
+  m += "\n💰 <b>ФІНАНСИ</b>\n";
+  var grand = 0;
+  if (multi) {
+    items.forEach(function (it, i) {
+      var a = Number(it.area_m2) || 0, c = Number(it.cost_total) || 0, pp = perM2(it); grand += c;
+      if (c > 0) m += "• Кошик " + (i + 1) + ": " + (a ? a.toFixed(2) + " м² × " + money_(pp) + " ₴ = " : "") + "<b>" + money_(c) + " ₴</b>\n";
+    });
+    if (grand > 0) m += "• <b>Разом виробнича: " + money_(grand) + " ₴</b>\n";
+  } else {
+    var it = items[0], a = Number(it.area_m2) || 0, c = Number(it.cost_total) || 0, pp = perM2(it);
+    if (a > 0) m += "• Площа виробу: <b>" + a.toFixed(2) + "</b> м²\n";
+    if (pp > 0) m += "• Ціна за 1 м²: <b>" + money_(pp) + " ₴</b>\n";
+    if (c > 0) m += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
+  }
+  if (data.payment_method) m += "• Оплата: <b>" + esc_(data.payment_method) + "</b>\n";
+
+  m += "\n🚚 <b>ДОСТАВКА</b>\n";
+  var transport = data.transport === "Інше" ? (data.transport_custom || "") : (data.transport || "");
+  if (transport) m += "• Спосіб: <b>" + esc_(transport) + "</b>\n";
+  if (data.delivery_address) m += "• Адреса: " + esc_(data.delivery_address) + "\n";
+  if (data.delivery_date) m += "• Дата: <b>" + fmtDate_(data.delivery_date) + "</b>\n";
+  if (data.notes) m += "• Примітка: " + esc_(data.notes) + "\n";
+
+  m += "\n🔖 Джерело заявки: " + esc_(data.referral_source || "direct") + "\n";
+  return m;
 }
 function ymd_(d, tz) { return Utilities.formatDate(d, tz, "yyyy-MM-dd"); }
 function dayDiff_(isoFrom, isoTo) { // isoTo − isoFrom, у днях (через UTC-північ — без DST-сюрпризів)
@@ -336,7 +439,9 @@ function sendDeliveryReminders() {
     if (REMIND_BEFORE.indexOf(diff) < 0) return;
     var guard = "rem_" + num + "_" + todayIso;
     if (props.getProperty(guard)) return; // вже слали сьогодні
-    tgSend_(buildReminder_(o, diff, tz));
+    var chat = props.getProperty("TG_CONTRACTOR_CHAT") || props.getProperty("TG_CHAT");
+    var thread = props.getProperty("thread_" + num); // тема (гілка) цього замовлення
+    tgSendTo_(chat, buildReminder_(o, diff, tz), thread);
     props.setProperty(guard, "1");
   });
 }
