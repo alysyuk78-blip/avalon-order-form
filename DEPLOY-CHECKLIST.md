@@ -24,7 +24,6 @@ Vercel → Проєкт `avalon-order-form` → **Settings → Environment Varia
 - [ ] `TELEGRAM_BOT_TOKEN`
 - [ ] `TELEGRAM_CHAT_ID`
 - [ ] `GOOGLE_SHEET_URL` — URL веб-застосунку Apps Script (`.../exec`)
-- [ ] `TRELLO_API_KEY`, `TRELLO_TOKEN`, `TRELLO_LIST_ID`
 - [ ] Після змін env — **Redeploy** проєкту.
 
 ## 3. Викотити код у прод
@@ -38,7 +37,7 @@ Vercel → Проєкт `avalon-order-form` → **Settings → Environment Varia
 
 - [ ] **НП-фільтр:** на 2–3 містах у списку відділень немає поштоматів і відділень < 30 кг; вантажні відділення лишаються.
 - [ ] **НП-помилка:** (тимчасово прибравши/зіпсувавши `NP_API_KEY`) — форма показує попередження, а не порожній список. Повернути ключ.
-- [ ] **`?ref=`:** відкрити `…vercel.app/?ref=OSBB-TEST`, оформити тест-замовлення → джерело `OSBB-TEST` у Telegram, Google Sheets (колонка «Джерело») і Trello.
+- [ ] **`?ref=`:** відкрити `…vercel.app/?ref=OSBB-TEST`, оформити тест-замовлення → джерело `OSBB-TEST` у Telegram і Google Sheets (колонка «Джерело»).
 - [ ] **Без `?ref=`** → джерело `direct`.
 - [ ] **Дата в Telegram** збігається з київським часом (формат ДД.ММ.РРРР ГГ:ХХ).
 - [ ] **Номер замовлення** `ORD-ДДММРР-NNN` — послідовний, обнуляється з 1-го числа місяця.
