@@ -201,6 +201,13 @@ function onEditDelivery(e) {
     if (range.getRow() < 2) return;
     var col = range.getColumn();
 
+    // Перерахунок фінансів при зміні розмірів/кількості/типу/конструкції/візерунка.
+    // H=8, I=9, K=11, N=14, O=15, P=16, Q=17.
+    if ([8, 9, 11, 14, 15, 16, 17].indexOf(col) >= 0) {
+      for (var ri = 0; ri < range.getNumRows(); ri++) recalcRow_(sh, range.getRow() + ri);
+      return;
+    }
+
     // Статус «В роботі» → передати замовлення підряднику (тема + специфікація), один раз.
     if (col === 3) {
       if (String(range.getValue() || "").trim() === "В роботі") {
@@ -256,6 +263,35 @@ function onEditDelivery(e) {
       }
     }
   } catch (err) { console.error("onEditDelivery: " + err); }
+}
+
+/**
+ * Перераховує площу/собівартість/ціну/прибуток/маржу для одного рядка
+ * за тією ж формулою, що й при створенні замовлення (doPost). Викликається
+ * автоматично при зміні розмірів/кількості/типу/конструкції/візерунка.
+ * Колонки: R(18) Площа, S(19) Собів.1шт, T(20) Собів.заг, U(21) Ціна1шт,
+ *          V(22) Виручка, W(23) Валовий, X(24) Маржа. Y/Z — формули, оновляться самі.
+ */
+function recalcRow_(sh, row) {
+  if (row < 2) return;
+  var v = sh.getRange(row, 1, 1, 17).getValues()[0]; // A..Q
+  var basket_type = v[7], construction = v[8], pattern = v[10];
+  var w = Number(v[13]) || 0, h = Number(v[14]) || 0, d = Number(v[15]) || 0;
+  var qty = Number(v[16]) || 1;
+  if (!(w && h)) return; // без розмірів не перераховуємо (напр. «розрахує менеджер»)
+  var MARKUP = 1 / (1 - 0.2593);
+  var areaM2 = (w * h + 2 * d * h) / 1000000;
+  var ppm2 = String(construction || "").toLowerCase().indexOf("розбірний") >= 0 ? 2170 : 2030;
+  ppm2 = Math.round(ppm2 * MARKUP);
+  if (String(basket_type || "").toLowerCase().indexOf("антивандал") >= 0) ppm2 = Math.round(ppm2 * 1.35);
+  if (pattern && ["K3", "K4", "K6", "K8", "K9"].indexOf(pattern) >= 0) ppm2 = Math.round(ppm2 * 1.15);
+  var total = Math.round(areaM2 * ppm2) * qty;
+  var costTotal = Math.round(total / MARKUP);
+  var costUnit = Math.round(costTotal / qty);
+  var priceUnit = Math.round(total / qty);
+  var margin = total ? Math.round((total - costTotal) / total * 1000) / 10 : "";
+  // Один setValues на діапазон R..X — щоб не плодити зайвих спрацювань тригера.
+  sh.getRange(row, 18, 1, 7).setValues([[Number(areaM2.toFixed(2)), costUnit, costTotal, priceUnit, total, total - costTotal, margin]]);
 }
 
 function toISODate(v) {
