@@ -787,7 +787,7 @@ function setupDashboard(ss) {
   sh.getRange("A2:A10").setFontWeight("bold");
   sh.getRange("B2:B3").setNumberFormat("#,##0 ₴");
   sh.getRange("B4").setNumberFormat("#,##0 ₴");
-  sh.getRange("B5").setNumberFormat('0.0"%"');
+  sh.getRange("B5").setNumberFormat('0.0%'); // частка → відсотки (×100), напр. 0,259 → 25,9%
   sh.getRange("B6:B10").setNumberFormat("#,##0 ₴");
   sh.getRange("A10:B10").setBackground("#DCFCE7").setFontWeight("bold");
 
@@ -796,17 +796,21 @@ function setupDashboard(ss) {
   var mh = ["Місяць (ММ.РРРР)","Виручка","Собівартість","Валовий прибуток","Маржинальність %","Комісії","Витрати","Чистий прибуток"];
   sh.getRange(14, 1, 1, mh.length).setValues([mh]);
   headerStyleAt(sh, 14, mh.length);
-  // Поточний місяць як приклад + формули на 12 рядків
+  // Місяць (ММ.РРРР) — як ТЕКСТ (щоб не перетворювалось у число й звірка спрацьовувала).
+  sh.getRange(15, 1, 12, 1).setNumberFormat("@");
   var curMonth = Utilities.formatDate(new Date(), "Europe/Kiev", "MM.yyyy");
+  // Місяць замовлення беремо з НОМЕРА (ORD-ДДММРР-NNN): MID(7,2)=MM, "20"&MID(9,2)=РРРР.
+  // Надійніше за дату-текст у колонці B (її Google може перетворити на справжню дату).
+  var monKey = 'MID(' + O + '!$A$2:$A$5000;7;2)&".20"&MID(' + O + '!$A$2:$A$5000;9;2)';
   for (var r = 15; r < 27; r++) {
     if (r === 15) sh.getRange(r, 1).setValue(curMonth);
     var m = "$A" + r;
     var notCancel = '(' + O + '!$C$2:$C$5000<>"Скасовано")'; // фактор: рядок не скасований
-    sh.getRange(r, 2).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*' + notCancel + '*' + O + '!$V$2:$V$5000))');
-    sh.getRange(r, 3).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*' + notCancel + '*' + O + '!$T$2:$T$5000))');
-    sh.getRange(r, 4).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*' + notCancel + '*' + O + '!$W$2:$W$5000))');
+    sh.getRange(r, 2).setFormula('=IF(' + m + '="";"";SUMPRODUCT((' + monKey + '=' + m + ')*' + notCancel + '*' + O + '!$V$2:$V$5000))');
+    sh.getRange(r, 3).setFormula('=IF(' + m + '="";"";SUMPRODUCT((' + monKey + '=' + m + ')*' + notCancel + '*' + O + '!$T$2:$T$5000))');
+    sh.getRange(r, 4).setFormula('=IF(' + m + '="";"";SUMPRODUCT((' + monKey + '=' + m + ')*' + notCancel + '*' + O + '!$W$2:$W$5000))');
     sh.getRange(r, 5).setFormula('=IFERROR(D' + r + '/B' + r + ';"")');
-    sh.getRange(r, 6).setFormula('=IF(' + m + '="";"";SUMPRODUCT((MID(' + O + '!$B$2:$B$5000;4;7)=' + m + ')*' + notCancel + '*' + O + '!$Y$2:$Y$5000))');
+    sh.getRange(r, 6).setFormula('=IF(' + m + '="";"";SUMPRODUCT((' + monKey + '=' + m + ')*' + notCancel + '*' + O + '!$Y$2:$Y$5000))');
     // Витрати помісячно — через TEXT дати (Витрати!A = реальна дата)
     sh.getRange(r, 7).setFormula('=IF(' + m + '="";"";SUMPRODUCT((TEXT(' + E + '!$A$2:$A$2000;"MM.yyyy")=' + m + ')*' + E + '!$D$2:$D$2000))');
     // Чистий прибуток = Валовий − Комісії − Витрати
