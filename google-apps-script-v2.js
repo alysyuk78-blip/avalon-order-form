@@ -21,6 +21,7 @@ var SHEET_PAYOUTS = "Виплати";
 var SHEET_EXPENSES = "Витрати";
 var SHEET_DASH = "Зведення";
 var SHEET_INFO = "Інструкція";
+var SHEET_SETTLE = "Розрахунки з підрядником";
 
 var RAL7016 = "#383E42";   // заливка шапок
 var HDR_TEXT = "#FFFFFF";  // текст шапок
@@ -665,24 +666,26 @@ function setupOrders(sheet) {
     "W (мм)","H (мм)","D (мм)","Кількість","Площа (м²)",
     "Собівартість 1шт","Собівартість заг","Ціна продажу 1шт","Виручка","Валовий прибуток","Маржа %",
     "Комісія дропш.","Чистий прибуток",
-    "Доставка","Адреса","Дата доставки","Оплата","Як дізнались","Примітки"
+    "Доставка","Адреса","Дата доставки","Оплата","Як дізнались","Примітки",
+    "Оплата клієнта ✓"  // AG (33): клієнт оплатив підряднику (є квитанція) → маржа до отримання
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
     .requireValueInList(["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"]).setAllowInvalid(false).build();
   sheet.getRange(2, 3, 1000, 1).setDataValidation(rule);
+  sheet.getRange(2, 33, 1000, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build()); // AG галочка
   applyOrderConditionalFormats_(sheet);
 }
 
 /** Умовне форматування аркуша «Замовлення»: колір статус-комірки + колір тексту всього рядка. */
 function applyOrderConditionalFormats_(sheet) {
   var sr = sheet.getRange("C2:C1000");    // статус-комірка
-  var rowR = sheet.getRange("A2:AF1000"); // увесь рядок (текст)
+  var rowR = sheet.getRange("A2:AG1000"); // увесь рядок (текст)
   // Кольори статус-комірки (як було).
   var cellRules = [
     {t:"Нове",bg:"#FFF3CD",fg:"#856404"}, {t:"В роботі",bg:"#CCE5FF",fg:"#004085"},
@@ -702,6 +705,59 @@ function applyOrderConditionalFormats_(sheet) {
 function updateOrderColors() {
   var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_ORDERS);
   if (sh) applyOrderConditionalFormats_(sh);
+}
+
+/** Додати колонку AG «Оплата клієнта ✓» (галочка) в НАЯВНИЙ аркуш «Замовлення». Дані не чіпає. */
+function addPaymentColumn() {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_ORDERS);
+  if (!sh) return;
+  if (sh.getMaxColumns() < 33) sh.insertColumnsAfter(sh.getMaxColumns(), 33 - sh.getMaxColumns());
+  sh.getRange(1, 33).setValue("Оплата клієнта ✓");
+  sh.getRange(1, 33).setFontWeight("bold").setBackground(RAL7016).setFontColor(HDR_TEXT)
+    .setFontFamily(HDR_FONT).setHorizontalAlignment("center").setVerticalAlignment("middle").setWrap(true).setFontSize(10);
+  sh.setColumnWidth(33, 120);
+  sh.getRange(2, 33, 1000, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+  Logger.log("Колонку «Оплата клієнта ✓» (AG) додано.");
+}
+
+/**
+ * Аркуш «Розрахунки з підрядником» — облік ТВОЄЇ маржі, яку винен підрядник.
+ * Маржа стає «до отримання», коли клієнт оплатив підряднику (галочка AG у «Замовлення»).
+ * Унизу — лог надходжень від підрядника; залишок рахується сам.
+ */
+function setupContractorSettlement(ss) {
+  ss = ss || SpreadsheetApp.getActiveSpreadsheet();
+  if (ss.getSheetByName(SHEET_SETTLE)) return ss.getSheetByName(SHEET_SETTLE);
+  var sh = ss.insertSheet(SHEET_SETTLE);
+  var O = SHEET_ORDERS;
+  [300, 150, 150, 280].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+
+  sh.getRange("A1").setValue("РОЗРАХУНКИ З ПІДРЯДНИКОМ — МОЯ МАРЖА").setFontWeight("bold").setFontSize(12);
+  sh.getRange("A2").setValue("Маржа до отримання (по оплачених замовленнях)");
+  // Сума «Валового прибутку» (W) по замовленнях, де клієнт оплатив (AG=✓) і не «Скасовано».
+  sh.getRange("B2").setFormula('=SUMPRODUCT((' + O + '!$AG$2:$AG$5000=TRUE)*(' + O + '!$C$2:$C$5000<>"Скасовано")*' + O + '!$W$2:$W$5000)');
+  sh.getRange("A3").setValue("Отримано від підрядника");
+  sh.getRange("B3").setFormula('=SUM(B8:B5000)');
+  sh.getRange("A4").setValue("ЗАЛИШОК (борг підрядника мені)");
+  sh.getRange("B4").setFormula('=B2-B3');
+  sh.getRange("A2:A4").setFontWeight("bold");
+  sh.getRange("B2:B4").setNumberFormat("#,##0 ₴");
+  sh.getRange("A4:B4").setBackground("#DCFCE7").setFontWeight("bold");
+
+  sh.getRange("A6").setValue("ОТРИМАНІ ВИПЛАТИ ВІД ПІДРЯДНИКА (вписуй кожне надходження маржі)").setFontWeight("bold").setFontColor(RAL7016);
+  var ph = ["Дата", "Сума, ₴", "Спосіб", "Примітка (за які замовлення)"];
+  sh.getRange(7, 1, 1, ph.length).setValues([ph]);
+  headerStyleAt(sh, 7, ph.length);
+  sh.getRange("A8:A").setNumberFormat("dd.MM.yyyy");
+  sh.getRange("B8:B").setNumberFormat("#,##0 ₴");
+  sh.setFrozenRows(7);
+  return sh;
+}
+
+/** Створити аркуш розрахунків + колонку оплати в наявній таблиці (один клік, без rebuild). */
+function addContractorSettlement() {
+  addPaymentColumn();
+  setupContractorSettlement();
 }
 
 function setupDropshippers(ss) {
@@ -935,6 +991,7 @@ function rebuildAll() {
   setupPayouts(ss);
   setupDropshippers(ss);
   setupDashboard(ss);
+  setupContractorSettlement(ss);
   setupInstructions(ss);
   // Перевстановити крос-формулу (тепер усі аркуші існують) — щоб уникнути застряглого #REF.
   ss.getSheetByName(SHEET_PAYOUTS).getRange("C2")
