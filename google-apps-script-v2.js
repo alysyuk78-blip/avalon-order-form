@@ -676,13 +676,32 @@ function setupOrders(sheet) {
   var rule = SpreadsheetApp.newDataValidation()
     .requireValueInList(["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"]).setAllowInvalid(false).build();
   sheet.getRange(2, 3, 1000, 1).setDataValidation(rule);
-  var sr = sheet.getRange("C2:C1000");
-  var cfRules = [
+  applyOrderConditionalFormats_(sheet);
+}
+
+/** Умовне форматування аркуша «Замовлення»: колір статус-комірки + колір тексту всього рядка. */
+function applyOrderConditionalFormats_(sheet) {
+  var sr = sheet.getRange("C2:C1000");    // статус-комірка
+  var rowR = sheet.getRange("A2:AF1000"); // увесь рядок (текст)
+  // Кольори статус-комірки (як було).
+  var cellRules = [
     {t:"Нове",bg:"#FFF3CD",fg:"#856404"}, {t:"В роботі",bg:"#CCE5FF",fg:"#004085"},
     {t:"Готове",bg:"#D4EDDA",fg:"#155724"}, {t:"Відправлено",bg:"#D1ECF1",fg:"#0C5460"},
     {t:"Завершено",bg:"#E2E3E5",fg:"#383D41"}, {t:"Скасовано",bg:"#F8D7DA",fg:"#721C24"}
   ].map(function (r) { return SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(r.t).setBackground(r.bg).setFontColor(r.fg).setBold(true).setRanges([sr]).build(); });
-  sheet.setConditionalFormatRules(cfRules);
+  // Колір ТЕКСТУ всього рядка за статусом: Скасовано — червоний, Завершено — зелений.
+  var rowRules = [
+    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$C2="Скасовано"').setFontColor("#C0392B").setRanges([rowR]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$C2="Завершено"').setFontColor("#1E7E34").setRanges([rowR]).build()
+  ];
+  // Статус-комірка вище за пріоритетом → зберігає власні кольори; решта рядка фарбується.
+  sheet.setConditionalFormatRules(cellRules.concat(rowRules));
+}
+
+/** Оновити лише кольори в існуючому аркуші «Замовлення» (дані не чіпає). */
+function updateOrderColors() {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_ORDERS);
+  if (sh) applyOrderConditionalFormats_(sh);
 }
 
 function setupDropshippers(ss) {
