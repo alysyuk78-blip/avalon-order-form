@@ -773,16 +773,18 @@ function setupContractorSettlement(ss) {
   return sh;
 }
 
-/** Створити аркуш розрахунків + колонки оплати в наявній таблиці (без rebuild). */
-function addContractorSettlement() {
-  addPaymentColumn();
-  setupContractorSettlement();
+/** Перебудувати аркуш «Розрахунки з підрядником» (видаляє старий і ставить новий без журналу). */
+function updateContractorSettlement() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var old = ss.getSheetByName(SHEET_SETTLE);
+  if (old) ss.deleteSheet(old);
+  setupContractorSettlement(ss);
 }
 
 /** ОДИН КЛІК: галочки оплати + аркуш «Розрахунки з підрядником» + фільтр + кольори рядків. Дані не чіпає. */
 function applyAllUpdates() {
   addPaymentColumn();
-  setupContractorSettlement();
+  updateContractorSettlement(); // перебудовує (прибирає старий ручний журнал)
   addOrderFilter();
   updateOrderColors();
   Logger.log("Готово: галочки оплати, аркуш розрахунків, фільтр і кольори застосовано.");
