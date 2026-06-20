@@ -25,7 +25,13 @@
         } catch (e) {}
       }
       window.__alertOwner = alertOwner;
-      window.addEventListener("error", function (e) { alertOwner("js_error", (e.message || "") + " @ " + (e.filename || "") + ":" + (e.lineno || ""), String((e.error && e.error.stack) || "")); });
+      window.addEventListener("error", function (e) {
+        var msg = (e.message || "");
+        // Пропускаємо «непрозорі» крос-доменні помилки (CDN/розширення браузера) — без файлу й деталей,
+        // не дієві й створюють хибні тривоги. Критичний збій рендеру однаково ловить 15-сек сторож.
+        if (!e.filename || /script error\.?/i.test(msg)) return;
+        alertOwner("js_error", msg + " @ " + e.filename + ":" + (e.lineno || ""), String((e.error && e.error.stack) || ""));
+      });
       window.addEventListener("unhandledrejection", function (e) { alertOwner("js_reject", String(e.reason || "")); });
       function showFallback() {
         if (document.getElementById("avalon-fallback")) return;
