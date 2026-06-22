@@ -300,6 +300,13 @@ module.exports = async function handler(req, res) {
     const SHEETS_URL = process.env.GOOGLE_SHEET_URL;
 
     const results = [];
+    const patternFileForSheets = getPatternFile(order);
+    const patternFileMeta = patternFileForSheets ? {
+      name: patternFileForSheets.name,
+      type: patternFileForSheets.type,
+      size: patternFileForSheets.size,
+      data_length: patternFileForSheets.data.length,
+    } : null;
 
     // --- Google Sheets (першим: Apps Script присвоює послідовний № ORD-ДДММРР-NNN і повертає його) ---
     let orderNumber = null;
@@ -308,7 +315,7 @@ module.exports = async function handler(req, res) {
         const shRes = await fetch(SHEETS_URL, {
           method: "POST",
           headers: { "Content-Type": "text/plain" },
-          body: JSON.stringify({ timestamp: new Date().toISOString(), ...order }),
+          body: JSON.stringify({ timestamp: new Date().toISOString(), ...order, pattern_file_meta: patternFileMeta }),
         });
         const shData = await shRes.json().catch(() => null);
         if (shData && shData.order_number) orderNumber = shData.order_number;

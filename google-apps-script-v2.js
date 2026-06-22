@@ -45,6 +45,12 @@ function doPost(e) {
     data.order_number = nextOrderNumber();
     var patternFileInfo = savePatternFile_(data.pattern_file, data.order_number);
     if (patternFileInfo && patternFileInfo.url) data.pattern_file_url = patternFileInfo.url;
+    if (!patternFileInfo && data.pattern_file_meta && data.pattern_file_meta.name) {
+      patternFileInfo = {
+        name: safeFileName_(data.pattern_file_meta.name),
+        error: "файл був у формі/Vercel, але Apps Script не отримав base64-дані"
+      };
+    }
     if (patternFileInfo && patternFileInfo.error) {
       alertOwner_("Файл візерунку НЕ збережено для " + data.order_number, patternFileInfo.error);
     }
