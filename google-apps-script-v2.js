@@ -119,6 +119,7 @@ function doPost(e) {
       sheet.getRange(lastRow, 24).setNumberFormat('0.0"%"');        // X Маржа
       sheet.getRange(lastRow, 25, 1, 2).setNumberFormat("#,##0 ₴"); // Y-Z
       sheet.getRange(lastRow, 21).setFontWeight("bold");            // Ціна продажу 1шт
+      setPatternFileNoteLink_(sheet, lastRow, patternFileInfo);
       if (lastRow % 2 === 0) rr.setBackground("#F8F6F2");
     });
 
@@ -162,6 +163,20 @@ function appendOrderRow_(sheet, row) {
   sheet.getRange(targetRow, 1, 1, row.length).setValues([row]);
   applyOrderRowControls_(sheet, targetRow);
   return targetRow;
+}
+
+function setPatternFileNoteLink_(sheet, rowNumber, patternFileInfo) {
+  if (!patternFileInfo || !patternFileInfo.url) return;
+  var cell = sheet.getRange(rowNumber, 32); // AF — Примітки
+  var text = String(cell.getValue() || "");
+  var url = String(patternFileInfo.url || "");
+  var start = text.indexOf(url);
+  if (start < 0) return;
+  var rich = SpreadsheetApp.newRichTextValue()
+    .setText(text)
+    .setLinkUrl(start, start + url.length, url)
+    .build();
+  cell.setRichTextValue(rich);
 }
 
 function nextOrderNumber() {
