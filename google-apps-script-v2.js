@@ -42,6 +42,9 @@ function doPost(e) {
     if (!ss.getSheetByName(SHEET_DROP)) setupDropshippers(ss);
 
     var data = JSON.parse(e.postData.contents);
+    if (data.action === "attach_pattern_file_id") {
+      return attachPatternFileId_(sheet, data);
+    }
     data.order_number = nextOrderNumber();
     var patternFileInfo = savePatternFile_(data.pattern_file, data.order_number);
     if (patternFileInfo && patternFileInfo.url) data.pattern_file_url = patternFileInfo.url;
@@ -234,6 +237,34 @@ function savePatternFile_(file, orderNumber) {
     console.error("savePatternFile_: " + err);
     return { name: safeName, error: String(err) };
   }
+}
+
+function attachPatternFileId_(sheet, data) {
+  var orderNumber = String(data.order_number || "").trim();
+  var fileId = String(data.telegram_file_id || "").trim();
+  if (!orderNumber || !fileId) return jsonOut({ status: "error", message: "missing order_number or telegram_file_id" });
+
+  var props = PropertiesService.getScriptProperties();
+  var fileName = safeFileName_(data.pattern_file_name || "pattern-file");
+  props.setProperty("tg_file_" + orderNumber, fileId);
+  props.setProperty("tg_file_name_" + orderNumber, fileName);
+
+  var last = sheet.getLastRow();
+  if (last >= 2) {
+    var vals = sheet.getRange(2, 1, last - 1, 32).getValues();
+    for (var i = 0; i < vals.length; i++) {
+      if (String(vals[i][0] || "").trim() !== orderNumber) continue;
+      var row = i + 2;
+      var oldNote = String(vals[i][31] || "");
+      var marker = "Файл візерунку: " + fileName + " (збережено в Telegram, буде надіслано підряднику)";
+      if (oldNote.indexOf(marker) < 0) {
+        var nextNote = [oldNote, marker].filter(function (x) { return x; }).join("\n");
+        sheet.getRange(row, 32).setValue(nextNote).setWrap(true);
+      }
+    }
+  }
+
+  return jsonOut({ status: "ok", order_number: orderNumber, file_name: fileName });
 }
 
 // ===================== GOOGLE КАЛЕНДАР =====================
@@ -497,18 +528,30 @@ function tgSendDocument_(chatId, blob, caption, threadId) {
   try { return JSON.parse(res.getContentText()); } catch (e) { return null; }
 }
 
+function tgSendDocumentByFileId_(chatId, fileId, caption, threadId) {
+  if (!chatId || !fileId) return null;
+  var payload = { chat_id: chatId, document: fileId, caption: caption || "" };
+  if (threadId) payload.message_thread_id = Number(threadId);
+  return tgApi_("sendDocument", payload);
+}
+
 function sendPatternFileToContractor_(orderNumber, chatId, threadId) {
+  var props = PropertiesService.getScriptProperties();
+  var caption = "📎 Файл візерунку до замовлення №" + orderNumber;
   try {
-    var props = PropertiesService.getScriptProperties();
     var fileId = props.getProperty("file_" + orderNumber);
-    if (!fileId) return null;
-    var file = DriveApp.getFileById(fileId);
-    var blob = file.getBlob().setName(file.getName());
-    return tgSendDocument_(chatId, blob, "📎 Файл візерунку до замовлення №" + orderNumber, threadId);
+    if (fileId) {
+      var file = DriveApp.getFileById(fileId);
+      var blob = file.getBlob().setName(file.getName());
+      var driveSent = tgSendDocument_(chatId, blob, caption, threadId);
+      if (driveSent && driveSent.ok) return driveSent;
+    }
   } catch (err) {
     console.error("sendPatternFileToContractor_: " + err);
-    return null;
   }
+  var tgFileId = props.getProperty("tg_file_" + orderNumber);
+  if (tgFileId) return tgSendDocumentByFileId_(chatId, tgFileId, caption, threadId);
+  return null;
 }
 
 function getOwnerChat_() {
@@ -582,7 +625,7 @@ function createOrderTopic_(data) {
   var sent = tgSendTo_(chat, buildProductionMsg_(data), threadId);
   if (num && sent && sent.ok) {
     p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
-    if (p.getProperty("file_" + num)) {
+    if (p.getProperty("file_" + num) || p.getProperty("tg_file_" + num)) {
       var fileSent = sendPatternFileToContractor_(num, chat, threadId);
       if (!fileSent || !fileSent.ok) {
         alertOwner_("Файл візерунку для " + num + " НЕ надіслано підряднику.",
