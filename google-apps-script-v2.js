@@ -42,20 +42,8 @@ function doPost(e) {
     if (!ss.getSheetByName(SHEET_DROP)) setupDropshippers(ss);
 
     var data = JSON.parse(e.postData.contents);
-    if (data.action === "attach_pattern_file_id") {
-      return attachPatternFileId_(sheet, data);
-    }
     data.order_number = nextOrderNumber();
-    var patternFileInfo = savePatternFile_(data.pattern_file, data.order_number);
-    if (patternFileInfo && patternFileInfo.url) data.pattern_file_url = patternFileInfo.url;
-    if (!patternFileInfo && data.pattern_file_meta && data.pattern_file_meta.name) {
-      patternFileInfo = {
-        name: safeFileName_(data.pattern_file_meta.name),
-        error: "файл був у формі/Vercel, але Apps Script не отримав base64-дані"
-      };
-    }
-    // Drive can be unavailable until Apps Script is authorized. The Telegram file_id
-    // fallback is attached by Vercel right after the owner receives the document.
+    var patternFileInfo = getPatternFileInfo_(data);
 
     var MARKUP = 1 / (1 - 0.2593);
     var itemsIn = (Array.isArray(data.items) && data.items.length) ? data.items : [{
@@ -94,10 +82,8 @@ function doPost(e) {
       var margin    = hasMoney ? Math.round((total - costTotal) / total * 1000) / 10 : "";
 
       var notes = data.notes || "";
-      if (patternFileInfo && patternFileInfo.url) {
-        notes = [notes, "Файл візерунку: " + patternFileInfo.url].filter(function (x) { return x; }).join("\n");
-      } else if (patternFileInfo && patternFileInfo.error) {
-        notes = [notes, "Файл візерунку НЕ збережено: " + patternFileInfo.error].filter(function (x) { return x; }).join("\n");
+      if (patternFileInfo && patternFileInfo.name) {
+        notes = [notes, "Файл візерунку: " + patternFileInfo.name + " (надіслано власнику в Telegram; підряднику переслати вручну)"].filter(function (x) { return x; }).join("\n");
       }
 
       var row = [
@@ -127,7 +113,6 @@ function doPost(e) {
       sheet.getRange(lastRow, 24).setNumberFormat('0.0"%"');        // X Маржа
       sheet.getRange(lastRow, 25, 1, 2).setNumberFormat("#,##0 ₴"); // Y-Z
       sheet.getRange(lastRow, 21).setFontWeight("bold");            // Ціна продажу 1шт
-      setPatternFileNoteLink_(sheet, lastRow, patternFileInfo);
       if (lastRow % 2 === 0) rr.setBackground("#F8F6F2");
     });
 
@@ -173,20 +158,6 @@ function appendOrderRow_(sheet, row) {
   return targetRow;
 }
 
-function setPatternFileNoteLink_(sheet, rowNumber, patternFileInfo) {
-  if (!patternFileInfo || !patternFileInfo.url) return;
-  var cell = sheet.getRange(rowNumber, 32); // AF — Примітки
-  var text = String(cell.getValue() || "");
-  var url = String(patternFileInfo.url || "");
-  var start = text.indexOf(url);
-  if (start < 0) return;
-  var rich = SpreadsheetApp.newRichTextValue()
-    .setText(text)
-    .setLinkUrl(start, start + url.length, url)
-    .build();
-  cell.setRichTextValue(rich);
-}
-
 function nextOrderNumber() {
   var tz = "Europe/Kiev", now = new Date();
   var ddmmyy = Utilities.formatDate(now, tz, "ddMMyy");
@@ -206,67 +177,14 @@ function safeFileName_(s) {
   return String(s || "pattern-file").replace(/[^\w.\- а-яА-ЯіїєґІЇЄҐ]/g, "_").slice(0, 120);
 }
 
-function getPatternFolder_() {
-  var props = PropertiesService.getScriptProperties();
-  var id = props.getProperty("PATTERN_FILES_FOLDER_ID");
-  if (id) {
-    try { return DriveApp.getFolderById(id); } catch (e) { console.error("Pattern folder error: " + e); }
+function getPatternFileInfo_(data) {
+  if (data.pattern_file_meta && data.pattern_file_meta.name) {
+    return { name: safeFileName_(data.pattern_file_meta.name) };
+  }
+  if (data.pattern_file && data.pattern_file.name) {
+    return { name: safeFileName_(data.pattern_file.name) };
   }
   return null;
-}
-
-function savePatternFile_(file, orderNumber) {
-  if (!file || !file.data || !file.name) return null;
-  var safeName = safeFileName_(file.name);
-  try {
-    var bytes = Utilities.base64Decode(String(file.data));
-    if (!bytes || !bytes.length) return { name: safeName, error: "порожній файл" };
-    if (bytes.length > 4 * 1024 * 1024) return { name: safeName, error: "файл більший за 4 МБ" };
-    var name = String(orderNumber || "ORD") + "_" + safeName;
-    var mime = String(file.type || "application/octet-stream");
-    var blob = Utilities.newBlob(bytes, mime, name);
-    var folder = getPatternFolder_();
-    var driveFile = folder ? folder.createFile(blob) : DriveApp.createFile(blob);
-    try { driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (shareErr) {}
-    var props = PropertiesService.getScriptProperties();
-    props.setProperty("file_" + orderNumber, driveFile.getId());
-    props.setProperty("file_name_" + orderNumber, safeName);
-    return { id: driveFile.getId(), name: safeName, url: driveFile.getUrl() };
-  } catch (err) {
-    console.error("savePatternFile_: " + err);
-    return { name: safeName, error: String(err) };
-  }
-}
-
-function attachPatternFileId_(sheet, data) {
-  var orderNumber = String(data.order_number || "").trim();
-  var fileId = String(data.telegram_file_id || "").trim();
-  if (!orderNumber || !fileId) return jsonOut({ status: "error", message: "missing order_number or telegram_file_id" });
-
-  var props = PropertiesService.getScriptProperties();
-  var fileName = safeFileName_(data.pattern_file_name || "pattern-file");
-  props.setProperty("tg_file_" + orderNumber, fileId);
-  props.setProperty("tg_file_name_" + orderNumber, fileName);
-
-  var last = sheet.getLastRow();
-  if (last >= 2) {
-    var vals = sheet.getRange(2, 1, last - 1, 32).getValues();
-    for (var i = 0; i < vals.length; i++) {
-      if (String(vals[i][0] || "").trim() !== orderNumber) continue;
-      var row = i + 2;
-      var oldNote = String(vals[i][31] || "")
-        .split("\n")
-        .filter(function (line) { return String(line || "").indexOf("Файл візерунку НЕ збережено") < 0; })
-        .join("\n");
-      var marker = "Файл візерунку: " + fileName + " (збережено в Telegram, буде надіслано підряднику)";
-      if (oldNote.indexOf(marker) < 0) {
-        var nextNote = [oldNote, marker].filter(function (x) { return x; }).join("\n");
-        sheet.getRange(row, 32).setValue(nextNote).setWrap(true);
-      }
-    }
-  }
-
-  return jsonOut({ status: "ok", order_number: orderNumber, file_name: fileName });
 }
 
 // ===================== GOOGLE КАЛЕНДАР =====================
@@ -518,44 +436,6 @@ function tgSendTo_(chatId, text, threadId) {
   return tgApi_("sendMessage", payload);
 }
 
-function tgSendDocument_(chatId, blob, caption, threadId) {
-  if (!chatId || !blob) return null;
-  var token = PropertiesService.getScriptProperties().getProperty("TG_TOKEN");
-  if (!token) return null;
-  var payload = { chat_id: chatId, document: blob, caption: caption || "" };
-  if (threadId) payload.message_thread_id = Number(threadId);
-  var res = UrlFetchApp.fetch("https://api.telegram.org/bot" + token + "/sendDocument", {
-    method: "post", payload: payload, muteHttpExceptions: true
-  });
-  try { return JSON.parse(res.getContentText()); } catch (e) { return null; }
-}
-
-function tgSendDocumentByFileId_(chatId, fileId, caption, threadId) {
-  if (!chatId || !fileId) return null;
-  var payload = { chat_id: chatId, document: fileId, caption: caption || "" };
-  if (threadId) payload.message_thread_id = Number(threadId);
-  return tgApi_("sendDocument", payload);
-}
-
-function sendPatternFileToContractor_(orderNumber, chatId, threadId) {
-  var props = PropertiesService.getScriptProperties();
-  var caption = "📎 Файл візерунку до замовлення №" + orderNumber;
-  try {
-    var fileId = props.getProperty("file_" + orderNumber);
-    if (fileId) {
-      var file = DriveApp.getFileById(fileId);
-      var blob = file.getBlob().setName(file.getName());
-      var driveSent = tgSendDocument_(chatId, blob, caption, threadId);
-      if (driveSent && driveSent.ok) return driveSent;
-    }
-  } catch (err) {
-    console.error("sendPatternFileToContractor_: " + err);
-  }
-  var tgFileId = props.getProperty("tg_file_" + orderNumber);
-  if (tgFileId) return tgSendDocumentByFileId_(chatId, tgFileId, caption, threadId);
-  return null;
-}
-
 function getOwnerChat_() {
   var p = PropertiesService.getScriptProperties();
   return p.getProperty("TG_OWNER_CHAT") || p.getProperty("TG_CHAT") || "";
@@ -627,13 +507,6 @@ function createOrderTopic_(data) {
   var sent = tgSendTo_(chat, buildProductionMsg_(data), threadId);
   if (num && sent && sent.ok) {
     p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
-    if (p.getProperty("file_" + num) || p.getProperty("tg_file_" + num)) {
-      var fileSent = sendPatternFileToContractor_(num, chat, threadId);
-      if (!fileSent || !fileSent.ok) {
-        alertOwner_("Файл візерунку для " + num + " НЕ надіслано підряднику.",
-                    "Відповідь Telegram: " + JSON.stringify(fileSent));
-      }
-    }
   } else {
     // СТОРОЖ: підтверджене замовлення не дійшло підряднику — одразу сигнал власнику
     alertOwner_("Замовлення " + (num || "?") + " НЕ надіслано підряднику в групу.",
@@ -1330,11 +1203,10 @@ function rebuildAll() {
   SpreadsheetApp.flush();
 }
 
-/** Запусти один раз, щоб надати дозволи на Google Календар, таблицю і Drive. */
+/** Запусти один раз, щоб надати дозволи на Google Календар і таблицю. */
 function authorize() {
   CalendarApp.getDefaultCalendar().getName();
   SpreadsheetApp.getActiveSpreadsheet().getName();
-  DriveApp.getRootFolder().getName();
 }
 
 function jsonOut(obj) {
