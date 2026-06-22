@@ -54,9 +54,8 @@ function doPost(e) {
         error: "файл був у формі/Vercel, але Apps Script не отримав base64-дані"
       };
     }
-    if (patternFileInfo && patternFileInfo.error) {
-      alertOwner_("Файл візерунку НЕ збережено для " + data.order_number, patternFileInfo.error);
-    }
+    // Drive can be unavailable until Apps Script is authorized. The Telegram file_id
+    // fallback is attached by Vercel right after the owner receives the document.
 
     var MARKUP = 1 / (1 - 0.2593);
     var itemsIn = (Array.isArray(data.items) && data.items.length) ? data.items : [{
@@ -255,7 +254,10 @@ function attachPatternFileId_(sheet, data) {
     for (var i = 0; i < vals.length; i++) {
       if (String(vals[i][0] || "").trim() !== orderNumber) continue;
       var row = i + 2;
-      var oldNote = String(vals[i][31] || "");
+      var oldNote = String(vals[i][31] || "")
+        .split("\n")
+        .filter(function (line) { return String(line || "").indexOf("Файл візерунку НЕ збережено") < 0; })
+        .join("\n");
       var marker = "Файл візерунку: " + fileName + " (збережено в Telegram, буде надіслано підряднику)";
       if (oldNote.indexOf(marker) < 0) {
         var nextNote = [oldNote, marker].filter(function (x) { return x; }).join("\n");
