@@ -120,6 +120,25 @@ async function sendPatternFileToTelegram(token, chatId, order) {
   return await res.json().catch(() => null);
 }
 
+async function attachPatternTelegramFileToSheets(sheetsUrl, orderNumber, docData, file) {
+  const fileId = docData?.result?.document?.file_id;
+  if (!sheetsUrl || !orderNumber || !fileId) return null;
+  const payload = {
+    action: "attach_pattern_file_id",
+    order_number: orderNumber,
+    telegram_file_id: fileId,
+    pattern_file_name: file?.name || "",
+    pattern_file_size: file?.size || "",
+    pattern_file_type: file?.type || "",
+  };
+  const res = await fetch(sheetsUrl, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify(payload),
+  });
+  return await res.json().catch(() => null);
+}
+
 // ============================================================
 // TELEGRAM MESSAGE
 // ============================================================
@@ -343,8 +362,13 @@ module.exports = async function handler(req, res) {
 
         if (tgData.ok && getPatternFile(orderWithNumber)) {
           try {
+            const file = getPatternFile(orderWithNumber);
             const docData = await sendPatternFileToTelegram(TG_TOKEN, TG_CHAT_ID, orderWithNumber);
             results.push(docData && docData.ok ? "tg_file:ok" : "tg_file:err");
+            if (docData && docData.ok && SHEETS_URL) {
+              const attachData = await attachPatternTelegramFileToSheets(SHEETS_URL, orderNumber, docData, file);
+              results.push(attachData && attachData.status === "ok" ? "gs_file_id:ok" : "gs_file_id:err");
+            }
           } catch (fileErr) {
             console.error("Telegram file error:", fileErr);
             results.push("tg_file:err");

@@ -165,6 +165,26 @@ Apps Script пише в `AF`: `Файл візерунку НЕ збережен
 Це діагностичний захист від порожньої колонки `AF`: у нових тестах там має бути
 або Drive URL, або конкретна причина відсутності URL.
 
+## Fallback без Google Drive через Telegram `file_id`
+
+Після тесту `ORD-220626-017` стало ясно, що Apps Script не має дозволу
+`DriveApp.createFile`, тому Drive-збереження може не працювати навіть якщо файл
+успішно прийшов власнику в Telegram.
+
+Додано стабільніший шлях:
+- Vercel після `sendDocument` власнику бере Telegram `document.file_id`;
+- Vercel другим POST-запитом викликає Apps Script з
+  `action: "attach_pattern_file_id"`;
+- Apps Script зберігає `tg_file_<orderNumber>` у Script Properties;
+- в `AF` додається примітка, що файл збережено в Telegram і буде надіслано
+  підряднику;
+- коли статус стає `В роботі`, `sendPatternFileToContractor_()` спочатку пробує
+  Drive, а якщо Drive недоступний — надсилає файл підряднику через Telegram
+  `file_id`.
+
+Це прибирає Google Drive як єдину точку відмови для пересилання візерунку
+підряднику.
+
 ## Перевірено
 
 Швидкі синтаксичні тести:
