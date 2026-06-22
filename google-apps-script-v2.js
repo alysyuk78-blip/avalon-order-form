@@ -102,8 +102,7 @@ function doPost(e) {
         data.delivery_date || "", data.payment_method || "",                           // AC-AD
         data.how_found || (data.how_found_custom || ""), notes                         // AE-AF
       ];
-      sheet.appendRow(row);
-      lastRow = sheet.getLastRow();
+      lastRow = appendOrderRow_(sheet, row);
       var rr = sheet.getRange(lastRow, 1, 1, row.length);
       rr.setVerticalAlignment("middle").setWrap(true);
       sheet.getRange(lastRow, 1).setFontWeight("bold");
@@ -129,6 +128,35 @@ function doPost(e) {
   } finally {
     try { lock.releaseLock(); } catch (e) {}
   }
+}
+
+function findLastRealOrderRow_(sheet) {
+  var last = Math.max(sheet.getLastRow(), 2);
+  if (last < 2) return 1;
+  var values = sheet.getRange(2, 1, last - 1, 1).getValues();
+  for (var i = values.length - 1; i >= 0; i--) {
+    if (/^ORD-\d{6}-\d{3}$/.test(String(values[i][0] || "").trim())) {
+      return i + 2;
+    }
+  }
+  return 1;
+}
+
+function applyOrderRowControls_(sheet, rowNumber) {
+  var statusRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"]).setAllowInvalid(false).build();
+  sheet.getRange(rowNumber, 3).setDataValidation(statusRule);
+  var checkboxRule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+  sheet.getRange(rowNumber, 33, 1, 2).setDataValidation(checkboxRule);
+}
+
+function appendOrderRow_(sheet, row) {
+  var lastRealRow = findLastRealOrderRow_(sheet);
+  var targetRow = lastRealRow + 1;
+  sheet.insertRowsAfter(lastRealRow, 1);
+  sheet.getRange(targetRow, 1, 1, row.length).setValues([row]);
+  applyOrderRowControls_(sheet, targetRow);
+  return targetRow;
 }
 
 function nextOrderNumber() {
