@@ -44,7 +44,10 @@ function doPost(e) {
     var data = JSON.parse(e.postData.contents);
     data.order_number = nextOrderNumber();
     var patternFileInfo = savePatternFile_(data.pattern_file, data.order_number);
-    if (patternFileInfo) data.pattern_file_url = patternFileInfo.url;
+    if (patternFileInfo && patternFileInfo.url) data.pattern_file_url = patternFileInfo.url;
+    if (patternFileInfo && patternFileInfo.error) {
+      alertOwner_("Файл візерунку НЕ збережено для " + data.order_number, patternFileInfo.error);
+    }
 
     var MARKUP = 1 / (1 - 0.2593);
     var itemsIn = (Array.isArray(data.items) && data.items.length) ? data.items : [{
@@ -85,6 +88,8 @@ function doPost(e) {
       var notes = data.notes || "";
       if (patternFileInfo && patternFileInfo.url) {
         notes = [notes, "Файл візерунку: " + patternFileInfo.url].filter(function (x) { return x; }).join("\n");
+      } else if (patternFileInfo && patternFileInfo.error) {
+        notes = [notes, "Файл візерунку НЕ збережено: " + patternFileInfo.error].filter(function (x) { return x; }).join("\n");
       }
 
       var row = [
@@ -188,11 +193,13 @@ function getPatternFolder_() {
 }
 
 function savePatternFile_(file, orderNumber) {
+  if (!file || !file.data || !file.name) return null;
+  var safeName = safeFileName_(file.name);
   try {
-    if (!file || !file.data || !file.name) return null;
     var bytes = Utilities.base64Decode(String(file.data));
-    if (!bytes || !bytes.length || bytes.length > 4 * 1024 * 1024) return null;
-    var name = String(orderNumber || "ORD") + "_" + safeFileName_(file.name);
+    if (!bytes || !bytes.length) return { name: safeName, error: "порожній файл" };
+    if (bytes.length > 4 * 1024 * 1024) return { name: safeName, error: "файл більший за 4 МБ" };
+    var name = String(orderNumber || "ORD") + "_" + safeName;
     var mime = String(file.type || "application/octet-stream");
     var blob = Utilities.newBlob(bytes, mime, name);
     var folder = getPatternFolder_();
@@ -200,11 +207,11 @@ function savePatternFile_(file, orderNumber) {
     try { driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (shareErr) {}
     var props = PropertiesService.getScriptProperties();
     props.setProperty("file_" + orderNumber, driveFile.getId());
-    props.setProperty("file_name_" + orderNumber, safeFileName_(file.name));
-    return { id: driveFile.getId(), name: safeFileName_(file.name), url: driveFile.getUrl() };
+    props.setProperty("file_name_" + orderNumber, safeName);
+    return { id: driveFile.getId(), name: safeName, url: driveFile.getUrl() };
   } catch (err) {
     console.error("savePatternFile_: " + err);
-    return null;
+    return { name: safeName, error: String(err) };
   }
 }
 
@@ -554,7 +561,13 @@ function createOrderTopic_(data) {
   var sent = tgSendTo_(chat, buildProductionMsg_(data), threadId);
   if (num && sent && sent.ok) {
     p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
-    sendPatternFileToContractor_(num, chat, threadId);
+    if (p.getProperty("file_" + num)) {
+      var fileSent = sendPatternFileToContractor_(num, chat, threadId);
+      if (!fileSent || !fileSent.ok) {
+        alertOwner_("Файл візерунку для " + num + " НЕ надіслано підряднику.",
+                    "Відповідь Telegram: " + JSON.stringify(fileSent));
+      }
+    }
   } else {
     // СТОРОЖ: підтверджене замовлення не дійшло підряднику — одразу сигнал власнику
     alertOwner_("Замовлення " + (num || "?") + " НЕ надіслано підряднику в групу.",
@@ -1251,10 +1264,11 @@ function rebuildAll() {
   SpreadsheetApp.flush();
 }
 
-/** Запусти один раз, щоб надати дозвіл на Google Календар (нова інтеграція). */
+/** Запусти один раз, щоб надати дозволи на Google Календар, таблицю і Drive. */
 function authorize() {
   CalendarApp.getDefaultCalendar().getName();
   SpreadsheetApp.getActiveSpreadsheet().getName();
+  DriveApp.getRootFolder().getName();
 }
 
 function jsonOut(obj) {
