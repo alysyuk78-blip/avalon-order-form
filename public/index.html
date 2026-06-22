@@ -1159,6 +1159,30 @@
       return await res.json();
     }
 
+    const MAX_PATTERN_FILE_BYTES = 4 * 1024 * 1024;
+
+    function fileToOrderPayload(file) {
+      return new Promise((resolve, reject) => {
+        if (!file) return resolve(null);
+        if (file.size > MAX_PATTERN_FILE_BYTES) {
+          return reject(new Error("Файл візерунку завеликий. Максимум 4 МБ."));
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || "");
+          const comma = result.indexOf(",");
+          resolve({
+            name: file.name,
+            type: file.type || "application/octet-stream",
+            size: file.size,
+            data: comma >= 0 ? result.slice(comma + 1) : result,
+          });
+        };
+        reader.onerror = () => reject(new Error("Не вдалося прочитати файл візерунку."));
+        reader.readAsDataURL(file);
+      });
+    }
+
     // ============================================================
     // PHONE MASK HELPER
     // ============================================================
@@ -1519,6 +1543,15 @@
         const costSum = orderItems.reduce((s, it) => s + (it.cost_total || 0), 0);
         const profitSum = orderItems.reduce((s, it) => s + (it.profit || 0), 0);
         const f0 = orderItems[0];
+        let patternFilePayload = null;
+        try {
+          patternFilePayload = await fileToOrderPayload(patternFile);
+        } catch (err) {
+          setToast({ message: err.message || "Не вдалося підготувати файл візерунку.", type: "error" });
+          setSubmitting(false);
+          submittingRef.current = false;
+          return;
+        }
         const order = {
           first_name: form.first_name.trim(), last_name: form.last_name.trim(),
           phone: form.phone.trim(), city: form.city.trim(),
@@ -1529,6 +1562,7 @@
           referral_source: form.referral_source || "direct",
           items: orderItems,
           price_total: grand, prepayment: Math.round(grand * 0.5), cost_total: costSum, profit: profitSum,
+          pattern_file: patternFilePayload,
           // сумісність зі старим форматом (перша позиція):
           size_w: f0.size_w, size_h: f0.size_h, size_d: f0.size_d, quantity: f0.quantity,
           construction_type: f0.construction_type, basket_type: f0.basket_type,
