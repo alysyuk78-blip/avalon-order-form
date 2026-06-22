@@ -43,6 +43,8 @@ function doPost(e) {
 
     var data = JSON.parse(e.postData.contents);
     data.order_number = nextOrderNumber();
+    var patternFileInfo = savePatternFile_(data.pattern_file, data.order_number);
+    if (patternFileInfo) data.pattern_file_url = patternFileInfo.url;
 
     var MARKUP = 1 / (1 - 0.2593);
     var itemsIn = (Array.isArray(data.items) && data.items.length) ? data.items : [{
@@ -80,6 +82,11 @@ function doPost(e) {
       var revenue   = hasMoney ? total : "";
       var margin    = hasMoney ? Math.round((total - costTotal) / total * 1000) / 10 : "";
 
+      var notes = data.notes || "";
+      if (patternFileInfo && patternFileInfo.url) {
+        notes = [notes, "Файл візерунку: " + patternFileInfo.url].filter(function (x) { return x; }).join("\n");
+      }
+
       var row = [
         data.order_number || "", dateStr, "Нове", data.referral_source || "direct",   // A-D №,Дата,Статус,Джерело
         (data.first_name || "") + " " + (data.last_name || ""),                        // E Клієнт
@@ -93,10 +100,9 @@ function doPost(e) {
         "", "",                                                                        // Y-Z Комісія,Чистий (формули)
         data.transport || (data.transport_custom || ""), data.delivery_address || "",  // AA-AB
         data.delivery_date || "", data.payment_method || "",                           // AC-AD
-        data.how_found || (data.how_found_custom || ""), data.notes || ""              // AE-AF
+        data.how_found || (data.how_found_custom || ""), notes                         // AE-AF
       ];
-      sheet.appendRow(row);
-      lastRow = sheet.getLastRow();
+      lastRow = appendOrderRow_(sheet, row);
       var rr = sheet.getRange(lastRow, 1, 1, row.length);
       rr.setVerticalAlignment("middle").setWrap(true);
       sheet.getRange(lastRow, 1).setFontWeight("bold");
@@ -124,6 +130,35 @@ function doPost(e) {
   }
 }
 
+function findLastRealOrderRow_(sheet) {
+  var last = Math.max(sheet.getLastRow(), 2);
+  if (last < 2) return 1;
+  var values = sheet.getRange(2, 1, last - 1, 1).getValues();
+  for (var i = values.length - 1; i >= 0; i--) {
+    if (/^ORD-\d{6}-\d{3}$/.test(String(values[i][0] || "").trim())) {
+      return i + 2;
+    }
+  }
+  return 1;
+}
+
+function applyOrderRowControls_(sheet, rowNumber) {
+  var statusRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"]).setAllowInvalid(false).build();
+  sheet.getRange(rowNumber, 3).setDataValidation(statusRule);
+  var checkboxRule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+  sheet.getRange(rowNumber, 33, 1, 2).setDataValidation(checkboxRule);
+}
+
+function appendOrderRow_(sheet, row) {
+  var lastRealRow = findLastRealOrderRow_(sheet);
+  var targetRow = lastRealRow + 1;
+  sheet.insertRowsAfter(lastRealRow, 1);
+  sheet.getRange(targetRow, 1, 1, row.length).setValues([row]);
+  applyOrderRowControls_(sheet, targetRow);
+  return targetRow;
+}
+
 function nextOrderNumber() {
   var tz = "Europe/Kiev", now = new Date();
   var ddmmyy = Utilities.formatDate(now, tz, "ddMMyy");
@@ -135,6 +170,42 @@ function nextOrderNumber() {
   props.setProperty("ord_month", mmyy);
   props.setProperty("ord_counter", String(counter));
   return "ORD-" + ddmmyy + "-" + String(counter).padStart(3, "0");
+}
+
+// ===================== ФАЙЛ ВІЗЕРУНКУ =====================
+
+function safeFileName_(s) {
+  return String(s || "pattern-file").replace(/[^\w.\- а-яА-ЯіїєґІЇЄҐ]/g, "_").slice(0, 120);
+}
+
+function getPatternFolder_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty("PATTERN_FILES_FOLDER_ID");
+  if (id) {
+    try { return DriveApp.getFolderById(id); } catch (e) { console.error("Pattern folder error: " + e); }
+  }
+  return null;
+}
+
+function savePatternFile_(file, orderNumber) {
+  try {
+    if (!file || !file.data || !file.name) return null;
+    var bytes = Utilities.base64Decode(String(file.data));
+    if (!bytes || !bytes.length || bytes.length > 4 * 1024 * 1024) return null;
+    var name = String(orderNumber || "ORD") + "_" + safeFileName_(file.name);
+    var mime = String(file.type || "application/octet-stream");
+    var blob = Utilities.newBlob(bytes, mime, name);
+    var folder = getPatternFolder_();
+    var driveFile = folder ? folder.createFile(blob) : DriveApp.createFile(blob);
+    try { driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (shareErr) {}
+    var props = PropertiesService.getScriptProperties();
+    props.setProperty("file_" + orderNumber, driveFile.getId());
+    props.setProperty("file_name_" + orderNumber, safeFileName_(file.name));
+    return { id: driveFile.getId(), name: safeFileName_(file.name), url: driveFile.getUrl() };
+  } catch (err) {
+    console.error("savePatternFile_: " + err);
+    return null;
+  }
 }
 
 // ===================== GOOGLE КАЛЕНДАР =====================
@@ -211,13 +282,21 @@ function onEditDelivery(e) {
 
     // Статус «В роботі» → передати замовлення підряднику (тема + специфікація), один раз.
     if (col === 3) {
-      if (String(range.getValue() || "").trim() === "В роботі") {
+      var newStatus = String(range.getValue() || "").trim();
+      if (newStatus === "В роботі") {
         var onum = sh.getRange(range.getRow(), 1).getValue();
         if (onum && !PropertiesService.getScriptProperties().getProperty("thread_" + onum)) {
           var ord = buildOrderFromRows_(sh, onum);
           if (ord) { try { createOrderTopic_(ord); } catch (er) { console.error("Send to contractor: " + er); } }
         }
       }
+      notifyOwnerStatusChange_(sh, range.getRow(), newStatus);
+      return;
+    }
+
+    // AG/AH: оплата клієнта / отримання маржі → коротко сповістити власника.
+    if (col === 33 || col === 34) {
+      notifyOwnerPaymentChange_(sh, range.getRow(), col, range.getValue() === true);
       return;
     }
 
@@ -339,10 +418,13 @@ function setTelegram() {
   var p = PropertiesService.getScriptProperties();
   if (TOKEN) p.setProperty("TG_TOKEN", TOKEN);
   if (CONTRACTOR_CHAT_ID) p.setProperty("TG_CONTRACTOR_CHAT", CONTRACTOR_CHAT_ID);
-  if (OWNER_CHAT_ID) p.setProperty("TG_CHAT", OWNER_CHAT_ID);
+  if (OWNER_CHAT_ID) {
+    p.setProperty("TG_OWNER_CHAT", OWNER_CHAT_ID);
+    p.setProperty("TG_CHAT", OWNER_CHAT_ID); // legacy fallback
+  }
   Logger.log("Telegram: token=" + (p.getProperty("TG_TOKEN") ? "збережено" : "НЕМАЄ") +
              ", група підрядника=" + (p.getProperty("TG_CONTRACTOR_CHAT") || "НЕМАЄ") +
-             ", запасний чат=" + (p.getProperty("TG_CHAT") || "НЕМАЄ"));
+             ", чат власника=" + (p.getProperty("TG_OWNER_CHAT") || p.getProperty("TG_CHAT") || "НЕМАЄ"));
 }
 
 // «Сторож»: сповіщає власника, якщо щось пішло не так (через наявний канал /api/alert у Vercel).
@@ -375,6 +457,74 @@ function tgSendTo_(chatId, text, threadId) {
   return tgApi_("sendMessage", payload);
 }
 
+function tgSendDocument_(chatId, blob, caption, threadId) {
+  if (!chatId || !blob) return null;
+  var token = PropertiesService.getScriptProperties().getProperty("TG_TOKEN");
+  if (!token) return null;
+  var payload = { chat_id: chatId, document: blob, caption: caption || "" };
+  if (threadId) payload.message_thread_id = Number(threadId);
+  var res = UrlFetchApp.fetch("https://api.telegram.org/bot" + token + "/sendDocument", {
+    method: "post", payload: payload, muteHttpExceptions: true
+  });
+  try { return JSON.parse(res.getContentText()); } catch (e) { return null; }
+}
+
+function sendPatternFileToContractor_(orderNumber, chatId, threadId) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var fileId = props.getProperty("file_" + orderNumber);
+    if (!fileId) return null;
+    var file = DriveApp.getFileById(fileId);
+    var blob = file.getBlob().setName(file.getName());
+    return tgSendDocument_(chatId, blob, "📎 Файл візерунку до замовлення №" + orderNumber, threadId);
+  } catch (err) {
+    console.error("sendPatternFileToContractor_: " + err);
+    return null;
+  }
+}
+
+function getOwnerChat_() {
+  var p = PropertiesService.getScriptProperties();
+  return p.getProperty("TG_OWNER_CHAT") || p.getProperty("TG_CHAT") || "";
+}
+
+function notifyOwner_(text) {
+  var chat = getOwnerChat_();
+  if (!chat) return null;
+  return tgSendTo_(chat, text);
+}
+
+function rowSummary_(sh, row) {
+  var v = sh.getRange(row, 1, 1, 34).getValues()[0];
+  return {
+    num: v[0], status: v[2], client: v[4], phone: String(v[5] || "").replace(/^'/, ""),
+    city: v[6], deliveryDate: toISODate(v[28]), gross: Number(v[22]) || 0,
+    clientPaid: v[32] === true, marginPaid: v[33] === true
+  };
+}
+
+function notifyOwnerStatusChange_(sh, row, status) {
+  if (!status) return;
+  var o = rowSummary_(sh, row);
+  var msg = "🔔 <b>Статус змінено</b>\n";
+  msg += "📌 <b>№" + esc_(o.num) + "</b> → <b>" + esc_(status) + "</b>\n";
+  if (o.client) msg += "👤 " + esc_(o.client) + "\n";
+  if (o.phone) msg += "📞 " + esc_(o.phone) + "\n";
+  if (o.deliveryDate) msg += "📅 " + fmtDate_(o.deliveryDate) + "\n";
+  notifyOwner_(msg);
+}
+
+function notifyOwnerPaymentChange_(sh, row, col, checked) {
+  var o = rowSummary_(sh, row);
+  var label = col === 33 ? "Оплата клієнта підряднику" : "Маржу отримано";
+  var icon = checked ? "✅" : "↩️";
+  var msg = icon + " <b>" + esc_(label) + "</b>: " + (checked ? "так" : "знято") + "\n";
+  msg += "📌 <b>№" + esc_(o.num) + "</b>\n";
+  if (o.client) msg += "👤 " + esc_(o.client) + "\n";
+  if (o.gross) msg += "💰 Валовий: <b>" + money_(o.gross) + " ₴</b>\n";
+  notifyOwner_(msg);
+}
+
 function esc_(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -404,6 +554,7 @@ function createOrderTopic_(data) {
   var sent = tgSendTo_(chat, buildProductionMsg_(data), threadId);
   if (num && sent && sent.ok) {
     p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
+    sendPatternFileToContractor_(num, chat, threadId);
   } else {
     // СТОРОЖ: підтверджене замовлення не дійшло підряднику — одразу сигнал власнику
     alertOwner_("Замовлення " + (num || "?") + " НЕ надіслано підряднику в групу.",
@@ -588,6 +739,76 @@ function buildReminder_(o, diff, tz) {
   return msg;
 }
 
+function buildOwnerDailyReport_() {
+  var tz = "Europe/Kiev";
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_ORDERS);
+  if (!sh || sh.getLastRow() < 2) return "📊 <b>AVALON: зведення</b>\nЗамовлень поки немає.";
+  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 34).getValues();
+  var todayIso = ymd_(new Date(), tz);
+  var orders = {};
+  var debt = 0;
+
+  rows.forEach(function (r) {
+    var num = String(r[0] || "").trim();
+    if (!num) return;
+    if (!orders[num]) {
+      orders[num] = {
+        num: num, status: String(r[2] || "").trim(), client: r[4],
+        date: toISODate(r[28]), revenue: 0, profit: 0, rows: 0
+      };
+    }
+    orders[num].rows++;
+    orders[num].revenue += Number(r[21]) || 0; // V
+    orders[num].profit += Number(r[22]) || 0;  // W
+    if (r[32] === true && r[33] !== true && String(r[2] || "").trim() !== "Скасовано") {
+      debt += Number(r[22]) || 0;
+    }
+  });
+
+  var counts = { "Нове": 0, "В роботі": 0, "Готове": 0, "Відправлено": 0, "Завершено": 0, "Скасовано": 0 };
+  var late = [], today = [];
+  Object.keys(orders).forEach(function (num) {
+    var o = orders[num];
+    if (counts[o.status] != null) counts[o.status]++;
+    if (o.date && REMIND_DONE.indexOf(o.status) < 0) {
+      if (dayDiff_(todayIso, o.date) < 0) late.push(o);
+      if (dayDiff_(todayIso, o.date) === 0) today.push(o);
+    }
+  });
+
+  function listOrders(arr) {
+    return arr.slice(0, 5).map(function (o) {
+      return "• " + esc_(o.num) + (o.client ? " — " + esc_(o.client) : "") + (o.date ? " (" + fmtDate_(o.date) + ")" : "");
+    }).join("\n");
+  }
+
+  var msg = "📊 <b>AVALON: щоденне зведення</b>\n";
+  msg += "🕐 " + nowKyiv_() + "\n\n";
+  msg += "• Нові: <b>" + counts["Нове"] + "</b>\n";
+  msg += "• В роботі: <b>" + counts["В роботі"] + "</b>\n";
+  msg += "• Готові: <b>" + counts["Готове"] + "</b>\n";
+  msg += "• Прострочені: <b>" + late.length + "</b>\n";
+  msg += "• Борг підрядника по маржі: <b>" + money_(debt) + " ₴</b>\n";
+  if (today.length) msg += "\n📅 <b>Сьогодні відправка/доставка</b>\n" + listOrders(today) + "\n";
+  if (late.length) msg += "\n⚠️ <b>Прострочені</b>\n" + listOrders(late) + (late.length > 5 ? "\n• ще " + (late.length - 5) : "") + "\n";
+  return msg;
+}
+
+function sendOwnerDailyReport() {
+  var msg = buildOwnerDailyReport_();
+  notifyOwner_(msg);
+}
+
+function installOwnerReportTrigger() {
+  var trg = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < trg.length; i++) {
+    if (trg[i].getHandlerFunction() === "sendOwnerDailyReport") ScriptApp.deleteTrigger(trg[i]);
+  }
+  ScriptApp.newTrigger("sendOwnerDailyReport").timeBased().atHour(8).nearMinute(35).everyDays(1).create();
+  Logger.log("Тригер звіту власнику встановлено на ~08:35 щодня.");
+}
+
 /** Встанови ОДИН раз: щоденний тригер о 08:30 для sendDeliveryReminders. */
 function installReminderTrigger() {
   var trg = ScriptApp.getProjectTriggers();
@@ -608,6 +829,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("AVALON")
     .addItem("🔄 Надіслати оновлення підряднику (поточний рядок)", "sendUpdateToContractor")
+    .addItem("📊 Надіслати щоденний звіт власнику", "sendOwnerDailyReport")
     .addToUi();
 }
 

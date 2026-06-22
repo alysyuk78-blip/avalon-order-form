@@ -89,6 +89,37 @@ function generateOrderNumber() {
   return `ORD-${p.day}${p.month}${yy}-${xxx}`;
 }
 
+function getPatternFile(order) {
+  const file = order && order.pattern_file;
+  if (!file || !file.data || !file.name) return null;
+  const size = Number(file.size) || 0;
+  if (size > 4 * 1024 * 1024) return null;
+  return {
+    name: String(file.name).replace(/[^\w.\- а-яА-ЯіїєґІЇЄҐ]/g, "_").slice(0, 120) || "pattern-file",
+    type: String(file.type || "application/octet-stream").slice(0, 120),
+    size,
+    data: String(file.data),
+  };
+}
+
+async function sendPatternFileToTelegram(token, chatId, order) {
+  const file = getPatternFile(order);
+  if (!file) return null;
+  const bytes = Buffer.from(file.data, "base64");
+  if (!bytes.length || bytes.length > 4 * 1024 * 1024) return null;
+
+  const fd = new FormData();
+  fd.append("chat_id", chatId);
+  fd.append("document", new Blob([bytes], { type: file.type }), file.name);
+  fd.append("caption", `📎 Файл візерунку до замовлення №${order.order_number || "—"}`);
+
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+    method: "POST",
+    body: fd,
+  });
+  return await res.json().catch(() => null);
+}
+
 // ============================================================
 // TELEGRAM MESSAGE
 // ============================================================
@@ -162,6 +193,7 @@ function formatTelegramMessage(order) {
   if (order.delivery_address) msg += `• Адреса: ${e(order.delivery_address)}\n`;
   if (order.delivery_date) msg += `• Дата: <b>${formatDeliveryDate(order.delivery_date)}</b>\n`;
   if (order.notes) msg += `• Примітка: ${e(order.notes)}\n`;
+  if (order.pattern_file?.name) msg += `• Файл візерунку: <b>${e(order.pattern_file.name)}</b>\n`;
 
   // ── Джерело (мета) ──
   msg += `\n🔖 Джерело заявки: ${e(order.referral_source || "direct")}\n`;
@@ -301,6 +333,16 @@ module.exports = async function handler(req, res) {
         });
         const tgData = await tgRes.json();
         results.push(tgData.ok ? "tg:ok" : "tg:err");
+
+        if (tgData.ok && getPatternFile(orderWithNumber)) {
+          try {
+            const docData = await sendPatternFileToTelegram(TG_TOKEN, TG_CHAT_ID, orderWithNumber);
+            results.push(docData && docData.ok ? "tg_file:ok" : "tg_file:err");
+          } catch (fileErr) {
+            console.error("Telegram file error:", fileErr);
+            results.push("tg_file:err");
+          }
+        }
       } catch (err) {
         console.error("Telegram error:", err);
         results.push("tg:err");

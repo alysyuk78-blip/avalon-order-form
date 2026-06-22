@@ -1,0 +1,167 @@
+# CODEX HANDOFF — avalon-order-form
+
+Дата: 2026-06-22
+База: production repo `https://github.com/alysyuk78-blip/avalon-order-form`, `main` HEAD `37e5fcadcbeb9667b99600f5b41116a399b715d5`.
+
+## Що зроблено
+
+### 1. Файл візерунку доведено до робочого outbound-сценарію
+
+Файли:
+- `public/index.html`
+- `api/order.js`
+- `google-apps-script-v2.js`
+
+Логіка:
+1. У формі файл із `patternFile` тепер перед відправкою читається через `FileReader`.
+2. У payload замовлення додається `pattern_file`:
+   - `name`
+   - `type`
+   - `size`
+   - `data` base64 без data-url prefix.
+3. Ліміт файлу на клієнті: 4 МБ (`MAX_PATTERN_FILE_BYTES`).
+4. `/api/order.js`:
+   - додає назву файлу в Telegram-повідомлення власнику;
+   - після основного `sendMessage` надсилає файл власнику через Telegram `sendDocument`;
+   - результат пише в `results` як `tg_file:ok` або `tg_file:err`.
+5. `google-apps-script-v2.js`:
+   - зберігає файл у Google Drive через `savePatternFile_`;
+   - якщо є Script Property `PATTERN_FILES_FOLDER_ID`, кладе файл у цю папку;
+   - якщо папки нема, створює файл у корені Drive акаунта Apps Script;
+   - ставить sharing `ANYONE_WITH_LINK / VIEW`;
+   - записує посилання на файл у примітку рядка `AF`;
+   - зберігає `file_<ORD>` і `file_name_<ORD>` у Script Properties;
+   - при статусі `В роботі` після створення теми підрядника надсилає файл у цю тему через `sendDocument`.
+
+Важливо:
+- Це мінімальна JSON-реалізація. Для великих DWG/DXF потрібен окремий upload endpoint або пряме завантаження в Drive/Blob.
+- Поточний ліміт 4 МБ обраний, щоб не впертися в body size `/api/order`.
+
+### 2. Власницькі Telegram-сповіщення
+
+Файл:
+- `google-apps-script-v2.js`
+
+Додано:
+- `TG_OWNER_CHAT` як окремий Script Property для чату власника.
+- `TG_CHAT` лишився legacy fallback.
+- При зміні статусу в колонці `C` власнику йде коротке повідомлення:
+  - номер замовлення;
+  - новий статус;
+  - клієнт;
+  - телефон;
+  - дата доставки, якщо є.
+- При зміні чекбоксів:
+  - `AG` — `Оплата клієнта ✓`;
+  - `AH` — `Маржу отримано ✓`;
+  власнику йде коротке фінансове повідомлення.
+
+Make.com webhook не чіпався. Усі зміни лише outbound через Telegram Bot API.
+
+### 3. Щоденний звіт власнику
+
+Файл:
+- `google-apps-script-v2.js`
+
+Додано:
+- `sendOwnerDailyReport()`;
+- `installOwnerReportTrigger()`;
+- `buildOwnerDailyReport_()`;
+- пункт меню в Google Sheets:
+  - `AVALON → 📊 Надіслати щоденний звіт власнику`.
+
+Звіт містить:
+- кількість `Нове`;
+- кількість `В роботі`;
+- кількість `Готове`;
+- кількість прострочених активних замовлень;
+- борг підрядника по маржі: `AG=TRUE`, `AH<>TRUE`, статус не `Скасовано`;
+- список замовлень на сьогодні;
+- список до 5 прострочених.
+
+Тригер:
+- `installOwnerReportTrigger()` ставить щоденний запуск приблизно о 08:35.
+
+## Що треба налаштувати після вставки Apps Script
+
+1. У Google Apps Script оновити код із `google-apps-script-v2.js`.
+2. Створити нову версію Web App deploy, якщо поточний Apps Script Web App має брати новий код.
+3. У Script Properties перевірити:
+   - `TG_TOKEN` — токен `@avalon_order_bot`;
+   - `TG_CONTRACTOR_CHAT` — група підрядника;
+   - `TG_OWNER_CHAT` — чат власника для статусів і звітів;
+   - опційно `PATTERN_FILES_FOLDER_ID` — папка Drive для файлів візерунків.
+4. Запустити вручну один раз:
+   - `installOwnerReportTrigger()`, якщо потрібен щоденний звіт;
+   - `installTrigger()` і `installReminderTrigger()`, якщо вони не встановлені;
+   - `sendOwnerDailyReport()` для тесту ручного звіту.
+
+## Додатковий fix після ручного тесту
+
+Після тестів у production-таблиці виявлено, що нові замовлення додавались у самий низ
+аркуша, приблизно на рядки 999/1000, хоча видимі реальні замовлення закінчувались
+на рядку 5. Причина: `sheet.appendRow(row)` враховує технічно зайняті рядки
+з форматуванням, валідаціями або іншими службовими даними.
+
+Замість `appendRow()` додано:
+- `findLastRealOrderRow_(sheet)` — шукає останній реальний номер замовлення у колонці A
+  за форматом `ORD-220626-012`;
+- `appendOrderRow_(sheet, row)` — вставляє новий рядок одразу після останнього
+  реального замовлення;
+- `applyOrderRowControls_(sheet, rowNumber)` — ставить для нового рядка випадаючий
+  статус у колонці C і чекбокси AG/AH.
+
+Очікувана поведінка: якщо останнє реальне замовлення в рядку 5, наступне має
+потрапити в рядок 6, а не в кінець заготовленого діапазону.
+
+## Перевірено
+
+Швидкі синтаксичні тести:
+- `node --check api/order.js` — OK
+- `node --check api/alert.js` — OK
+- `node --check api/np.js` — OK
+- `node --check google-apps-script-v2.js` — OK
+
+Diff на момент передачі:
+- `api/order.js`
+- `public/index.html`
+- `google-apps-script-v2.js`
+- `CODEX-HANDOFF.md`
+
+## Що НЕ зроблено
+
+- Не переносив і не видаляв Make.com webhook.
+- Не додавав Telegram-кнопки/команди, бо активний webhook у Make.com.
+- Не пушив у GitHub і не деплоїв production.
+- Не перевіряв реальну відправку Telegram/Drive, бо потрібні production env і Script Properties.
+
+## Рекомендоване тестування перед production
+
+1. Vercel preview:
+   - створити тестове замовлення з `?ref=TEST`;
+   - додати файл візерунку до 4 МБ;
+   - перевірити, що власнику прийшло повідомлення і документ.
+2. Копія Google Sheets:
+   - вставити оновлений `google-apps-script-v2.js`;
+   - задати `TG_TOKEN`, `TG_CONTRACTOR_CHAT`, `TG_OWNER_CHAT`;
+   - опційно задати `PATTERN_FILES_FOLDER_ID`;
+   - зробити тестове замовлення;
+   - перевірити рядок у Sheets, посилання в `AF`, файл у Drive.
+3. У тестовому рядку поставити статус `В роботі`:
+   - має створитися тема;
+   - має прийти специфікація;
+   - має прийти файл у тему.
+4. Змінити статус на `Готове`:
+   - власнику має прийти статусне повідомлення.
+5. Поставити чекбокси `AG` і `AH`:
+   - власнику мають прийти фінансові повідомлення.
+6. Запустити `sendOwnerDailyReport()` вручну:
+   - власнику має прийти зведення.
+
+## Ризики / увага
+
+- Apps Script тепер використовує `DriveApp`, тому після оновлення може попросити додаткову авторизацію.
+- `setSharing(ANYONE_WITH_LINK)` робить файл доступним за посиланням. Якщо це небажано, треба замінити на приватний файл і покладатися тільки на Telegram `sendDocument`.
+- Один файл прив'язаний до всього замовлення, не до окремої позиції кошика.
+- Якщо в замовленні кілька рядків, посилання на файл пишеться в `AF` кожного рядка.
+- Власницькі статусні повідомлення працюють лише якщо в Apps Script є `TG_OWNER_CHAT` або legacy `TG_CHAT`.
