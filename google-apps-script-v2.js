@@ -8,7 +8,8 @@
  *   • Виплати — лог фактичних виплат дропшиперам.
  *   • Витрати — лог витрат (реклама тощо).
  *   • Зведення — фінансовий підсумок: загалом + помісячно
- *     (виручка, собівартість, валовий прибуток, маржинальність, комісії, витрати, чистий прибуток).
+ *     (виручка, собівартість, валовий прибуток, маржа отримана/до отримання,
+ *      комісії, витрати, чистий прибуток).
  *
  * ПЕРШЕ НАЛАШТУВАННЯ: заміни весь код → Зберегти → запусти один раз rebuildAll()
  *   (старий аркуш «Замовлення» буде перейменовано в архів, створяться всі нові аркуші)
@@ -782,6 +783,7 @@ function onOpen() {
     .createMenu("AVALON")
     .addItem("🔄 Надіслати оновлення підряднику (поточний рядок)", "sendUpdateToContractor")
     .addItem("📊 Надіслати щоденний звіт власнику", "sendOwnerDailyReport")
+    .addItem("♻️ Оновити вкладку «Зведення»", "updateDashboard")
     .addToUi();
 }
 
@@ -1042,8 +1044,11 @@ function setupDashboard(ss) {
   ss = ss || SpreadsheetApp.getActiveSpreadsheet();
   if (ss.getSheetByName(SHEET_DASH)) return ss.getSheetByName(SHEET_DASH);
   var sh = ss.insertSheet(SHEET_DASH);
-  var O = SHEET_ORDERS, E = SHEET_EXPENSES, P = SHEET_PAYOUTS;
-  [220,140,140,140,140,140,140,150].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  var O = SHEET_ORDERS, E = SHEET_EXPENSES;
+  [260,140,140,140,140,140,140,150,140,150].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  var NC = '(' + O + '!$C$2:$C$5000<>"Скасовано")';
+  var AG = O + '!$AG$2:$AG$5000';
+  var AH = O + '!$AH$2:$AH$5000';
 
   // ---- ЗАГАЛОМ ----
   sh.getRange("A1").setValue("ЗВЕДЕННЯ — ЗАГАЛОМ").setFontWeight("bold").setFontSize(12);
@@ -1051,53 +1056,57 @@ function setupDashboard(ss) {
   var rows = [
     ["Виручка",                 '=SUMIF(' + O + '!C:C;"<>Скасовано";' + O + '!V:V)'],
     ["Собівартість",            '=SUMIF(' + O + '!C:C;"<>Скасовано";' + O + '!T:T)'],
-    ["Валовий прибуток",        '=SUMIF(' + O + '!C:C;"<>Скасовано";' + O + '!W:W)'],
+    ["Валовий прибуток (нараховано)", '=SUMIF(' + O + '!C:C;"<>Скасовано";' + O + '!W:W)'],
     ["Маржинальність %",        '=IFERROR(B4/B2;0)'],
+    ["Маржа до отримання (клієнт оплатив)", '=SUMPRODUCT((' + AG + '=TRUE)*' + NC + '*' + O + '!$W$2:$W$5000)'],
+    ["Маржу отримано",          '=SUMPRODUCT((' + AH + '=TRUE)*' + NC + '*' + O + '!$W$2:$W$5000)'],
+    ["Залишок маржі до отримання", '=SUMPRODUCT((' + AG + '=TRUE)*(' + AH + '<>TRUE)*' + NC + '*' + O + '!$W$2:$W$5000)'],
     ["Комісії дропшиперам (нараховано)", '=SUMIF(' + O + '!C:C;"<>Скасовано";' + O + '!Y:Y)'],
-    ["Виплачено дропшиперам",   '=SUM(' + P + '!D:D)'],
-    ["Залишок до виплати",      '=B6-B7'],
     ["Інші витрати",            '=SUM(' + E + '!D:D)'],
-    ["ЧИСТИЙ ПРИБУТОК",         '=B4-B6-B9']
+    ["ЧИСТИЙ ПРИБУТОК ФАКТИЧНИЙ", '=B7-B9-B10']
   ];
   for (var i = 0; i < rows.length; i++) {
     sh.getRange(i + 2, 1).setValue(rows[i][0]);
     sh.getRange(i + 2, 2).setFormula(rows[i][1]);
   }
-  sh.getRange("A2:A10").setFontWeight("bold");
+  sh.getRange("A2:A11").setFontWeight("bold");
   sh.getRange("B2:B3").setNumberFormat("#,##0 ₴");
   sh.getRange("B4").setNumberFormat("#,##0 ₴");
   sh.getRange("B5").setNumberFormat('0.0%'); // частка → відсотки (×100), напр. 0,259 → 25,9%
-  sh.getRange("B6:B10").setNumberFormat("#,##0 ₴");
-  sh.getRange("A10:B10").setBackground("#DCFCE7").setFontWeight("bold");
+  sh.getRange("B6:B11").setNumberFormat("#,##0 ₴");
+  sh.getRange("A8:B8").setBackground("#FEF3C7").setFontWeight("bold");
+  sh.getRange("A11:B11").setBackground("#DCFCE7").setFontWeight("bold");
 
   // ---- ПОМІСЯЧНО ----
-  sh.getRange("A13").setValue("ПОМІСЯЧНО").setFontWeight("bold").setFontSize(12);
-  var mh = ["Місяць (ММ.РРРР)","Виручка","Собівартість","Валовий прибуток","Маржинальність %","Комісії","Витрати","Чистий прибуток"];
-  sh.getRange(14, 1, 1, mh.length).setValues([mh]);
-  headerStyleAt(sh, 14, mh.length);
+  sh.getRange("A14").setValue("ПОМІСЯЧНО").setFontWeight("bold").setFontSize(12);
+  var mh = ["Місяць (ММ.РРРР)","Виручка","Собівартість","Валовий прибуток","Маржинальність %","Маржу отримано","Борг маржі","Комісії","Витрати","Чистий факт"];
+  sh.getRange(15, 1, 1, mh.length).setValues([mh]);
+  headerStyleAt(sh, 15, mh.length);
   // Місяць (ММ.РРРР) — як ТЕКСТ (щоб не перетворювалось у число й звірка спрацьовувала).
-  sh.getRange(15, 1, 12, 1).setNumberFormat("@");
+  sh.getRange(16, 1, 12, 1).setNumberFormat("@");
   var curMonth = Utilities.formatDate(new Date(), "Europe/Kiev", "MM.yyyy");
   // Місяць замовлення беремо з НОМЕРА (ORD-ДДММРР-NNN): MID(7,2)=MM, "20"&MID(9,2)=РРРР.
   // Надійніше за дату-текст у колонці B (її Google може перетворити на справжню дату).
   var monKey = 'MID(' + O + '!$A$2:$A$5000;7;2)&".20"&MID(' + O + '!$A$2:$A$5000;9;2)';
-  for (var r = 15; r < 27; r++) {
-    if (r === 15) sh.getRange(r, 1).setValue(curMonth);
+  for (var r = 16; r < 28; r++) {
+    if (r === 16) sh.getRange(r, 1).setValue(curMonth);
     var m = "$A" + r;
     var notCancel = '(' + O + '!$C$2:$C$5000<>"Скасовано")'; // фактор: рядок не скасований
     sh.getRange(r, 2).setFormula('=IF(' + m + '="";"";SUMPRODUCT((' + monKey + '=' + m + ')*' + notCancel + '*' + O + '!$V$2:$V$5000))');
     sh.getRange(r, 3).setFormula('=IF(' + m + '="";"";SUMPRODUCT((' + monKey + '=' + m + ')*' + notCancel + '*' + O + '!$T$2:$T$5000))');
     sh.getRange(r, 4).setFormula('=IF(' + m + '="";"";SUMPRODUCT((' + monKey + '=' + m + ')*' + notCancel + '*' + O + '!$W$2:$W$5000))');
     sh.getRange(r, 5).setFormula('=IFERROR(D' + r + '/B' + r + ';"")');
-    sh.getRange(r, 6).setFormula('=IF(' + m + '="";"";SUMPRODUCT((' + monKey + '=' + m + ')*' + notCancel + '*' + O + '!$Y$2:$Y$5000))');
+    sh.getRange(r, 6).setFormula('=IF(' + m + '="";"";SUMPRODUCT((' + monKey + '=' + m + ')*(' + AH + '=TRUE)*' + notCancel + '*' + O + '!$W$2:$W$5000))');
+    sh.getRange(r, 7).setFormula('=IF(' + m + '="";"";SUMPRODUCT((' + monKey + '=' + m + ')*(' + AG + '=TRUE)*(' + AH + '<>TRUE)*' + notCancel + '*' + O + '!$W$2:$W$5000))');
+    sh.getRange(r, 8).setFormula('=IF(' + m + '="";"";SUMPRODUCT((' + monKey + '=' + m + ')*' + notCancel + '*' + O + '!$Y$2:$Y$5000))');
     // Витрати помісячно — через TEXT дати (Витрати!A = реальна дата)
-    sh.getRange(r, 7).setFormula('=IF(' + m + '="";"";SUMPRODUCT((TEXT(' + E + '!$A$2:$A$2000;"MM.yyyy")=' + m + ')*' + E + '!$D$2:$D$2000))');
-    // Чистий прибуток = Валовий − Комісії − Витрати
-    sh.getRange(r, 8).setFormula('=IF(' + m + '="";"";D' + r + '-F' + r + '-G' + r + ')');
+    sh.getRange(r, 9).setFormula('=IF(' + m + '="";"";SUMPRODUCT((TEXT(' + E + '!$A$2:$A$2000;"MM.yyyy")=' + m + ')*' + E + '!$D$2:$D$2000))');
+    // Чистий факт = отримана маржа − комісії − витрати
+    sh.getRange(r, 10).setFormula('=IF(' + m + '="";"";F' + r + '-H' + r + '-I' + r + ')');
   }
-  sh.getRange("B15:D26").setNumberFormat("#,##0 ₴");
-  sh.getRange("E15:E26").setNumberFormat('0.0%');
-  sh.getRange("F15:H26").setNumberFormat("#,##0 ₴");
+  sh.getRange("B16:D27").setNumberFormat("#,##0 ₴");
+  sh.getRange("E16:E27").setNumberFormat('0.0%');
+  sh.getRange("F16:J27").setNumberFormat("#,##0 ₴");
   return sh;
 }
 
@@ -1122,7 +1131,7 @@ function setupInstructions(ss) {
     "• Дропшипери — партнери за ?ref-кодом. Заповнюєш A–E: КОД · Назва · Тип · Контакт · Ставка за кошик. Решта (продано, виручка, нараховано, виплачено, залишок) — рахується.",
     "• Виплати — лог виплат партнерам: Дата · КОД дропшипера · Сума. Оновлює «Залишок до виплати».",
     "• Витрати — реклама та інші витрати: Дата · Категорія · Опис · Сума.",
-    "• Зведення — підсумки: виручка, собівартість, маржинальність, комісії, чистий прибуток (загалом + помісячно).",
+    "• Зведення — підсумки: виручка, собівартість, маржа отримана/до отримання, борг підрядника, комісії, чистий прибуток (загалом + помісячно).",
     "",
     "━━━ ЯК ПРАЦЮЮТЬ РЕФЕРАЛЬНІ ПОСИЛАННЯ (?ref=КОД) ━━━",
     "Кожен партнер має унікальний КОД. Замовлення з його посилання автоматично привʼязується до нього й нараховує комісію.",
@@ -1136,8 +1145,9 @@ function setupInstructions(ss) {
     "QR-код: будь-який безкоштовний генератор (напр. qr-code-generator.com) → встав посилання → друк наклейок у під'їзди.",
     "",
     "━━━ ФІНАНСИ ━━━",
-    "Комісія дропш. = Кількість × Ставка партнера.    Чистий прибуток (рядок) = Валовий прибуток − Комісія.",
-    "Маржинальність % = Валовий прибуток ÷ Виручка.    Чистий прибуток (Зведення) = Валовий − Комісії − Витрати.",
+    "Комісія дропш. = Кількість × Ставка партнера.    Валовий прибуток = ціна продажу − собівартість.",
+    "AG «Оплата клієнта ✓» додає маржу в борг підрядника. AH «Маржу отримано ✓» переносить її в отриману маржу.",
+    "Чистий прибуток факт (Зведення) = отримана маржа − комісії − витрати.",
     "",
     "━━━ ЯК ПРАВИЛЬНО РЕДАГУВАТИ ТА СКАСОВУВАТИ ━━━",
     "ГОЛОВНЕ ПРАВИЛО: усі правки (розміри, колір, адреса, оплата тощо) роби ДО того, як поставиш статус «В роботі».",
@@ -1176,7 +1186,7 @@ function updateInstructions() {
   setupInstructions(ss);
 }
 
-/** Оновити лише аркуш «Зведення» (нові формули без «Скасовано»). Дані замовлень не чіпає. */
+/** Оновити лише аркуш «Зведення» (нові формули з AG/AH). Дані замовлень не чіпає. */
 function updateDashboard() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var old = ss.getSheetByName(SHEET_DASH);
