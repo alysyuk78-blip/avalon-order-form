@@ -421,12 +421,20 @@ function alertOwner_(message, details) {
 // Базовий виклик Telegram Bot API. Повертає розпарсену відповідь або null.
 function tgApi_(method, payload) {
   var token = PropertiesService.getScriptProperties().getProperty("TG_TOKEN");
-  if (!token) { console.error("Telegram не налаштовано — запусти setTelegram()"); return null; }
+  if (!token) return { ok: false, description: "У властивостях скрипта немає TG_TOKEN." };
   var res = UrlFetchApp.fetch("https://api.telegram.org/bot" + token + "/" + method, {
     method: "post", contentType: "application/json", muteHttpExceptions: true,
     payload: JSON.stringify(payload)
   });
-  try { return JSON.parse(res.getContentText()); } catch (e) { return null; }
+  try {
+    var parsed = JSON.parse(res.getContentText());
+    if (!parsed.description && res.getResponseCode() >= 400) {
+      parsed.description = "Telegram HTTP " + res.getResponseCode();
+    }
+    return parsed;
+  } catch (e) {
+    return { ok: false, description: "Telegram повернув неочікувану відповідь (HTTP " + res.getResponseCode() + ")." };
+  }
 }
 
 // Надіслати повідомлення в чат і (опційно) в конкретну тему (гілку).
@@ -444,8 +452,40 @@ function getOwnerChat_() {
 
 function notifyOwner_(text) {
   var chat = getOwnerChat_();
-  if (!chat) return null;
+  if (!chat) return { ok: false, description: "У властивостях скрипта немає TG_OWNER_CHAT (або TG_CHAT)." };
   return tgSendTo_(chat, text);
+}
+
+function telegramError_(response) {
+  if (response && response.ok) return "";
+  return response && response.description ? String(response.description) : "Telegram не повернув підтвердження.";
+}
+
+/** Ручна перевірка налаштувань Telegram без показу токена. */
+function checkOwnerTelegram() {
+  var ui = SpreadsheetApp.getUi();
+  var p = PropertiesService.getScriptProperties();
+  var token = p.getProperty("TG_TOKEN");
+  var chat = getOwnerChat_();
+  if (!token || !chat) {
+    var missing = [];
+    if (!token) missing.push("TG_TOKEN");
+    if (!chat) missing.push("TG_OWNER_CHAT");
+    ui.alert("Telegram не налаштовано", "Відсутні властивості: " + missing.join(", ") + ".", ui.ButtonSet.OK);
+    return;
+  }
+  var me = tgApi_("getMe", {});
+  if (!me || !me.ok) {
+    ui.alert("Помилка Telegram", telegramError_(me), ui.ButtonSet.OK);
+    return;
+  }
+  var test = notifyOwner_("✅ <b>AVALON: Telegram працює</b>\nЧат власника підключено правильно.");
+  if (!test || !test.ok) {
+    ui.alert("Бот працює, але чат недоступний", telegramError_(test) + "\n\nПеревір TG_OWNER_CHAT: " + chat, ui.ButtonSet.OK);
+    return;
+  }
+  var username = me.result && me.result.username ? "@" + me.result.username : "бот";
+  ui.alert("Успішно", "Telegram підключено: " + username + ".\nТестове повідомлення надіслано.", ui.ButtonSet.OK);
 }
 
 function rowSummary_(sh, row) {
@@ -767,7 +807,20 @@ function buildOwnerDailyReport_() {
 
 function sendOwnerDailyReport() {
   var msg = buildOwnerDailyReport_();
-  notifyOwner_(msg);
+  var sent = notifyOwner_(msg);
+  if (!sent || !sent.ok) throw new Error("Звіт не надіслано: " + telegramError_(sent));
+  return sent;
+}
+
+/** Ручний запуск із меню з простим повідомленням про результат. */
+function sendOwnerDailyReportFromMenu() {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    sendOwnerDailyReport();
+    ui.alert("Готово", "Щоденний звіт надіслано в Telegram.", ui.ButtonSet.OK);
+  } catch (e) {
+    ui.alert("Звіт не надіслано", String(e && e.message ? e.message : e), ui.ButtonSet.OK);
+  }
 }
 
 function installOwnerReportTrigger() {
@@ -820,7 +873,8 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("AVALON")
     .addItem("🔄 Надіслати оновлення підряднику (поточний рядок)", "sendUpdateToContractor")
-    .addItem("📊 Надіслати щоденний звіт власнику", "sendOwnerDailyReport")
+    .addItem("📊 Надіслати щоденний звіт власнику", "sendOwnerDailyReportFromMenu")
+    .addItem("🔎 Перевірити Telegram власника", "checkOwnerTelegram")
     .addItem("🛠 Виправити автоматичні звіти й тригери", "repairAutomation")
     .addItem("♻️ Оновити вкладку «Зведення»", "updateDashboard")
     .addToUi();
