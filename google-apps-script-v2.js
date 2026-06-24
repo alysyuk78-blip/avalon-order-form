@@ -612,10 +612,27 @@ function dayDiff_(isoFrom, isoTo) { // isoTo − isoFrom, у днях (чере�
 }
 function daysWord_(n) { return (n % 10 >= 2 && n % 10 <= 4 && (n < 10 || n > 20)) ? "дні" : "днів"; }
 
+/**
+ * Для часових тригерів відкриваємо саме ту таблицю, до якої автоматика була
+ * прив'язана вручну. Це захищає від запуску звіту по старій копії таблиці.
+ */
+function getAutomationSpreadsheet_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty("AVALON_SPREADSHEET_ID");
+  if (id) {
+    try { return SpreadsheetApp.openById(id); }
+    catch (e) { console.error("Не вдалося відкрити AVALON_SPREADSHEET_ID: " + e); }
+  }
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (ss) props.setProperty("AVALON_SPREADSHEET_ID", ss.getId());
+  return ss;
+}
+
 /** Щоденний прохід: знаходить замовлення з датою сьогодні / через N днів і шле нагадування. */
 function sendDeliveryReminders() {
   var tz = "Europe/Kiev";
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getAutomationSpreadsheet_();
+  if (!ss) return;
   var sh = ss.getSheetByName(SHEET_ORDERS);
   if (!sh || sh.getLastRow() < 2) return;
   var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 29).getValues();
@@ -652,19 +669,6 @@ function sendDeliveryReminders() {
     tgSendTo_(chat, buildReminder_(o, diff, tz), thread === "0" ? null : thread);
     props.setProperty(guard, "1");
   });
-
-  // СТОРОЖ (щоденний запобіжник): замовлення у статусі «В роботі», які не дійшли підряднику.
-  try {
-    var ar = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues(); // A=№, C=Статус
-    var miss = [], seen = {};
-    for (var k = 0; k < ar.length; k++) {
-      var n = String(ar[k][0] || "").trim();
-      if (!n || seen[n]) continue; seen[n] = true;
-      if (String(ar[k][2] || "").trim() === "В роботі" && !props.getProperty("thread_" + n)) miss.push(n);
-    }
-    if (miss.length) alertOwner_("⚠️ Не дійшли підряднику (статус «В роботі», але без гілки): " + miss.join(", "),
-                                 "Перевір право бота «Керувати гілками» або постав статус «В роботі» повторно.");
-  } catch (e) { console.error("watchdog: " + e); }
 }
 
 function buildReminder_(o, diff, tz) {
@@ -694,28 +698,37 @@ function buildReminder_(o, diff, tz) {
 
 function buildOwnerDailyReport_() {
   var tz = "Europe/Kiev";
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getAutomationSpreadsheet_();
+  if (!ss) return "📊 <b>AVALON: зведення</b>\nТаблицю для автоматичного звіту не знайдено.";
   var sh = ss.getSheetByName(SHEET_ORDERS);
   if (!sh || sh.getLastRow() < 2) return "📊 <b>AVALON: зведення</b>\nЗамовлень поки немає.";
   var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 34).getValues();
   var todayIso = ymd_(new Date(), tz);
   var orders = {};
-  var debt = 0;
+  var marginAccrued = 0;
+  var marginReady = 0;
+  var marginReceived = 0;
+  var marginDebt = 0;
 
   rows.forEach(function (r) {
     var num = String(r[0] || "").trim();
     if (!num) return;
+    var status = String(r[2] || "").trim();
+    var profit = Number(r[22]) || 0; // W — поточна маржа з таблиці
     if (!orders[num]) {
       orders[num] = {
-        num: num, status: String(r[2] || "").trim(), client: r[4],
+        num: num, status: status, client: r[4],
         date: toISODate(r[28]), revenue: 0, profit: 0, rows: 0
       };
     }
     orders[num].rows++;
     orders[num].revenue += Number(r[21]) || 0; // V
-    orders[num].profit += Number(r[22]) || 0;  // W
-    if (r[32] === true && r[33] !== true && String(r[2] || "").trim() !== "Скасовано") {
-      debt += Number(r[22]) || 0;
+    orders[num].profit += profit;
+    if (status !== "Скасовано") {
+      marginAccrued += profit;
+      if (r[32] === true) marginReady += profit;       // AG — клієнт оплатив
+      if (r[33] === true) marginReceived += profit;    // AH — маржу отримано
+      if (r[32] === true && r[33] !== true) marginDebt += profit;
     }
   });
 
@@ -742,7 +755,11 @@ function buildOwnerDailyReport_() {
   msg += "• В роботі: <b>" + counts["В роботі"] + "</b>\n";
   msg += "• Готові: <b>" + counts["Готове"] + "</b>\n";
   msg += "• Прострочені: <b>" + late.length + "</b>\n";
-  msg += "• Борг підрядника по маржі: <b>" + money_(debt) + " ₴</b>\n";
+  msg += "\n💰 <b>МАРЖА З АКТУАЛЬНОЇ ТАБЛИЦІ</b>\n";
+  msg += "• Нараховано: <b>" + money_(marginAccrued) + " ₴</b>\n";
+  msg += "• До отримання (клієнт оплатив): <b>" + money_(marginReady) + " ₴</b>\n";
+  msg += "• Отримано: <b>" + money_(marginReceived) + " ₴</b>\n";
+  msg += "• Залишок до отримання: <b>" + money_(marginDebt) + " ₴</b>\n";
   if (today.length) msg += "\n📅 <b>Сьогодні відправка/доставка</b>\n" + listOrders(today) + "\n";
   if (late.length) msg += "\n⚠️ <b>Прострочені</b>\n" + listOrders(late) + (late.length > 5 ? "\n• ще " + (late.length - 5) : "") + "\n";
   return msg;
@@ -772,6 +789,27 @@ function installReminderTrigger() {
   Logger.log("Тригер нагадувань встановлено на ~08:30 щодня.");
 }
 
+/**
+ * Запусти один раз у ПРАВИЛЬНІЙ таблиці.
+ * Прив'язує автоматику до неї, видаляє дублікати тригерів у цьому проєкті
+ * та встановлює по одному актуальному тригеру нагадувань і звіту.
+ */
+function repairAutomation() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error("Відкрий Apps Script саме з потрібної Google-таблиці.");
+  PropertiesService.getScriptProperties().setProperty("AVALON_SPREADSHEET_ID", ss.getId());
+  var trg = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < trg.length; i++) {
+    var fn = trg[i].getHandlerFunction();
+    if (fn === "sendOwnerDailyReport" || fn === "sendDeliveryReminders") {
+      ScriptApp.deleteTrigger(trg[i]);
+    }
+  }
+  ScriptApp.newTrigger("sendDeliveryReminders").timeBased().atHour(8).nearMinute(30).everyDays(1).create();
+  ScriptApp.newTrigger("sendOwnerDailyReport").timeBased().atHour(8).nearMinute(35).everyDays(1).create();
+  Logger.log("Автоматику прив'язано до таблиці «" + ss.getName() + "». Тригери очищено й встановлено заново.");
+}
+
 /** Тест: надсилає нагадування по всіх майбутніх замовленнях зараз (ігнорує час). */
 function testReminderNow() {
   sendDeliveryReminders();
@@ -783,6 +821,7 @@ function onOpen() {
     .createMenu("AVALON")
     .addItem("🔄 Надіслати оновлення підряднику (поточний рядок)", "sendUpdateToContractor")
     .addItem("📊 Надіслати щоденний звіт власнику", "sendOwnerDailyReport")
+    .addItem("🛠 Виправити автоматичні звіти й тригери", "repairAutomation")
     .addItem("♻️ Оновити вкладку «Зведення»", "updateDashboard")
     .addToUi();
 }
