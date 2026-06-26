@@ -153,6 +153,7 @@ function formatTelegramMessage(order) {
     if (multi) msg += `\n🧺 <b>Кошик ${i + 1}</b>\n`;
     msg += `• Тип: <b>${e(it.basket_type)}</b>\n`;
     msg += `• Конструкція: <b>${e(it.construction_type)}</b>\n`;
+    if (it.has_cover) msg += `• Верхня кришка: <b>Так</b>\n`;
     if (color) msg += `• Колір: <b>${color}</b>\n`;
     if (pattern) msg += `• Візерунок: <b>${pattern}</b>\n`;
     if (it.ac_brand || it.ac_model) msg += `• Кондиціонер: <b>${e([it.ac_brand, it.ac_model].filter(Boolean).join(" "))}</b>\n`;
@@ -219,7 +220,7 @@ function formatProductionMessage(order) {
     const size = Number(it.size_w) > 0
       ? `${it.size_w}×${it.size_h}×${it.size_d} мм (Ш×В×Г)`
       : `⚠️ розмір визначити${(it.ac_brand || it.ac_model) ? " — " + e([it.ac_brand, it.ac_model].filter(Boolean).join(" ")) : ""}`;
-    msg += `\n${i + 1}. <b>${size}</b>\n   ${e(constr)}, ${e(color)}, візерунок ${e(pattern)}, <b>${it.quantity} шт.</b>\n`;
+    msg += `\n${i + 1}. <b>${size}</b>\n   ${e(constr)}, ${e(color)}, візерунок ${e(pattern)}${it.has_cover ? ", <b>з верхньою кришкою</b>" : ""}, <b>${it.quantity} шт.</b>\n`;
   });
   return msg;
 }
