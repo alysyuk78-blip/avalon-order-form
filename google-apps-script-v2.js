@@ -84,7 +84,7 @@ function doPost(e) {
         data.order_number || "", dateStr, "Нове", data.referral_source || "direct",   // A-D №,Дата,Статус,Джерело
         (data.first_name || "") + " " + (data.last_name || ""),                        // E Клієнт
         (data.phone ? "'" + data.phone : ""), data.city || "",                         // F-G Телефон,Місто
-        it.basket_type || "", it.construction_type || "",                              // H-I
+        it.basket_type || "", (it.construction_type || "") + (it.has_cover ? " + кришка" : ""),  // H-I (мітка кришки)
         it.color || (it.color_custom || ""), it.pattern || (it.pattern_custom || ""),  // J-K
         it.ac_brand || "", it.ac_model || "",                                          // L-M Бренд,Модель
         w || "", h || "", d || "", qty,                                                // N-Q
@@ -463,6 +463,7 @@ function buildProductionMsg_(data) {
     if (multi) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
     m += "• Тип: <b>" + esc_(it.basket_type) + "</b>\n";
     m += "• Конструкція: <b>" + esc_(it.construction_type) + "</b>\n";
+    if (it.has_cover) m += "• Верхня кришка: <b>Так</b>\n";
     if (color) m += "• Колір: <b>" + color + "</b>\n";
     if (pattern) m += "• Візерунок: <b>" + pattern + "</b>\n";
     if (it.ac_brand || it.ac_model) m += "• Кондиціонер: <b>" + esc_([it.ac_brand, it.ac_model].filter(function (x) { return x; }).join(" ")) + "</b>\n";
