@@ -1274,7 +1274,7 @@
     function OrderForm() {
       const defaultForm = {
         first_name: "", last_name: "", phone: "", city: "",
-        construction_type: "", basket_type: "", quantity: "",
+        construction_type: "", basket_type: "", quantity: "", has_cover: false,
         color: "", color_custom: "", pattern: "", pattern_custom: "",
         size_w: "", size_h: "", size_d: "", ac_brand: "", ac_model: "", block_w: "", block_h: "", block_d: "",
         transport: "", transport_custom: "", delivery_address: "", del_street: "", del_house: "", del_entrance: "", delivery_location: "",
@@ -1431,13 +1431,14 @@
           block_w: Number(s.block_w) || 0, block_h: Number(s.block_h) || 0, block_d: Number(s.block_d) || 0,
           ac_brand: (s.ac_brand || "").trim(), ac_model: (s.ac_model || "").trim(),
           covers_brackets: coversBrackets === true,
+          has_cover: !!s.has_cover,
           quantity: Number(s.quantity) || 1,
           price_total: p.total || 0, price_per_unit: p.perUnit || 0, price_per_m2: p.pricePerM2 || 0,
           area_m2: p.areaM2 || 0, cost_total: p.costTotal || 0, profit: p.profit || 0,
         };
       };
       const resetBasketFields = () => {
-        setForm(f => ({ ...f, construction_type: "", basket_type: "", quantity: "",
+        setForm(f => ({ ...f, construction_type: "", basket_type: "", quantity: "", has_cover: false,
           color: "", color_custom: "", pattern: "", pattern_custom: "", size_w: "", size_h: "", size_d: "",
           ac_brand: "", ac_model: "", block_w: "", block_h: "", block_d: "" }));
         setSizeMode("ac"); setAcDims({ w: "", h: "", d: "" });
@@ -1564,7 +1565,7 @@
         setHasDraft(false);
         setForm({
           first_name: "", last_name: "", phone: "", city: "",
-          construction_type: "", basket_type: "", quantity: "",
+          construction_type: "", basket_type: "", quantity: "", has_cover: false,
           color: "", color_custom: "", pattern: "", pattern_custom: "",
           size_w: "", size_h: "", size_d: "", ac_brand: "", ac_model: "", block_w: "", block_h: "", block_d: "",
           transport: "", transport_custom: "", delivery_address: "", del_street: "", del_house: "", del_entrance: "", delivery_location: "",
@@ -1726,6 +1727,22 @@
                 <Field label="Кількість (шт.) *">
                   <StyledInput type="number" min={1} placeholder="Наприклад: 2" value={form.quantity}
                     onChange={e => set("quantity", e.target.value)} error={fieldError("quantity")} />
+                </Field>
+                <Field label="Верхня кришка" help="Закрита верхня площина кошика. Захищає зовнішній блок зверху від дощу, снігу, листя та сміття. За замовчуванням кошик без кришки.">
+                  <div className="grid grid-cols-2 gap-2">
+                    {[{ value: false, title: "Без кришки", note: "Стандарт" }, { value: true, title: "З верхньою кришкою", note: "Захист зверху" }].map(option => (
+                      <button key={String(option.value)} type="button" onClick={() => set("has_cover", option.value)}
+                        className="fx-btn rounded-lg px-3 py-3 text-left"
+                        style={{
+                          backgroundColor: form.has_cover === option.value ? "#383E42" : "#fff",
+                          color: form.has_cover === option.value ? "#fff" : "#383E42",
+                          border: form.has_cover === option.value ? "1px solid #383E42" : "1px solid #b8bec2"
+                        }}>
+                        <span className="block text-xs font-bold">{option.title}</span>
+                        <span className="block mt-1" style={{ fontSize: 10, lineHeight: 1.35, opacity: form.has_cover === option.value ? 0.82 : 0.68 }}>{option.note}</span>
+                      </button>
+                    ))}
+                  </div>
                 </Field>
               </FormCard>
 
@@ -1940,7 +1957,7 @@
                           <div className="text-sm" style={{ color: "#383E42" }}>
                             <div className="font-semibold">{i + 1}. {it.size_w > 0 ? `${it.size_w}×${it.size_h}×${it.size_d} мм` : [it.ac_brand, it.ac_model].filter(Boolean).join(" ")} × {it.quantity} шт.</div>
                             <div className="text-xs" style={{ color: "#6B7280" }}>
-                              {[it.construction_type, it.basket_type, it.color, it.pattern].filter(Boolean).join(", ")}
+                              {[it.construction_type, it.basket_type, it.color, it.pattern, it.has_cover ? "з верхньою кришкою" : null].filter(Boolean).join(", ")}
                             </div>
                           </div>
                           <button type="button" onClick={() => removeBasket(i)} aria-label="Видалити"
