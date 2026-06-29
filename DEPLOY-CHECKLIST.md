@@ -1,19 +1,48 @@
 # Чек-лист деплою — avalon-order-form
 
-Покрокове введення в дію змін з гілки `feature/calc-modes`.
+## Google Apps Script через clasp
+
+`clasp` підключений до production Apps Script. Авторизація Google зберігається
+локально у `~/.clasprc.json` і ніколи не комітиться в GitHub. Першу
+синхронізацію перевірено 29.06.2026: Apps Script version `26`, чинний `/exec`
+відповідає `{"status":"ok","message":"Avalon v3.0"}`.
+
+Перед роботою:
+
+```bash
+git fetch origin
+git switch main
+git pull --ff-only origin main
+pnpm dlx @google/clasp pull
+```
+
+Після перевірених змін у `google-apps-script-v2.js`:
+
+```bash
+pnpm dlx @google/clasp show-file-status
+pnpm dlx @google/clasp push
+pnpm dlx @google/clasp create-version "короткий опис"
+pnpm dlx @google/clasp update-deployment AKfycbyGmlQKyUwYWami3bLnbUzPLhLivzODdwCdq_buYqsBpAMvqBgWYjosifhN3Ei7e--eIw --versionNumber НОМЕР_ВЕРСІЇ --description "короткий опис"
+```
+
+Важливо: `clasp push` повністю замінює вміст Apps Script. `.claspignore`
+обмежує push двома файлами: `google-apps-script-v2.js` та `appsscript.json`.
+Перед push завжди перевіряти `show-file-status`.
+
+Покрокове введення в дію змін з гілки від актуального `main`.
 Познач кожен пункт, коли виконано.
 
 ---
 
-## 1. Оновити Google Apps Script (КРИТИЧНО)
+## 1. Оновити Google Apps Script через clasp (КРИТИЧНО)
 
 Без цього не працюють: послідовна нумерація (v2.4), колонка «Джерело» і аркуш «Джерела».
 
-- [ ] Відкрити Google-таблицю замовлень → **Розширення → Apps Script**.
-- [ ] Виділити весь код → замінити вмістом файлу [`google-apps-script-v2.js`](google-apps-script-v2.js).
-- [ ] **Зберегти** (Ctrl/Cmd+S).
-- [ ] **Ввести в дію → Керувати введеннями → (олівець) → Нова версія → Ввести в дію.**
-  URL веб-застосунку (`/exec`) лишається тим самим — у Vercel його міняти не треба.
+- [ ] Виконати `clasp pull` і перевірити, що немає неочікуваних змін.
+- [ ] Після редагування виконати `clasp show-file-status`: мають бути лише
+  `google-apps-script-v2.js` та `appsscript.json`.
+- [ ] Виконати `clasp push`, створити версію та оновити чинний deployment за
+  командами вище. URL веб-застосунку (`/exec`) лишається тим самим.
 - [ ] (Опційно) Запустити функцію `setupSourcesSheet` один раз вручну — або аркуш «Джерела» створиться сам при першому замовленні.
 
 ## 2. Перевірити env-змінні Vercel
@@ -28,8 +57,8 @@ Vercel → Проєкт `avalon-order-form` → **Settings → Environment Varia
 
 ## 3. Викотити код у прод
 
-- [ ] Злити `feature/calc-modes` → `main` (через PR або напряму), або
-- [ ] налаштувати Vercel на деплой гілки `feature/calc-modes`.
+- [ ] Створити нову гілку від `origin/main`, відкрити PR і злити її в `main`.
+- [ ] Переконатися, що Vercel production deployment завершився успішно.
 
 ---
 

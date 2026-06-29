@@ -254,5 +254,16 @@ Diff на момент передачі:
   відстала від `main` і може повернути вже виправлені помилки.
 - Дві останні зміни Claude Code про опцію `Верхня кришка` перенесено на
   актуальний `main` окремими комітами без втрати пізніших виправлень.
-- Після злиття змін у `main` код `google-apps-script-v2.js` усе ще треба
-  синхронізувати з живим Google Apps Script вручну, доки не налаштовано `clasp`.
+- `clasp` налаштовано для production Apps Script:
+  - Script ID зберігається у `.clasp.json`;
+  - чинний web deployment ID записаний у `DEPLOY-CHECKLIST.md`;
+  - `.claspignore` дозволяє надсилати лише `google-apps-script-v2.js` і
+    `appsscript.json`, тому Vercel/API-файли не потрапляють в Apps Script.
+- Перед змінами виконати `clasp pull` і перевірити diff. Після змін:
+  `show-file-status` → `push` → `create-version` → `update-deployment`.
+- Google OAuth зберігається локально у `~/.clasprc.json`; цей файл не можна
+  додавати в GitHub або передавати іншим людям.
+- 29.06.2026 виконано перший контрольований цикл:
+  `clone/pull` → порівняння без diff → `push` → version `26` →
+  `update-deployment`. Production `/exec` після оновлення повернув
+  `{"status":"ok","message":"Avalon v3.0"}`.
