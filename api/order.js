@@ -17,6 +17,22 @@ module.exports.config = config;
 // ============================================================
 const COMPLEX_PATTERNS = ["K3", "K4", "K6", "K8", "K9"];
 const MARKUP = 1 / (1 - 0.2593); // ~1.3503 — та сама націнка, що у формі
+const COVER_COST_PER_M2 = 1920;
+
+function productionBreakdown(it) {
+  const qty = Number(it.quantity) || 1;
+  const w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
+  const hasCover = Boolean(it.has_cover) || String(it.construction_type || "").toLowerCase().includes("кришка");
+  const basketArea = Number(it.basket_area_m2) || ((w && h) ? (w * h + 2 * d * h) / 1_000_000 : 0);
+  const coverArea = hasCover ? (Number(it.cover_area_m2) || ((w && d) ? w * d / 1_000_000 : 0)) : 0;
+  let basketRate = Number(it.basket_cost_per_m2) || (String(it.construction_type || "").toLowerCase().includes("розбірний") ? 2170 : 2030);
+  if (!Number(it.basket_cost_per_m2) && String(it.basket_type || "").toLowerCase().includes("антивандал")) basketRate = Math.round(basketRate * 1.35);
+  if (!Number(it.basket_cost_per_m2) && COMPLEX_PATTERNS.includes(it.pattern)) basketRate = Math.round(basketRate * 1.15);
+  const coverRate = Number(it.cover_cost_per_m2) || COVER_COST_PER_M2;
+  const basketCost = Number(it.basket_cost_total) || Math.round(basketArea * basketRate * qty);
+  const coverCost = hasCover ? (Number(it.cover_cost_total) || Math.round(coverArea * coverRate * qty)) : 0;
+  return { hasCover, basketArea, coverArea, basketRate, coverRate, basketCost, coverCost, total: basketCost + coverCost };
+}
 
 function calcPriceForMessage(order) {
   // Єдине джерело правди — числа, пораховані формою. Якщо передані — беремо їх (форма = Telegram = Sheets).
@@ -132,6 +148,9 @@ function formatTelegramMessage(order) {
     size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
     ac_brand: order.ac_brand, ac_model: order.ac_model,
     price_total: order.price_total, area_m2: order.area_m2, cost_total: order.cost_total,
+    has_cover: order.has_cover, basket_area_m2: order.basket_area_m2, cover_area_m2: order.cover_area_m2,
+    basket_cost_per_m2: order.basket_cost_per_m2, cover_cost_per_m2: order.cover_cost_per_m2,
+    basket_cost_total: order.basket_cost_total, cover_cost_total: order.cover_cost_total,
   }];
   const multi = items.length > 1;
 
@@ -167,22 +186,19 @@ function formatTelegramMessage(order) {
 
   // ── ФІНАНСИ (виробнича вартість + оплата) ──
   msg += `\n💰 <b>ФІНАНСИ</b>\n`;
-  const perM2of = (it) => {
-    const qty = Number(it.quantity) || 1, area = Number(it.area_m2) || 0, cost = Number(it.cost_total) || 0;
-    return (area > 0 && qty > 0 && cost > 0) ? Math.round(cost / (area * qty)) : 0;
-  };
   let grandCost = 0;
   if (multi) {
     items.forEach((it, i) => {
-      const area = Number(it.area_m2) || 0, cost = Number(it.cost_total) || 0, p = perM2of(it);
+      const b = productionBreakdown(it), cost = Number(it.cost_total) || b.total;
       grandCost += cost;
-      if (cost > 0) msg += `• Кошик ${i + 1}: ${area ? area.toFixed(2) + " м² × " + num(p) + " ₴ = " : ""}<b>${num(cost)} ₴</b>\n`;
+      if (b.basketCost > 0) msg += `• Кошик ${i + 1}: ${b.basketArea.toFixed(2)} м² × ${num(b.basketRate)} ₴ = <b>${num(b.basketCost)} ₴</b>\n`;
+      if (b.coverCost > 0) msg += `  Верхня кришка: ${b.coverArea.toFixed(2)} м² × ${num(b.coverRate)} ₴ = <b>${num(b.coverCost)} ₴</b>\n`;
     });
     if (grandCost > 0) msg += `• <b>Разом виробнича: ${num(grandCost)} ₴</b>\n`;
   } else {
-    const it = items[0], area = Number(it.area_m2) || 0, cost = Number(it.cost_total) || 0, p = perM2of(it);
-    if (area > 0) msg += `• Площа виробу: <b>${area.toFixed(2)}</b> м²\n`;
-    if (p > 0) msg += `• Ціна за 1 м²: <b>${num(p)} ₴</b>\n`;
+    const it = items[0], b = productionBreakdown(it), cost = Number(it.cost_total) || b.total;
+    if (b.basketCost > 0) msg += `• Кошик: ${b.basketArea.toFixed(2)} м² × <b>${num(b.basketRate)} ₴/м²</b> = <b>${num(b.basketCost)} ₴</b>\n`;
+    if (b.coverCost > 0) msg += `• Верхня кришка: ${b.coverArea.toFixed(2)} м² × <b>${num(b.coverRate)} ₴/м²</b> = <b>${num(b.coverCost)} ₴</b>\n`;
     if (cost > 0) msg += `• Вартість виробнича: <b>${num(cost)} ₴</b>\n`;
   }
   if (order.payment_method) msg += `• Оплата: <b>${e(order.payment_method)}</b>\n`;
