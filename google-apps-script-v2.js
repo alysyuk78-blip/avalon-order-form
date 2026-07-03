@@ -267,7 +267,17 @@ function onEditDelivery(e) {
         var onum = sh.getRange(range.getRow(), 1).getValue();
         if (onum && !PropertiesService.getScriptProperties().getProperty("thread_" + onum)) {
           var ord = buildOrderFromRows_(sh, onum);
-          if (ord) { try { createOrderTopic_(ord); } catch (er) { console.error("Send to contractor: " + er); } }
+          if (ord) {
+            try {
+              var contractorResult = createOrderTopic_(ord);
+              if (!contractorResult || !contractorResult.ok) {
+                console.error("Send to contractor: " + telegramError_(contractorResult));
+              }
+            } catch (er) {
+              console.error("Send to contractor: " + er);
+              alertOwner_("Замовлення " + onum + " НЕ надіслано підряднику.", String(er));
+            }
+          }
         }
       }
       notifyOwnerStatusChange_(sh, range.getRow(), newStatus);
@@ -538,9 +548,14 @@ function nowKyiv_() {
 function createOrderTopic_(data) {
   var p = PropertiesService.getScriptProperties();
   var chat = p.getProperty("TG_CONTRACTOR_CHAT");
-  if (!p.getProperty("TG_TOKEN") || !chat) return; // підрядницький чат не налаштовано
+  if (!p.getProperty("TG_TOKEN") || !chat) {
+    var missing = !p.getProperty("TG_TOKEN") ? "TG_TOKEN" : "TG_CONTRACTOR_CHAT";
+    var configError = { ok: false, description: "У властивостях скрипта немає " + missing + "." };
+    alertOwner_("Замовлення " + (data.order_number || "?") + " НЕ надіслано підряднику.", configError.description);
+    return configError;
+  }
   var num = String(data.order_number || "").trim();
-  if (num && p.getProperty("thread_" + num)) return; // вже надсилали — не дублюємо
+  if (num && p.getProperty("thread_" + num)) return { ok: true, skipped: true }; // вже надсилали — не дублюємо
   var threadId = null;
   var r = tgApi_("createForumTopic", { chat_id: chat, name: num || "Замовлення" });
   if (r && r.ok && r.result && r.result.message_thread_id) threadId = r.result.message_thread_id;
@@ -552,6 +567,55 @@ function createOrderTopic_(data) {
     // СТОРОЖ: підтверджене замовлення не дійшло підряднику — одразу сигнал власнику
     alertOwner_("Замовлення " + (num || "?") + " НЕ надіслано підряднику в групу.",
                 "Відповідь Telegram: " + JSON.stringify(sent));
+  }
+  return sent || { ok: false, description: "Telegram не повернув підтвердження надсилання." };
+}
+
+/** Перевірити токен, групу підрядника, права бота та onEdit-тригер. */
+function checkContractorTelegram() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var p = PropertiesService.getScriptProperties();
+  var token = p.getProperty("TG_TOKEN");
+  var chat = p.getProperty("TG_CONTRACTOR_CHAT");
+  var triggerOk = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === "onEditDelivery" &&
+      (!t.getTriggerSourceId() || t.getTriggerSourceId() === ss.getId());
+  });
+  var missing = [];
+  if (!token) missing.push("TG_TOKEN");
+  if (!chat) missing.push("TG_CONTRACTOR_CHAT");
+  if (missing.length) {
+    ui.alert("Telegram підрядника не налаштовано", "Відсутні властивості: " + missing.join(", ") + ".", ui.ButtonSet.OK);
+    return;
+  }
+  var me = tgApi_("getMe", {});
+  if (!me || !me.ok) {
+    ui.alert("Помилка токена Telegram", telegramError_(me), ui.ButtonSet.OK);
+    return;
+  }
+  var chatInfo = tgApi_("getChat", { chat_id: chat });
+  if (!chatInfo || !chatInfo.ok) {
+    ui.alert("Бот не бачить групу підрядника", telegramError_(chatInfo) + "\n\nПеревір TG_CONTRACTOR_CHAT: " + chat, ui.ButtonSet.OK);
+    return;
+  }
+  var member = tgApi_("getChatMember", { chat_id: chat, user_id: me.result.id });
+  var status = member && member.ok && member.result ? member.result.status : "невідомо";
+  var adminOk = status === "administrator" || status === "creator";
+  var canTopics = !member || !member.ok || !member.result || member.result.can_manage_topics !== false;
+  var username = me.result.username ? "@" + me.result.username : "бот";
+  var title = chatInfo.result && chatInfo.result.title ? chatInfo.result.title : String(chat);
+  var lines = [
+    "Бот: " + username,
+    "Група: " + title,
+    "Статус у групі: " + status,
+    "Керування гілками: " + (canTopics ? "дозволено або не потрібне" : "НЕ дозволено"),
+    "Тригер зміни статусу: " + (triggerOk ? "встановлено" : "НЕ встановлено")
+  ];
+  if (adminOk && canTopics && triggerOk) {
+    ui.alert("Перевірка успішна", lines.join("\n"), ui.ButtonSet.OK);
+  } else {
+    ui.alert("Потрібне виправлення", lines.join("\n") + "\n\nЗапусти «Виправити автоматичні звіти й тригери» та перевір права бота в групі.", ui.ButtonSet.OK);
   }
 }
 
@@ -855,13 +919,15 @@ function repairAutomation() {
   var trg = ScriptApp.getProjectTriggers();
   for (var i = 0; i < trg.length; i++) {
     var fn = trg[i].getHandlerFunction();
-    if (fn === "sendOwnerDailyReport" || fn === "sendDeliveryReminders") {
+    if (fn === "sendOwnerDailyReport" || fn === "sendDeliveryReminders" || fn === "onEditDelivery") {
       ScriptApp.deleteTrigger(trg[i]);
     }
   }
+  ScriptApp.newTrigger("onEditDelivery").forSpreadsheet(ss).onEdit().create();
   ScriptApp.newTrigger("sendDeliveryReminders").timeBased().atHour(8).nearMinute(30).everyDays(1).create();
   ScriptApp.newTrigger("sendOwnerDailyReport").timeBased().atHour(8).nearMinute(35).everyDays(1).create();
-  Logger.log("Автоматику прив'язано до таблиці «" + ss.getName() + "». Тригери очищено й встановлено заново.");
+  Logger.log("Автоматику прив'язано до таблиці «" + ss.getName() + "». onEdit, нагадування та звіт встановлено заново.");
+  SpreadsheetApp.getUi().alert("Готово", "Встановлено тригер зміни статусу, щоденні нагадування та звіт.", SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
 /** Тест: надсилає нагадування по всіх майбутніх замовленнях зараз (ігнорує час). */
@@ -876,6 +942,8 @@ function onOpen() {
     .addItem("🔄 Надіслати оновлення підряднику (поточний рядок)", "sendUpdateToContractor")
     .addItem("📊 Надіслати щоденний звіт власнику", "sendOwnerDailyReportFromMenu")
     .addItem("🔎 Перевірити Telegram власника", "checkOwnerTelegram")
+    .addItem("🔎 Перевірити Telegram підрядника", "checkContractorTelegram")
+    .addItem("📤 Повторно надіслати поточне замовлення", "resendCurrentOrderToContractor")
     .addItem("🛠 Виправити автоматичні звіти й тригери", "repairAutomation")
     .addItem("♻️ Оновити вкладку «Зведення»", "updateDashboard")
     .addToUi();
@@ -908,6 +976,28 @@ function sendUpdateToContractor() {
   var sent = tgSendTo_(chat, text, thread === "0" ? null : thread);
   if (sent && sent.ok) ui.alert("✅ Оновлення надіслано підряднику в гілку " + num + ".");
   else ui.alert("⚠️ Не вдалося надіслати. Перевір права бота «Керувати гілками» в групі.");
+}
+
+/** Примусово повторно створити гілку й надіслати поточне замовлення підряднику. */
+function resendCurrentOrderToContractor() {
+  var ui = SpreadsheetApp.getUi();
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  if (sh.getName().toLowerCase() !== SHEET_ORDERS.toLowerCase()) {
+    ui.alert("Спочатку стань на рядок замовлення в аркуші «Замовлення»."); return;
+  }
+  var row = sh.getActiveCell().getRow();
+  if (row < 2) { ui.alert("Обери рядок із замовленням."); return; }
+  var num = String(sh.getRange(row, 1).getValue() || "").trim();
+  if (!num) { ui.alert("У цьому рядку немає номера замовлення."); return; }
+  var answer = ui.alert("Повторно надіслати " + num + "?", "Бот створить нову гілку в групі підрядника та надішле специфікацію.", ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+  var ord = buildOrderFromRows_(sh, num);
+  if (!ord) { ui.alert("Не вдалося зібрати дані замовлення " + num + "."); return; }
+  var p = PropertiesService.getScriptProperties();
+  p.deleteProperty("thread_" + num);
+  var sent = createOrderTopic_(ord);
+  if (sent && sent.ok) ui.alert("Готово", "Замовлення " + num + " надіслано підряднику.", ui.ButtonSet.OK);
+  else ui.alert("Не надіслано", telegramError_(sent), ui.ButtonSet.OK);
 }
 
 /** Дозволити повторне надсилання підряднику: знімає «позначку надіслано» для вказаних
