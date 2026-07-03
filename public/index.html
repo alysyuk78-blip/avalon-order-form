@@ -267,31 +267,46 @@
     // Маржа: 25.93% → клієнтська ціна = собівартість / (1 - 0.2593)
     const COST_PER_M2_SOLID = 2030;      // Суцільний — собівартість
     const COST_PER_M2_DETACHABLE = 2170; // Розбірний — собівартість
+    const COVER_COST_PER_M2 = 1920;      // Верхня кришка — окрема собівартість
     const MARGIN = 0.2593;               // 25.93% маржа
     const MARKUP = 1 / (1 - MARGIN);     // ~1.35 multiplier
     const COMPLEX_PATTERNS = ["K3", "K4", "K6", "K8", "K9"];
 
-    function calcPrice({ construction_type, basket_type, quantity, size_w, size_h, size_d, pattern }) {
+    function calcPrice({ construction_type, basket_type, quantity, size_w, size_h, size_d, pattern, has_cover }) {
       const w = Number(size_w) || 0;
       const h = Number(size_h) || 0;
       const d = Number(size_d) || 0;
       const qty = Number(quantity) || 1;
       if (!w || !h || !qty) return null;
-      const areaMm2 = w * h + 2 * d * h;
-      const areaM2 = areaMm2 / 1_000_000;
+      const basketAreaM2 = (w * h + 2 * d * h) / 1_000_000;
+      const coverAreaM2 = has_cover ? (w * d) / 1_000_000 : 0;
+      const areaM2 = basketAreaM2 + coverAreaM2;
       // Base price depends on construction type
       const isDetachable = construction_type?.toLowerCase().includes("розбірний");
-      let costPerM2 = isDetachable ? COST_PER_M2_DETACHABLE : COST_PER_M2_SOLID;
-      let pricePerM2 = Math.round(costPerM2 * MARKUP);
-      if (basket_type?.toLowerCase().includes("антивандал")) pricePerM2 = Math.round(pricePerM2 * 1.35);
-      if (pattern && COMPLEX_PATTERNS.includes(pattern)) pricePerM2 = Math.round(pricePerM2 * 1.15);
-      const perUnit = Math.round(areaM2 * pricePerM2 * 100) / 100;
+      let basketCostPerM2 = isDetachable ? COST_PER_M2_DETACHABLE : COST_PER_M2_SOLID;
+      if (basket_type?.toLowerCase().includes("антивандал")) basketCostPerM2 *= 1.35;
+      if (pattern && COMPLEX_PATTERNS.includes(pattern)) basketCostPerM2 *= 1.15;
+      basketCostPerM2 = Math.round(basketCostPerM2);
+      const basketPricePerM2 = Math.round(basketCostPerM2 * MARKUP);
+      const coverPricePerM2 = Math.round(COVER_COST_PER_M2 * MARKUP);
+      const basketPricePerUnit = Math.round(basketAreaM2 * basketPricePerM2 * 100) / 100;
+      const coverPricePerUnit = Math.round(coverAreaM2 * coverPricePerM2 * 100) / 100;
+      const perUnit = basketPricePerUnit + coverPricePerUnit;
       const total = Math.round(perUnit * qty * 100) / 100;
       const prepayment = Math.round(total * 0.5 * 100) / 100;
       // Внутрішні показники для менеджера (Telegram/Sheets):
-      const costTotal = Math.round(total / MARKUP);   // собівартість (зворотне зняття націнки)
+      const basketCostTotal = Math.round(basketAreaM2 * basketCostPerM2 * qty);
+      const coverCostTotal = Math.round(coverAreaM2 * COVER_COST_PER_M2 * qty);
+      const costTotal = basketCostTotal + coverCostTotal;
       const profit = Math.round(total - costTotal);    // прибуток
-      return { total, prepayment, perUnit, areaM2: Math.round(areaM2 * 1000) / 1000, pricePerM2, costTotal, profit };
+      return {
+        total, prepayment, perUnit, areaM2: Math.round(areaM2 * 1000) / 1000,
+        pricePerM2: basketPricePerM2, costTotal, profit,
+        basketAreaM2: Math.round(basketAreaM2 * 1000) / 1000,
+        coverAreaM2: Math.round(coverAreaM2 * 1000) / 1000,
+        basketCostPerM2, coverCostPerM2: COVER_COST_PER_M2,
+        basketCostTotal, coverCostTotal,
+      };
     }
 
     // ============================================================
@@ -1459,6 +1474,9 @@
           quantity: Number(s.quantity) || 1,
           price_total: p.total || 0, price_per_unit: p.perUnit || 0, price_per_m2: p.pricePerM2 || 0,
           area_m2: p.areaM2 || 0, cost_total: p.costTotal || 0, profit: p.profit || 0,
+          basket_area_m2: p.basketAreaM2 || 0, cover_area_m2: p.coverAreaM2 || 0,
+          basket_cost_per_m2: p.basketCostPerM2 || 0, cover_cost_per_m2: p.coverCostPerM2 || 0,
+          basket_cost_total: p.basketCostTotal || 0, cover_cost_total: p.coverCostTotal || 0,
         };
       };
       const resetBasketFields = () => {

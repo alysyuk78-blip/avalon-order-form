@@ -52,7 +52,10 @@ function doPost(e) {
       color: data.color, color_custom: data.color_custom, pattern: data.pattern, pattern_custom: data.pattern_custom,
       size_w: data.size_w, size_h: data.size_h, size_d: data.size_d, quantity: data.quantity,
       ac_brand: data.ac_brand, ac_model: data.ac_model,
-      price_total: data.price_total, area_m2: data.area_m2, cost_total: data.cost_total
+      price_total: data.price_total, area_m2: data.area_m2, cost_total: data.cost_total,
+      has_cover: data.has_cover, basket_area_m2: data.basket_area_m2, cover_area_m2: data.cover_area_m2,
+      basket_cost_per_m2: data.basket_cost_per_m2, cover_cost_per_m2: data.cover_cost_per_m2,
+      basket_cost_total: data.basket_cost_total, cover_cost_total: data.cover_cost_total
     }];
     var dateStr = Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm");
     var lastRow = sheet.getLastRow();
@@ -350,13 +353,18 @@ function recalcRow_(sh, row) {
   var qty = Number(v[16]) || 1;
   if (!(w && h)) return; // без розмірів не перераховуємо (напр. «розрахує менеджер»)
   var MARKUP = 1 / (1 - 0.2593);
-  var areaM2 = (w * h + 2 * d * h) / 1000000;
-  var ppm2 = String(construction || "").toLowerCase().indexOf("розбірний") >= 0 ? 2170 : 2030;
-  ppm2 = Math.round(ppm2 * MARKUP);
-  if (String(basket_type || "").toLowerCase().indexOf("антивандал") >= 0) ppm2 = Math.round(ppm2 * 1.35);
-  if (pattern && ["K3", "K4", "K6", "K8", "K9"].indexOf(pattern) >= 0) ppm2 = Math.round(ppm2 * 1.15);
-  var total = Math.round(areaM2 * ppm2) * qty;
-  var costTotal = Math.round(total / MARKUP);
+  var basketAreaM2 = (w * h + 2 * d * h) / 1000000;
+  var hasCover = String(construction || "").toLowerCase().indexOf("кришка") >= 0;
+  var coverAreaM2 = hasCover ? (w * d) / 1000000 : 0;
+  var areaM2 = basketAreaM2 + coverAreaM2;
+  var basketCostRate = String(construction || "").toLowerCase().indexOf("розбірний") >= 0 ? 2170 : 2030;
+  if (String(basket_type || "").toLowerCase().indexOf("антивандал") >= 0) basketCostRate = Math.round(basketCostRate * 1.35);
+  if (pattern && ["K3", "K4", "K6", "K8", "K9"].indexOf(pattern) >= 0) basketCostRate = Math.round(basketCostRate * 1.15);
+  var basketPriceRate = Math.round(basketCostRate * MARKUP);
+  var coverCostRate = 1920;
+  var coverPriceRate = Math.round(coverCostRate * MARKUP);
+  var total = Math.round((basketAreaM2 * basketPriceRate + coverAreaM2 * coverPriceRate) * qty);
+  var costTotal = Math.round(basketAreaM2 * basketCostRate * qty) + Math.round(coverAreaM2 * coverCostRate * qty);
   var costUnit = Math.round(costTotal / qty);
   var priceUnit = Math.round(total / qty);
   var margin = total ? Math.round((total - costTotal) / total * 1000) / 10 : "";
@@ -637,7 +645,7 @@ function buildOrderFromRows_(sh, orderNumber) {
       };
     }
     order.items.push({
-      basket_type: r[7], construction_type: r[8], color: r[9], pattern: r[10],
+      basket_type: r[7], construction_type: r[8], has_cover: String(r[8] || "").toLowerCase().indexOf("кришка") >= 0, color: r[9], pattern: r[10],
       ac_brand: r[11], ac_model: r[12], size_w: r[13], size_h: r[14], size_d: r[15],
       quantity: r[16], area_m2: r[17], cost_total: r[19]
     });
@@ -654,7 +662,20 @@ function buildProductionMsg_(data) {
     ac_brand: data.ac_brand, ac_model: data.ac_model, area_m2: data.area_m2, cost_total: data.cost_total
   }];
   var multi = items.length > 1;
-  function perM2(it) { var q = Number(it.quantity) || 1, a = Number(it.area_m2) || 0, c = Number(it.cost_total) || 0; return (a > 0 && q > 0 && c > 0) ? Math.round(c / (a * q)) : 0; }
+  function breakdown(it) {
+    var qty = Number(it.quantity) || 1;
+    var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
+    var hasCover = !!it.has_cover || String(it.construction_type || "").toLowerCase().indexOf("кришка") >= 0;
+    var basketArea = Number(it.basket_area_m2) || ((w && h) ? (w * h + 2 * d * h) / 1000000 : 0);
+    var coverArea = hasCover ? (Number(it.cover_area_m2) || ((w && d) ? w * d / 1000000 : 0)) : 0;
+    var basketRate = Number(it.basket_cost_per_m2) || (String(it.construction_type || "").toLowerCase().indexOf("розбірний") >= 0 ? 2170 : 2030);
+    if (!Number(it.basket_cost_per_m2) && String(it.basket_type || "").toLowerCase().indexOf("антивандал") >= 0) basketRate = Math.round(basketRate * 1.35);
+    if (!Number(it.basket_cost_per_m2) && it.pattern && ["K3", "K4", "K6", "K8", "K9"].indexOf(it.pattern) >= 0) basketRate = Math.round(basketRate * 1.15);
+    var coverRate = Number(it.cover_cost_per_m2) || 1920;
+    var basketCost = Number(it.basket_cost_total) || Math.round(basketArea * basketRate * qty);
+    var coverCost = hasCover ? (Number(it.cover_cost_total) || Math.round(coverArea * coverRate * qty)) : 0;
+    return { basketArea: basketArea, coverArea: coverArea, basketRate: basketRate, coverRate: coverRate, basketCost: basketCost, coverCost: coverCost, total: basketCost + coverCost };
+  }
 
   var m = "📌 <b>Замовлення №" + esc_(data.order_number) + "</b>\n";
   m += "🕐 " + nowKyiv_() + "\n";
@@ -687,14 +708,15 @@ function buildProductionMsg_(data) {
   var grand = 0;
   if (multi) {
     items.forEach(function (it, i) {
-      var a = Number(it.area_m2) || 0, c = Number(it.cost_total) || 0, pp = perM2(it); grand += c;
-      if (c > 0) m += "• Кошик " + (i + 1) + ": " + (a ? a.toFixed(2) + " м² × " + money_(pp) + " ₴ = " : "") + "<b>" + money_(c) + " ₴</b>\n";
+      var b = breakdown(it), c = Number(it.cost_total) || b.total; grand += c;
+      if (b.basketCost > 0) m += "• Кошик " + (i + 1) + ": " + b.basketArea.toFixed(2) + " м² × " + money_(b.basketRate) + " ₴ = <b>" + money_(b.basketCost) + " ₴</b>\n";
+      if (b.coverCost > 0) m += "  Верхня кришка: " + b.coverArea.toFixed(2) + " м² × " + money_(b.coverRate) + " ₴ = <b>" + money_(b.coverCost) + " ₴</b>\n";
     });
     if (grand > 0) m += "• <b>Разом виробнича: " + money_(grand) + " ₴</b>\n";
   } else {
-    var it = items[0], a = Number(it.area_m2) || 0, c = Number(it.cost_total) || 0, pp = perM2(it);
-    if (a > 0) m += "• Площа виробу: <b>" + a.toFixed(2) + "</b> м²\n";
-    if (pp > 0) m += "• Ціна за 1 м²: <b>" + money_(pp) + " ₴</b>\n";
+    var it = items[0], b = breakdown(it), c = Number(it.cost_total) || b.total;
+    if (b.basketCost > 0) m += "• Кошик: " + b.basketArea.toFixed(2) + " м² × <b>" + money_(b.basketRate) + " ₴/м²</b> = <b>" + money_(b.basketCost) + " ₴</b>\n";
+    if (b.coverCost > 0) m += "• Верхня кришка: " + b.coverArea.toFixed(2) + " м² × <b>" + money_(b.coverRate) + " ₴/м²</b> = <b>" + money_(b.coverCost) + " ₴</b>\n";
     if (c > 0) m += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
   }
   if (data.payment_method) m += "• Оплата: <b>" + esc_(data.payment_method) + "</b>\n";
