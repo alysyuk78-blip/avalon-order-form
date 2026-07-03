@@ -37,3 +37,4 @@
    `origin/main`. Не використовуй стару локальну `feature/calc-modes`.
 7. Не виконуй `clasp push`, Vercel/Telegram/Google production-зміни без прямого
    підтвердження користувача в поточному чаті.
+8. Після дозволеного Apps Script deployment обов'язково виконай `clasp logout`.
