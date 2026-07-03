@@ -1,0 +1,52 @@
+name: Validate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Check server JavaScript
+        run: |
+          node --check api/order.js
+          node --check api/alert.js
+          node --check api/np.js
+          node --check google-apps-script-v2.js
+
+      - name: Check clasp allowlist
+        run: |
+          expected=$'**/**\n!appsscript.json\n!google-apps-script-v2.js'
+          actual="$(cat .claspignore)"
+          test "$actual" = "$expected"
+
+      - name: Require handoff for behavioral changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          echo "$changed"
+          if echo "$changed" | grep -Eq '^(public/|api/|google-apps-script-v2\.js$|appsscript\.json$|vercel\.json$|package\.json$)'; then
+            echo "$changed" | grep -qx 'CODEX-HANDOFF.md' || {
+              echo 'CODEX-HANDOFF.md must be updated for behavioral changes.' >&2
+              exit 1
+            }
+          fi
+
+      - name: Check whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git diff --check "$BASE_SHA" "$HEAD_SHA"

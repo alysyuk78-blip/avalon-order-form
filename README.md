@@ -1,5 +1,14 @@
 # Avalon Order Form — Інструкція з розгортання
 
+> **ВАЖЛИВО ДЛЯ AI-АГЕНТІВ:** перед будь-якими змінами прочитайте
+> [`AGENTS.md`](AGENTS.md), [`CHANGE-CONTROL.md`](CHANGE-CONTROL.md),
+> [`CODEX-HANDOFF.md`](CODEX-HANDOFF.md) і
+> [`DEPLOY-CHECKLIST.md`](DEPLOY-CHECKLIST.md). Офіційна версія знаходиться в
+> `main`; прямі зміни production та ручне копіювання Apps Script заборонені.
+
+Наведені нижче ручні кроки збережені як початкова історична інструкція. Для
+поточного production використовуйте актуальний `DEPLOY-CHECKLIST.md` і `clasp`.
+
 ## Що в проекті
 
 ```
