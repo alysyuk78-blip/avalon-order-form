@@ -1,5 +1,7 @@
 # CODEX HANDOFF — avalon-order-form
 
+> Правила безпеки та change control: `AGENTS.md` і `CHANGE-CONTROL.md`.
+
 Дата: 2026-06-22
 База: production repo `https://github.com/alysyuk78-blip/avalon-order-form`, `main` HEAD `37e5fcadcbeb9667b99600f5b41116a399b715d5`.
 
@@ -281,3 +283,18 @@ Diff на момент передачі:
   повторно надсилає специфікацію.
 - Відсутні `TG_TOKEN` / `TG_CONTRACTOR_CHAT` більше не ігноруються мовчки:
   власник отримує діагностичне повідомлення.
+
+## Захист процесу змін — 29.06.2026
+
+- Додано `AGENTS.md`, обов'язковий для Codex, Claude та інших агентів.
+- Додано `CLAUDE.md`, який спрямовує Claude Code до загальних правил.
+- Додано `CHANGE-CONTROL.md` із простими правилами для власника та готовим
+  текстом для нового чату.
+- Додано шаблон Pull Request із перевіркою компонентів, секретів і дозволу на
+  production deployment.
+- Додано GitHub Actions workflow `Validate`, який перевіряє серверний JavaScript,
+  clasp allowlist, whitespace і наявність оновленого handoff для поведінкових
+  змін.
+- Після злиття цього набору правил `main` має бути захищено від прямого push,
+  force-push і видалення; merge дозволяється лише через PR після обов'язкових
+  перевірок `Vercel` та `validate`.
