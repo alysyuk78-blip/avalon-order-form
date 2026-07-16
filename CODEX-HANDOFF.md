@@ -320,9 +320,9 @@ Diff на момент передачі:
 
 - Старе низькоякісне зображення візерунків було вшите в `public/index.html`
   як великий `base64`-рядок.
-- Додано окремий файл `public/images/patterns-quality-v2.png` із якіснішою
+- Додано окремий файл `public/images/patterns-quality-v3.png` із якіснішою
   картинкою `K1`–`K10`; нижню цінову примітку з оригінального зображення
   повністю обрізано, бо чинна логіка доплат у формі рахується окремо.
 - `SETTINGS.pattern_image_url` у формі тепер вказує на
-  `images/patterns-quality-v2.png`.
+  `images/patterns-quality-v3.png`.
 - Логіка вибору візерунка, ціни та Telegram/Google Sheets не змінювалась.
