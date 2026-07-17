@@ -280,7 +280,8 @@
     .catalog-check input { width: 18px; height: 18px; margin-top: 1px; accent-color: var(--avalon-7016); flex: 0 0 auto; }
     .catalog-check.is-error { border-color: #ef4444; background: #fff8f8; }
     .catalog-choice-group.is-error { padding: 8px; border: 1px solid #ef4444; border-radius: 16px; background: #fff8f8; }
-    .measure-choice { display: block; min-height: 96px; padding: 16px; text-align: left; }
+    .measure-choice { min-height: 96px; padding: 16px; flex-direction: column; justify-content: center; text-align: center; }
+    .measure-choice > div { width: 100%; text-align: center; }
     @media (min-width: 640px) { .contact-method-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } .delivery-choice-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .source-choice-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
     .btu-choice { min-height: 42px; border-radius: 999px; font-size: 12px; font-weight: 800; }
     @media (min-width: 640px) { .ral-colors-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
@@ -943,6 +944,11 @@
         <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
       </svg>
     );
+    const IconTelegram = () => (
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style={{ color: "#2AABEE", flexShrink: 0 }}>
+        <path fill="currentColor" d="M21.4 3.2 2.8 10.4c-1.3.5-1.3 1.2-.2 1.6l4.8 1.5 1.9 5.8c.2.6.1.8.7.8.4 0 .6-.2.8-.4l2.3-2.2 4.8 3.6c.9.5 1.5.2 1.7-.8L22.8 4c.3-1.2-.5-1.7-1.4-.8ZM8.2 13.2l10.9-6.9c.5-.3 1-.1.6.3l-8.8 8-.3 3.4-1.7-4.8-.7-.2Z" />
+      </svg>
+    );
 
     // ============================================================
     // SMALL COMPONENTS
@@ -978,7 +984,7 @@
           {open && (
             <div className="help-menu">
               <p className="text-xs mb-2" style={{ color: "#6B7280" }}>Не впевнені у виборі? Менеджер допоможе.</p>
-              <a href="https://t.me/avalon_metal_design" target="_blank" rel="noopener noreferrer"><IconMessageCircle /> Написати в Telegram</a>
+              <a href="https://t.me/avalon_metal_design" target="_blank" rel="noopener noreferrer"><IconTelegram /> Написати в Telegram</a>
               <a href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> Зателефонувати {SETTINGS.phone_contact}</a>
             </div>
           )}
@@ -2796,7 +2802,7 @@
               </section>
               <section className="mt-10 grid gap-4 md:grid-cols-2 py-6 border-y" style={{ borderColor: "#dce1dc" }}>
                 <div><h2 className="font-bold" style={{ color: "#26322d" }}>Не знаєте, яка модель потрібна?</h2><p className="mt-1 text-sm leading-6" style={{ color: "#66716b" }}>Оберіть будь-яку схожу модель. Менеджер допоможе підібрати остаточне рішення.</p></div>
-                <div className="flex flex-wrap gap-2 md:justify-end md:items-center"><a className="catalog-secondary catalog-choice inline-flex items-center gap-2" href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> {SETTINGS.phone_contact}</a><a className="catalog-secondary catalog-choice inline-flex items-center gap-2" href="https://t.me/avalon_metal_design" target="_blank" rel="noopener noreferrer"><IconMessageCircle /> Написати в Telegram</a></div>
+                <div className="flex flex-wrap gap-2 md:justify-end md:items-center"><a className="catalog-secondary catalog-choice inline-flex items-center gap-2" href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> {SETTINGS.phone_contact}</a><a className="catalog-secondary catalog-choice inline-flex items-center gap-2" href="https://t.me/avalon_metal_design" target="_blank" rel="noopener noreferrer"><IconTelegram /> Написати в Telegram</a></div>
               </section>
             </main>
           )}
