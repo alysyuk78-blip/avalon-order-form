@@ -89,11 +89,21 @@
       }
     })();
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
-    * { font-family: 'Inter', 'Segoe UI', sans-serif !important; box-sizing: border-box; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+    :root { --avalon-7016: #383e42; --apple-ink: #1d1d1f; --apple-muted: #6e6e73; --apple-surface: #fbfbfd; --apple-line: rgba(56,62,66,.14); }
+    * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif !important; box-sizing: border-box; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
     body { margin: 0; background-color: #f2f2f2; }
+    .avalon-logo-mark { display: block; object-fit: contain; mix-blend-mode: multiply; filter: grayscale(1) contrast(1.3); }
+    .apple-header { position: sticky; top: 0; z-index: 30; background: rgba(255,255,255,.84) !important; border-color: rgba(56,62,66,.1) !important; -webkit-backdrop-filter: saturate(180%) blur(18px); backdrop-filter: saturate(180%) blur(18px); }
+    .apple-action { border-radius: 999px !important; border-color: rgba(56,62,66,.72) !important; color: var(--avalon-7016) !important; transition: transform .2s cubic-bezier(.2,.8,.2,1), background-color .2s ease, box-shadow .2s ease !important; }
+    @media (hover: hover) { .apple-action:hover { transform: translateY(-1px); background: #f5f5f7 !important; box-shadow: 0 6px 18px rgba(29,29,31,.12); } }
+    .apple-catalog { background: #f5f5f7 !important; color: var(--apple-ink); }
+    .apple-model-card { overflow: hidden; border: 1px solid var(--apple-line) !important; border-radius: 18px !important; background: rgba(255,255,255,.9) !important; box-shadow: 0 3px 14px rgba(29,29,31,.05) !important; transition: transform .35s cubic-bezier(.2,.8,.2,1), box-shadow .35s cubic-bezier(.2,.8,.2,1), border-color .25s ease !important; }
+    .apple-model-card img { transition: transform .55s cubic-bezier(.2,.8,.2,1), filter .35s ease; }
+    @media (hover: hover) { .apple-model-card:hover { transform: translateY(-6px); border-color: rgba(56,62,66,.3) !important; box-shadow: 0 18px 42px rgba(29,29,31,.12) !important; } .apple-model-card:hover img { transform: scale(1.025); filter: saturate(1.04) contrast(1.02); } }
+    .apple-panel { border-radius: 18px !important; border-color: var(--apple-line) !important; box-shadow: 0 10px 30px rgba(29,29,31,.05); }
+    .apple-model-image { border-radius: 18px !important; border-color: var(--apple-line) !important; box-shadow: 0 12px 30px rgba(29,29,31,.06); }
+    @media (prefers-reduced-motion: reduce) { .apple-action, .apple-model-card, .apple-model-card img, .catalog-choice, .pattern-choice img { transition: none !important; animation: none !important; } }
     .dim-card { transition: box-shadow 0.3s ease, transform 0.2s ease; }
     @media (hover: hover) { .dim-card:hover { box-shadow: 0 8px 32px rgba(56,62,66,0.18); transform: translateY(-2px); } }
     .color-btn { transition: transform 0.15s ease, box-shadow 0.2s ease; -webkit-tap-highlight-color: transparent; }
@@ -194,19 +204,19 @@
     }
     .choice-row { min-height: 44px; }
     /* Інтерактивні елементи каталогу: помітний, але спокійний відгук на вибір. */
-    .catalog-choice { position: relative; -webkit-tap-highlight-color: transparent; transition: transform .18s cubic-bezier(.2,.7,.3,1), box-shadow .2s ease, border-color .2s ease, background-color .2s ease; }
+    .catalog-choice { position: relative; -webkit-tap-highlight-color: transparent; transition: transform .24s cubic-bezier(.2,.8,.2,1), box-shadow .24s ease, border-color .24s ease, background-color .24s ease; }
     .catalog-choice:focus-visible { outline: 3px solid rgba(143,115,64,.45); outline-offset: 3px; }
-    @media (hover: hover) { .catalog-choice:hover { transform: translateY(-2px); box-shadow: 0 7px 16px rgba(23,61,49,.14); } }
+    @media (hover: hover) { .catalog-choice:hover { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(29,29,31,.12); } }
     .catalog-choice:active { transform: translateY(0) scale(.96); }
-    .catalog-choice.is-active { border-color: #173d31 !important; box-shadow: 0 0 0 3px rgba(23,61,49,.17), 0 7px 18px rgba(23,61,49,.16) !important; }
-    .catalog-choice.is-active::after { content: "✓"; position: absolute; top: -7px; right: -7px; z-index: 2; width: 20px; height: 20px; border-radius: 999px; display: flex; align-items: center; justify-content: center; background: #173d31; color: #fff; font-size: 12px; font-weight: 800; box-shadow: 0 2px 7px rgba(0,0,0,.22); }
+    .catalog-choice.is-active { border-color: var(--avalon-7016) !important; box-shadow: 0 0 0 3px rgba(56,62,66,.14), 0 10px 22px rgba(29,29,31,.13) !important; }
+    .catalog-choice.is-active::after { content: "✓"; position: absolute; top: -7px; right: -7px; z-index: 2; width: 20px; height: 20px; border-radius: 999px; display: flex; align-items: center; justify-content: center; background: var(--avalon-7016); color: #fff; font-size: 12px; font-weight: 800; box-shadow: 0 3px 9px rgba(29,29,31,.22); }
     .color-choice { width: 58px; display: flex; flex-direction: column; align-items: center; gap: 5px; background: transparent; border: 0; color: #526058; font-size: 10px; font-weight: 700; line-height: 1.1; }
     .color-swatch { width: 48px; height: 48px; border-radius: 50%; border: 1px solid rgba(38,50,45,.28); box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 2px 5px rgba(0,0,0,.14); }
-    .color-choice.is-active .color-swatch { border: 3px solid #173d31; }
+    .color-choice.is-active .color-swatch { border: 3px solid var(--avalon-7016); }
     .ral-colors-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); justify-items: center; gap: 14px 8px; }
-    .pattern-choice { min-width: 0; }
-    .pattern-choice img { transition: transform .2s ease, filter .2s ease; }
-    @media (hover: hover) { .pattern-choice:hover img { transform: scale(1.06); filter: contrast(1.05); } }
+    .pattern-choice { width: 100%; min-width: 0; }
+    .pattern-choice img { transition: transform .24s cubic-bezier(.2,.8,.2,1), filter .24s ease; }
+    @media (hover: hover) { .pattern-choice:hover img { transform: scale(1.035); filter: contrast(1.04); } }
     .btu-choice { min-height: 42px; border-radius: 8px; font-size: 12px; font-weight: 800; }
     @media (min-width: 640px) { .ral-colors-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
     @media (min-width: 1024px) { .ral-colors-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
@@ -874,9 +884,10 @@
       return (
         <img
           src="images/logo-shield-outline.png"
-          alt="AVALON"
+          alt="Avalon Metal Design"
           width={size} height={size}
-          style={{ objectFit: "cover", display: "block" }}
+          className="avalon-logo-mark"
+          style={{ width: size, height: size }}
         />
       );
     }
@@ -2612,7 +2623,7 @@
         return (
           <div className="min-h-screen flex items-center justify-center p-5" style={{ background: "#f4f5f3" }}>
             <div className="w-full max-w-lg bg-white p-8 text-center" style={{ borderRadius: 8, border: "1px solid #dce1dc" }}>
-              <div className="mx-auto mb-5 flex items-center justify-center overflow-hidden" style={{ width: 64, height: 64, borderRadius: 14, background: "#fff", border: "1px solid #dce1dc" }}><AvalonLogo size={64} /></div>
+            <div className="mx-auto mb-5 flex items-center justify-center" style={{ width: 64, height: 64 }}><AvalonLogo size={64} /></div>
               <h1 className="text-2xl font-bold" style={{ color: "#1f2925" }}>Заявку на прорахунок надіслано</h1>
               <p className="mt-3 text-sm leading-6" style={{ color: "#59645e" }}>Менеджер перевірить параметри та зв'яжеться з вами для уточнення деталей.</p>
               <button type="button" onClick={startNewRequest} className="mt-7 px-5 py-3 text-sm font-bold text-white" style={{ background: "#173d31", borderRadius: 6 }}>Створити ще одну заявку</button>
@@ -2622,13 +2633,13 @@
       }
 
       const Header = () => (
-        <header className="border-b" style={{ borderColor: "#dce1dc", background: "#ffffff" }}>
+        <header className="apple-header border-b" style={{ borderColor: "#dce1dc", background: "#ffffff" }}>
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-3">
             <button type="button" onClick={() => goTo("catalog")} className="flex items-center gap-3 text-left" aria-label="До каталогу моделей">
-              <div style={{ width: 38, height: 38, borderRadius: 8, overflow: "hidden", background: "#fff", border: "1px solid #dce1dc" }} className="flex items-center justify-center"><AvalonLogo size={38} /></div>
-              <div><div className="font-bold text-sm tracking-wide" style={{ color: "#173d31" }}>AVALON</div><div className="text-xs" style={{ color: "#6a736e" }}>Кошики для кондиціонерів</div></div>
+              <div style={{ width: 34, height: 34 }} className="flex items-center justify-center"><AvalonLogo size={34} /></div>
+              <div className="text-sm font-semibold tracking-tight" style={{ color: "#383e42" }}>Кошики для кондиціонерів</div>
             </button>
-            <button type="button" onClick={() => goTo("request")} className="px-3 sm:px-4 py-2 text-sm font-bold" style={{ border: "1px solid #173d31", borderRadius: 6, color: "#173d31", background: "#fff" }}>
+            <button type="button" onClick={() => goTo("request")} className="apple-action catalog-choice px-3 sm:px-4 py-2 text-sm font-bold" style={{ border: "1px solid #173d31", borderRadius: 6, color: "#173d31", background: "#fff" }}>
               Заявка <span style={{ color: "#8f7340" }}>({items.length})</span>
             </button>
           </div>
@@ -2643,7 +2654,7 @@
       );
 
       return (
-        <div className="min-h-screen" style={{ background: "#f4f5f3" }}>
+        <div className="min-h-screen apple-catalog" style={{ background: "#f4f5f3" }}>
           {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
           <HelpWidget />
           <Header />
@@ -2657,7 +2668,7 @@
               </section>
               <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Моделі кошиків">
                 {CATALOG_MODELS.map(model => (
-                  <button key={model.id} type="button" onClick={() => selectModel(model)} className="text-left overflow-hidden bg-white" style={{ border: "1px solid #dce1dc", borderRadius: 8, boxShadow: "0 2px 12px rgba(31,41,37,.05)" }}>
+                  <button key={model.id} type="button" onClick={() => selectModel(model)} className="apple-model-card text-left" style={{ border: "1px solid #dce1dc", borderRadius: 8, boxShadow: "0 2px 12px rgba(31,41,37,.05)" }}>
                     <img src={model.image} alt={model.fullName} className="block w-full" style={{ aspectRatio: "4 / 3", objectFit: "cover", background: "#eff1ef" }} />
                     <div className="p-4">
                       <div className="text-xs font-bold tracking-widest" style={{ color: "#8f7340" }}>{model.id}</div>
@@ -2679,7 +2690,7 @@
             <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
               <button type="button" onClick={() => goTo("catalog")} className="text-sm font-semibold mb-5" style={{ color: "#173d31" }}>← Усі моделі</button>
               <section className="grid gap-7 lg:grid-cols-2 items-start">
-                <img src={selectedModel.image} alt={selectedModel.fullName} className="w-full bg-white" style={{ aspectRatio: "4 / 3", objectFit: "cover", borderRadius: 8, border: "1px solid #dce1dc" }} />
+                <img src={selectedModel.image} alt={selectedModel.fullName} className="apple-model-image w-full bg-white" style={{ aspectRatio: "4 / 3", objectFit: "cover", borderRadius: 8, border: "1px solid #dce1dc" }} />
                 <div>
                   <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#8f7340" }}>{selectedModel.id}</p>
                   <h1 className="mt-2 text-3xl font-bold" style={{ color: "#1f2925" }}>{selectedModel.fullName}</h1>
@@ -2693,7 +2704,7 @@
                 </div>
               </section>
 
-              <section className="mt-10 bg-white p-5 sm:p-7" style={{ border: "1px solid #dce1dc", borderRadius: 8 }}>
+              <section className="apple-panel mt-10 bg-white p-5 sm:p-7" style={{ border: "1px solid #dce1dc", borderRadius: 8 }}>
                 <div className="flex flex-wrap items-end justify-between gap-3 border-b pb-5" style={{ borderColor: "#dce1dc" }}>
                   <div><p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#8f7340" }}>Параметри</p><h2 className="mt-1 text-2xl font-bold" style={{ color: "#1f2925" }}>Додайте модель до прорахунку</h2></div>
                   <span className="text-sm font-semibold px-3 py-1.5" style={{ background: "#edf5f0", color: "#173d31", borderRadius: 999 }}>{selectedModel.id}</span>
@@ -2728,8 +2739,8 @@
                     <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Візерунок</h3>
                       <p className="mt-1 text-xs" style={{ color: "#66716b" }}>Натисніть на візерунок, який вам подобається.</p>
-                      <div className="mt-3 grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-10 gap-2">
-                        {CATALOG_PATTERN_OPTIONS.map(pattern => <button key={pattern.label} type="button" onClick={() => { set("pattern", pattern.label); set("pattern_custom", ""); }} className={`catalog-choice pattern-choice overflow-hidden text-left ${form.pattern === pattern.label ? "is-active" : ""}`} style={{ border: form.pattern === pattern.label ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.pattern === pattern.label ? "#edf5f0" : "#fff", borderRadius: 6 }}><img src={pattern.image} alt={`Візерунок ${pattern.label}`} className="block w-full" style={{ aspectRatio: "1 / 1", objectFit: "cover", background: "#111" }} /><span className="block px-1 py-1.5 text-center text-[11px] font-bold" style={{ color: "#26322d" }}>{pattern.label}</span></button>)}
+                      <div className="mt-3" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(72px, 92px))", gap: 10 }}>
+                        {CATALOG_PATTERN_OPTIONS.map(pattern => <button key={pattern.label} type="button" onClick={() => { set("pattern", pattern.label); set("pattern_custom", ""); }} className={`catalog-choice pattern-choice text-left ${form.pattern === pattern.label ? "is-active" : ""}`} style={{ border: form.pattern === pattern.label ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.pattern === pattern.label ? "#edf5f0" : "#fff", borderRadius: 8 }}><img src={pattern.image} alt={`Візерунок ${pattern.label}`} className="block w-full" style={{ aspectRatio: "1 / 1", objectFit: "contain", padding: 3, background: "#111", borderRadius: "7px 7px 0 0" }} /><span className="block px-1 py-1.5 text-center text-[11px] font-bold" style={{ color: "#26322d" }}>{pattern.label}</span></button>)}
                         <button type="button" onClick={() => set("pattern", "Інший")} className={`catalog-choice pattern-choice p-2 text-center ${form.pattern === "Інший" ? "is-active" : ""}`} style={{ border: form.pattern === "Інший" ? "2px solid #173d31" : "1px dashed #aeb8b1", background: form.pattern === "Інший" ? "#edf5f0" : "#fff", borderRadius: 6 }}><span className="block text-[11px] font-bold" style={{ color: "#26322d" }}>Інший</span><span className="mt-1 block text-[10px] leading-4" style={{ color: "#66716b" }}>Опис<br />або ескіз</span></button>
                       </div>
                       {form.pattern === "Інший" && <div className="mt-3 space-y-3"><StyledInput placeholder="Опишіть бажаний візерунок" value={form.pattern_custom} onChange={event => set("pattern_custom", event.target.value)} error={showErrors && !form.pattern_custom.trim()} /><label htmlFor="catalog-pattern-file" className="upload-zone block text-sm font-semibold" style={{ borderRadius: 6 }}><span className="inline-flex items-center gap-2"><IconUpload /> {patternFile ? patternFile.name : "Додати ескіз або фото"}</span></label><input id="catalog-pattern-file" type="file" className="hidden" accept="image/*,.pdf" onChange={event => setPatternFile(event.target.files?.[0] || null)} /></div>}
