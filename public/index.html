@@ -2452,6 +2452,7 @@
       const [patternFile, setPatternFile] = useState(null);
       const [showRalPalette, setShowRalPalette] = useState(false);
       const [visibleRalCount, setVisibleRalCount] = useState(24);
+      const [showCalendar, setShowCalendar] = useState(false);
       const [showErrors, setShowErrors] = useState(false);
       const [submitting, setSubmitting] = useState(false);
       const submittingRef = useRef(false);
@@ -2619,9 +2620,15 @@
         const addressIsNotRequired = !localAddressRequired && !remoteAddressRequired;
         return !!(
           form.delivery_location && form.transport &&
+          form.delivery_date &&
           (addressIsNotRequired || form.delivery_address.trim()) &&
           (form.transport !== "Інше" || form.transport_custom.trim())
         );
+      };
+      const deliveryDateLabel = form.delivery_location === "remote" ? "Бажана дата відправки" : "Бажана дата доставки";
+      const formatDeliveryDate = dateStr => {
+        if (!dateStr) return "";
+        return new Date(dateStr).toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric" });
       };
       const sourceIsValid = () => !!(form.how_found && (form.how_found !== "Інше" || form.how_found_custom.trim()));
       const contactsValid = form.first_name.trim() && contactIsValid() && deliveryIsValid() && !!form.payment_method && sourceIsValid() && form.terms_accepted;
@@ -2728,6 +2735,19 @@
       return (
         <div className="min-h-screen apple-catalog" style={{ background: "#f4f5f3" }}>
           {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+          {showCalendar && (
+            <CalendarPicker
+              selected={form.delivery_date ? new Date(form.delivery_date) : null}
+              minDate={getMinDeliveryDate()}
+              onSelect={date => {
+                const y = date.getFullYear();
+                const m = String(date.getMonth() + 1).padStart(2, "0");
+                const d = String(date.getDate()).padStart(2, "0");
+                set("delivery_date", `${y}-${m}-${d}`);
+              }}
+              onClose={() => setShowCalendar(false)}
+            />
+          )}
           <HelpWidget />
           <Header />
 
@@ -2901,7 +2921,16 @@
                     {form.delivery_location === "pickup" && <p className="mt-4 text-sm" style={{ color: "#6e6e73" }}>Самовивіз: пров. Шевченка, 39, Хмельницький. Час узгодить менеджер.</p>}
                     {form.delivery_location === "local" && <div className="mt-5 space-y-4"><div><p className="mb-2 text-sm font-bold" style={{ color: "#383e42" }}>Спосіб доставки *</p><div className="delivery-choice-grid"><button type="button" onClick={() => set("transport", "Безкоштовна — пров. Шевченка, 39")} className={`catalog-option ${form.transport === "Безкоштовна — пров. Шевченка, 39" ? "is-active" : ""}`}>Безкоштовна — пров. Шевченка, 39</button><button type="button" onClick={() => set("transport", "Адресна доставка")} className={`catalog-option ${form.transport === "Адресна доставка" ? "is-active" : ""}`}>Адресна доставка</button></div></div>{localAddressRequired && <Field label="Адреса доставки *"><StyledInput placeholder="Вулиця, будинок, квартира або офіс" value={form.delivery_address} onChange={event => set("delivery_address", event.target.value)} error={showErrors && !form.delivery_address.trim()} /></Field>}</div>}
                     {form.delivery_location === "remote" && <div className="mt-5 grid gap-4 sm:grid-cols-2"><Field label="Служба доставки *"><StyledSelect value={form.transport} onChange={value => setForm(current => ({ ...current, transport: value, transport_custom: "" }))} placeholder="Оберіть службу" error={showErrors && !form.transport}><option value="Нова пошта">Нова пошта</option><option value="Укрпошта">Укрпошта</option><option value="Делівері">Делівері</option><option value="Інше">Інше</option></StyledSelect></Field>{form.transport === "Інше" && <Field label="Назва служби *"><StyledInput placeholder="Вкажіть службу доставки" value={form.transport_custom} onChange={event => set("transport_custom", event.target.value)} error={showErrors && !form.transport_custom.trim()} /></Field>}<div className={form.transport === "Інше" ? "sm:col-span-2" : "sm:col-span-2"}><Field label="Місто, відділення або адреса *"><StyledInput placeholder="Напр. Хмельницький, відділення №5" value={form.delivery_address} onChange={event => set("delivery_address", event.target.value)} error={showErrors && !form.delivery_address.trim()} /></Field></div></div>}
-                    <div className="mt-5"><Field label="Коли потрібен кошик?"><StyledInput type="date" value={form.delivery_date} onChange={event => set("delivery_date", event.target.value)} /></Field></div>
+                    <div className="mt-5">
+                      <Field label={`${deliveryDateLabel} *`}>
+                        <p className="mb-2 text-xs leading-5" style={{ color: "#6e6e73" }}>Оберіть орієнтовну дату. Менеджер підтвердить її після перевірки замовлення та виробничого графіка.</p>
+                        <button type="button" onClick={() => setShowCalendar(true)} className="catalog-secondary w-full flex items-center gap-2 text-left" style={{ minHeight: 52, color: form.delivery_date ? "#26322d" : "#8a9690", borderColor: showErrors && !form.delivery_date ? "#c2413b" : undefined }}>
+                          <span style={{ color: "#173d31", flexShrink: 0 }}><IconCalendar /></span>
+                          {form.delivery_date ? formatDeliveryDate(form.delivery_date) : "Оберіть дату"}
+                        </button>
+                        <ErrorText visible={showErrors && !form.delivery_date}>Оберіть дату.</ErrorText>
+                      </Field>
+                    </div>
                   </section>
 
                   <section className="catalog-section">
