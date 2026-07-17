@@ -143,10 +143,11 @@ function formatTelegramMessage(order) {
   const e = (v) => escHtml(v);
   const num = (v) => Number(v || 0).toLocaleString("uk-UA");
   const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
+    basket_model: order.basket_model, basket_model_name: order.basket_model_name,
     basket_type: order.basket_type, construction_type: order.construction_type,
     color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
     size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
-    ac_brand: order.ac_brand, ac_model: order.ac_model,
+    ac_brand: order.ac_brand, ac_model: order.ac_model, ac_model_url: order.ac_model_url,
     price_total: order.price_total, area_m2: order.area_m2, cost_total: order.cost_total,
     has_cover: order.has_cover, basket_area_m2: order.basket_area_m2, cover_area_m2: order.cover_area_m2,
     basket_cost_per_m2: order.basket_cost_per_m2, cover_cost_per_m2: order.cover_cost_per_m2,
@@ -170,12 +171,14 @@ function formatTelegramMessage(order) {
     const color = it.color ? e(it.color) + (it.color_custom ? " (" + e(it.color_custom) + ")" : "") : "";
     const pattern = it.pattern ? e(it.pattern) + (it.pattern_custom ? " (" + e(it.pattern_custom) + ")" : "") : "";
     if (multi) msg += `\n🧺 <b>Кошик ${i + 1}</b>\n`;
+    if (it.basket_model_name || it.basket_model) msg += `• Модель: <b>${e(it.basket_model_name || it.basket_model)}</b>\n`;
     msg += `• Тип: <b>${e(it.basket_type)}</b>\n`;
     msg += `• Конструкція: <b>${e(it.construction_type)}</b>\n`;
     if (it.has_cover) msg += `• Верхня кришка: <b>Так</b>\n`;
     if (color) msg += `• Колір: <b>${color}</b>\n`;
     if (pattern) msg += `• Візерунок: <b>${pattern}</b>\n`;
     if (it.ac_brand || it.ac_model) msg += `• Кондиціонер: <b>${e([it.ac_brand, it.ac_model].filter(Boolean).join(" "))}</b>\n`;
+    if (it.ac_model_url) msg += `• Посилання на кондиціонер: ${e(it.ac_model_url)}\n`;
     if (Number(it.size_w) > 0) {
       msg += `• Розміри (мм):\n   Висота — <b>${it.size_h}</b>\n   Ширина — <b>${it.size_w}</b>\n   Глибина — <b>${it.size_d}</b>\n`;
     } else {
@@ -197,10 +200,12 @@ function formatTelegramMessage(order) {
     if (grandCost > 0) msg += `• <b>Разом виробнича: ${num(grandCost)} ₴</b>\n`;
   } else {
     const it = items[0], b = productionBreakdown(it), cost = Number(it.cost_total) || b.total;
+    grandCost = cost;
     if (b.basketCost > 0) msg += `• Кошик: ${b.basketArea.toFixed(2)} м² × <b>${num(b.basketRate)} ₴/м²</b> = <b>${num(b.basketCost)} ₴</b>\n`;
     if (b.coverCost > 0) msg += `• Верхня кришка: ${b.coverArea.toFixed(2)} м² × <b>${num(b.coverRate)} ₴/м²</b> = <b>${num(b.coverCost)} ₴</b>\n`;
     if (cost > 0) msg += `• Вартість виробнича: <b>${num(cost)} ₴</b>\n`;
   }
+  if (grandCost === 0) msg += `• <i>Потрібен індивідуальний прорахунок менеджера</i>\n`;
   if (order.payment_method) msg += `• Оплата: <b>${e(order.payment_method)}</b>\n`;
 
   // ── ДОСТАВКА ──
@@ -223,10 +228,11 @@ function formatTelegramMessage(order) {
 function formatProductionMessage(order) {
   const e = (v) => escHtml(v);
   const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
+    basket_model: order.basket_model, basket_model_name: order.basket_model_name,
     basket_type: order.basket_type, construction_type: order.construction_type,
     color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
     size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
-    ac_brand: order.ac_brand, ac_model: order.ac_model,
+    ac_brand: order.ac_brand, ac_model: order.ac_model, ac_model_url: order.ac_model_url,
   }];
   let msg = `🏭 <b>ДЛЯ ВИРОБНИЦТВА</b> · ${e(order.order_number)}\n`;
   items.forEach((it, i) => {
@@ -236,7 +242,9 @@ function formatProductionMessage(order) {
     const size = Number(it.size_w) > 0
       ? `${it.size_w}×${it.size_h}×${it.size_d} мм (Ш×В×Г)`
       : `⚠️ розмір визначити${(it.ac_brand || it.ac_model) ? " — " + e([it.ac_brand, it.ac_model].filter(Boolean).join(" ")) : ""}`;
-    msg += `\n${i + 1}. <b>${size}</b>\n   ${e(constr)}, ${e(color)}, візерунок ${e(pattern)}${it.has_cover ? ", <b>з верхньою кришкою</b>" : ""}, <b>${it.quantity} шт.</b>\n`;
+    const model = it.basket_model_name || it.basket_model;
+    msg += `\n${i + 1}. <b>${model ? e(model) + " · " : ""}${size}</b>\n   ${e(constr)}, ${e(color)}, візерунок ${e(pattern)}${it.has_cover ? ", <b>з верхньою кришкою</b>" : ""}, <b>${it.quantity} шт.</b>\n`;
+    if (it.ac_model_url) msg += `   Посилання на кондиціонер: ${e(it.ac_model_url)}\n`;
   });
   return msg;
 }

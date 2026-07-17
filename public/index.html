@@ -272,6 +272,97 @@
     const MARKUP = 1 / (1 - MARGIN);     // ~1.35 multiplier
     const COMPLEX_PATTERNS = ["K3", "K4", "K6", "K8", "K9"];
 
+    // Каталог моделей. Ці дані керують картками й заявкою, а не цінами для клієнта.
+    const CATALOG_MODELS = [
+      {
+        id: "AVL-02",
+        name: "Екран під утеплювач",
+        fullName: "Екран на кронштейнах під утеплювач",
+        image: "images/basket-models/avl-02-insulation-screen.jpg",
+        construction: "Суцільний",
+        defaultCover: false,
+        summary: "Монтаж на кронштейни до або під час утеплення фасаду.",
+        benefits: ["Зручний монтаж до утеплення", "Вільний доступ для сервісу", "Підбір за блоком або розмірами"],
+        mounting: "Кронштейни на фасаді"
+      },
+      {
+        id: "AVL-03",
+        name: "Універсальний",
+        fullName: "Універсальний кошик",
+        image: "images/basket-models/avl-03-universal.jpg",
+        construction: "Суцільний",
+        defaultCover: false,
+        summary: "Базова модель для більшості фасадних зовнішніх блоків.",
+        benefits: ["Підходить для типового монтажу", "Вибір кришки та візерунка", "Підбір під конкретний кондиціонер"],
+        mounting: "Фасад або кронштейни"
+      },
+      {
+        id: "AVL-04",
+        name: "Зі знімною боковиною",
+        fullName: "Суцільний кошик зі знімною боковою частиною",
+        image: "images/basket-models/avl-04-removable-side.jpg",
+        construction: "Суцільний",
+        defaultCover: false,
+        summary: "Доступ до зовнішнього блоку без демонтажу всієї конструкції.",
+        benefits: ["Знімна боковина для обслуговування", "Суцільна жорстка конструкція", "Декоративні візерунки"],
+        mounting: "Фасад або кронштейни"
+      },
+      {
+        id: "AVL-05",
+        name: "Розбірний",
+        fullName: "Розбірний кошик",
+        image: "images/basket-models/avl-05-disassembled.jpg",
+        construction: "Розбірний (з 3-х частин)",
+        defaultCover: false,
+        summary: "Зручний для монтажу там, де суцільну конструкцію складно занести або встановити.",
+        benefits: ["Постачається частинами", "Зручно для складного доступу", "Збирається на місці"],
+        mounting: "Фасад або кронштейни"
+      },
+      {
+        id: "AVL-06",
+        name: "Ламель з кришкою",
+        fullName: "Суцільний ламельний кошик з кришкою",
+        image: "images/basket-models/avl-06-lamella-cover.jpg",
+        construction: "Суцільний",
+        defaultCover: true,
+        summary: "Ламельний фасад і захист зверху як єдина готова модель.",
+        benefits: ["Верхня кришка вже передбачена", "Ламельний фасад", "Захист від опадів"],
+        mounting: "Фасад або кронштейни"
+      },
+      {
+        id: "AVL-07",
+        name: "Закритий на підставці",
+        fullName: "Закритий з усіх сторін на підставці",
+        image: "images/basket-models/avl-07-stand.jpg",
+        construction: "Суцільний",
+        defaultCover: true,
+        summary: "Самостійна конструкція для розміщення зовнішнього блоку на опорах.",
+        benefits: ["Закритий з усіх сторін", "Стійка підставка", "Захист зверху"],
+        mounting: "На горизонтальну основу"
+      },
+      {
+        id: "AVL-08",
+        name: "Горизонтальний монтаж",
+        fullName: "Закритий кошик для монтажу на горизонтальну площу",
+        image: "images/basket-models/avl-08-horizontal.jpg",
+        construction: "Суцільний",
+        defaultCover: true,
+        summary: "Закрита модель для даху, тераси, балкона або іншої горизонтальної площини.",
+        benefits: ["Закритий з усіх сторін", "Верхня кришка", "Кріплення до горизонтальної основи"],
+        mounting: "Горизонтальна площина"
+      }
+    ];
+
+    const CATALOG_COLORS = [
+      { label: "Білий (9016)", hex: "#F3F3F3" },
+      { label: "Сірий (7016)", hex: "#373F43" },
+      { label: "Графіт (7024)", hex: "#4B5054" },
+      { label: "Чорний (9005)", hex: "#0A0A0A" },
+      { label: "Коричневий (8017)", hex: "#45312B" },
+      { label: "Зелений (6005)", hex: "#0D3A2C" },
+      { label: "Інший RAL", hex: null }
+    ];
+
     function calcPrice({ construction_type, basket_type, quantity, size_w, size_h, size_d, pattern, has_cover }) {
       const w = Number(size_w) || 0;
       const h = Number(size_h) || 0;
@@ -2259,9 +2350,427 @@
     }
 
     // ============================================================
+    // МІНІКАТАЛОГ І ЗАЯВКА НА ПРОРАХУНОК
+    // ============================================================
+    function CatalogOrderForm() {
+      const baseForm = {
+        first_name: "", last_name: "", phone: "", city: "",
+        basket_model: "", basket_model_name: "", construction_type: "", basket_type: "Декоративний",
+        quantity: "1", has_cover: false, color: "", color_custom: "", pattern: "", pattern_custom: "",
+        size_w: "", size_h: "", size_d: "", block_w: "", block_h: "", block_d: "",
+        ac_brand: "", ac_model: "", ac_model_url: "",
+        transport: "Уточнити з менеджером", transport_custom: "", delivery_address: "", delivery_location: "manager",
+        delivery_date: "", payment_method: "Уточнити з менеджером", how_found: "", how_found_custom: "",
+        notes: "", terms_accepted: false, referral_source: "direct"
+      };
+      const [form, setForm] = useState(() => {
+        const draft = loadDraft();
+        return draft ? { ...baseForm, ...draft, terms_accepted: false } : baseForm;
+      });
+      const [items, setItems] = useState(() => loadDraftItems());
+      const [view, setView] = useState("catalog");
+      const [selectedModelId, setSelectedModelId] = useState("");
+      const [measureMode, setMeasureMode] = useState("ac");
+      const [acDims, setAcDims] = useState({ w: "", h: "", d: "" });
+      const [coversBrackets, setCoversBrackets] = useState(null);
+      const [patternFile, setPatternFile] = useState(null);
+      const [showErrors, setShowErrors] = useState(false);
+      const [submitting, setSubmitting] = useState(false);
+      const submittingRef = useRef(false);
+      const [submitted, setSubmitted] = useState(false);
+      const [toast, setToast] = useState(null);
+
+      const selectedModel = CATALOG_MODELS.find(model => model.id === selectedModelId);
+      const set = (field, value) => setForm(current => ({ ...current, [field]: value }));
+      const scrollTop = () => setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 0);
+      const goTo = (next) => { setView(next); scrollTop(); };
+
+      useEffect(() => {
+        try {
+          const ref = new URLSearchParams(window.location.search).get("ref");
+          setForm(current => ({ ...current, referral_source: ref && ref.trim() ? ref.trim().slice(0, 60) : "direct" }));
+        } catch (e) { /* ignore */ }
+      }, []);
+
+      useEffect(() => {
+        const timer = setTimeout(() => {
+          const { terms_accepted, ...draft } = form;
+          const hasData = Object.values(draft).some(value => String(value || "").trim());
+          if (hasData || items.length) saveDraft(draft);
+          else clearDraft();
+        }, 500);
+        return () => clearTimeout(timer);
+      }, [form, items]);
+
+      useEffect(() => { saveDraftItems(items); }, [items]);
+
+      useEffect(() => {
+        if (measureMode !== "ac") return;
+        const calculated = basketFromAC({
+          ac_w: acDims.w,
+          ac_h: acDims.h,
+          ac_d: acDims.d,
+          coversBrackets: coversBrackets === true
+        });
+        setForm(current => ({
+          ...current,
+          block_w: acDims.w,
+          block_h: acDims.h,
+          block_d: acDims.d,
+          size_w: calculated ? calculated.size_w : "",
+          size_h: calculated ? calculated.size_h : "",
+          size_d: calculated ? calculated.size_d : ""
+        }));
+      }, [measureMode, acDims, coversBrackets]);
+
+      const selectModel = (model) => {
+        setSelectedModelId(model.id);
+        setForm(current => ({
+          ...current,
+          basket_model: model.id,
+          basket_model_name: model.fullName,
+          construction_type: `${model.construction} · ${model.id}`,
+          basket_type: current.basket_type || "Декоративний",
+          has_cover: model.defaultCover
+        }));
+        goTo("model");
+      };
+
+      const changeMeasureMode = (mode) => {
+        setMeasureMode(mode);
+        setAcDims({ w: "", h: "", d: "" });
+        setCoversBrackets(null);
+        setForm(current => ({
+          ...current,
+          size_w: "", size_h: "", size_d: "", block_w: "", block_h: "", block_d: "",
+          ac_brand: "", ac_model: "", ac_model_url: ""
+        }));
+      };
+
+      const hasSize = candidate => Number(candidate.size_w) > 0 && Number(candidate.size_h) > 0 && Number(candidate.size_d) > 0;
+      const measurementIsComplete = () => {
+        if (measureMode === "basket") return hasSize(form);
+        if (measureMode === "ac") return coversBrackets !== null && hasSize(form);
+        if (measureMode === "model") return !!(form.ac_brand.trim() && form.ac_model.trim());
+        return !!form.ac_model_url.trim();
+      };
+      const colorIsComplete = () => !!(form.color && (form.color !== "Інший RAL" || form.color_custom.trim()));
+      const configuratorIsComplete = () => !!(
+        selectedModel && form.basket_type && colorIsComplete() && form.pattern &&
+        (form.pattern !== "Інший" || form.pattern_custom.trim()) && Number(form.quantity) >= 1 && measurementIsComplete()
+      );
+
+      const buildItem = () => {
+        return {
+          basket_model: selectedModel.id,
+          basket_model_name: selectedModel.fullName,
+          construction_type: `${selectedModel.construction} · ${selectedModel.id}`,
+          basket_type: form.basket_type,
+          color: form.color,
+          color_custom: form.color_custom,
+          pattern: form.pattern,
+          pattern_custom: form.pattern_custom,
+          has_cover: !!form.has_cover,
+          size_mode: measureMode,
+          size_w: Number(form.size_w) || 0,
+          size_h: Number(form.size_h) || 0,
+          size_d: Number(form.size_d) || 0,
+          block_w: Number(form.block_w) || 0,
+          block_h: Number(form.block_h) || 0,
+          block_d: Number(form.block_d) || 0,
+          ac_brand: form.ac_brand.trim(),
+          ac_model: form.ac_model.trim(),
+          ac_model_url: form.ac_model_url.trim(),
+          covers_brackets: coversBrackets === true,
+          quantity: Number(form.quantity) || 1,
+          // Це заявка на індивідуальний прорахунок: автоматичну ціну не передаємо.
+          quote_required: true,
+          price_total: 0, price_per_unit: 0, price_per_m2: 0, area_m2: 0,
+          cost_total: 0, profit: 0, basket_area_m2: 0, cover_area_m2: 0,
+          basket_cost_per_m2: 0, cover_cost_per_m2: 0,
+          basket_cost_total: 0, cover_cost_total: 0
+        };
+      };
+
+      const resetConfigurator = () => {
+        setSelectedModelId("");
+        setMeasureMode("ac");
+        setAcDims({ w: "", h: "", d: "" });
+        setCoversBrackets(null);
+        setShowErrors(false);
+        setForm(current => ({
+          ...current,
+          basket_model: "", basket_model_name: "", construction_type: "", basket_type: "Декоративний",
+          quantity: "1", has_cover: false, color: "", color_custom: "", pattern: "", pattern_custom: "",
+          size_w: "", size_h: "", size_d: "", block_w: "", block_h: "", block_d: "",
+          ac_brand: "", ac_model: "", ac_model_url: ""
+        }));
+      };
+
+      const addToRequest = () => {
+        if (!configuratorIsComplete()) {
+          setShowErrors(true);
+          setToast({ type: "error", message: "Оберіть параметри моделі й спосіб визначення розміру." });
+          return;
+        }
+        setItems(current => [...current, buildItem()]);
+        setToast({ type: "success", message: "Модель додано до заявки на прорахунок." });
+        resetConfigurator();
+        goTo("catalog");
+      };
+
+      const removeItem = (index) => setItems(current => current.filter((_, itemIndex) => itemIndex !== index));
+      const contactsValid = form.first_name.trim() && isValidPhoneUA(form.phone) && form.terms_accepted;
+      const canSubmit = items.length > 0 && contactsValid;
+
+      const submitRequest = async (event) => {
+        event.preventDefault();
+        if (submittingRef.current) return;
+        if (!canSubmit) {
+          setShowErrors(true);
+          setToast({ type: "error", message: items.length ? "Вкажіть ім'я, номер телефону та підтвердіть умови." : "Додайте щонайменше одну модель до заявки." });
+          return;
+        }
+        submittingRef.current = true;
+        setSubmitting(true);
+        let patternFilePayload = null;
+        try {
+          patternFilePayload = await fileToOrderPayload(patternFile);
+          const first = items[0];
+          await submitOrder({
+            first_name: form.first_name.trim(), last_name: form.last_name.trim(), phone: form.phone.trim(), city: form.city.trim(),
+            transport: form.transport, transport_custom: form.transport_custom, delivery_address: form.delivery_address.trim(),
+            delivery_location: form.delivery_location, delivery_date: form.delivery_date, payment_method: form.payment_method,
+            how_found: form.how_found, how_found_custom: form.how_found_custom, notes: form.notes.trim(),
+            referral_source: form.referral_source || "direct", items, quote_required: true,
+            price_total: 0, prepayment: 0, cost_total: 0, profit: 0,
+            pattern_file: patternFilePayload,
+            basket_model: first.basket_model, basket_model_name: first.basket_model_name,
+            construction_type: first.construction_type, basket_type: first.basket_type, color: first.color, color_custom: first.color_custom,
+            pattern: first.pattern, pattern_custom: first.pattern_custom, has_cover: first.has_cover,
+            size_w: first.size_w, size_h: first.size_h, size_d: first.size_d, quantity: first.quantity,
+            ac_brand: first.ac_brand, ac_model: first.ac_model, ac_model_url: first.ac_model_url,
+            block_w: first.block_w, block_h: first.block_h, block_d: first.block_d
+          });
+          setSubmitted(true);
+          clearDraft();
+          localStorage.removeItem(AUTOSAVE_ITEMS_KEY);
+        } catch (error) {
+          console.error(error);
+          setToast({ type: "error", message: error.message || "Не вдалося надіслати заявку. Спробуйте ще раз." });
+        } finally {
+          setSubmitting(false);
+          submittingRef.current = false;
+        }
+      };
+
+      const startNewRequest = () => {
+        setSubmitted(false);
+        setItems([]);
+        setPatternFile(null);
+        setSelectedModelId("");
+        setMeasureMode("ac");
+        setAcDims({ w: "", h: "", d: "" });
+        setCoversBrackets(null);
+        setForm({ ...baseForm });
+        goTo("catalog");
+      };
+
+      const itemMeasurement = (item) => {
+        if (Number(item.size_w) > 0) return `${item.size_w} × ${item.size_h} × ${item.size_d} мм`;
+        if (item.size_mode === "url") return "Посилання на модель кондиціонера";
+        return [item.ac_brand, item.ac_model].filter(Boolean).join(" ") || "Розмір уточнить менеджер";
+      };
+
+      if (submitted) {
+        return (
+          <div className="min-h-screen flex items-center justify-center p-5" style={{ background: "#f4f5f3" }}>
+            <div className="w-full max-w-lg bg-white p-8 text-center" style={{ borderRadius: 8, border: "1px solid #dce1dc" }}>
+              <div className="mx-auto mb-5 flex items-center justify-center" style={{ width: 64, height: 64, borderRadius: "50%", background: "#173d31" }}><AvalonLogo size={38} /></div>
+              <h1 className="text-2xl font-bold" style={{ color: "#1f2925" }}>Заявку на прорахунок надіслано</h1>
+              <p className="mt-3 text-sm leading-6" style={{ color: "#59645e" }}>Менеджер перевірить параметри та зв'яжеться з вами для уточнення деталей.</p>
+              <button type="button" onClick={startNewRequest} className="mt-7 px-5 py-3 text-sm font-bold text-white" style={{ background: "#173d31", borderRadius: 6 }}>Створити ще одну заявку</button>
+            </div>
+          </div>
+        );
+      }
+
+      const Header = () => (
+        <header className="border-b" style={{ borderColor: "#dce1dc", background: "#ffffff" }}>
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-3">
+            <button type="button" onClick={() => goTo("catalog")} className="flex items-center gap-3 text-left" aria-label="До каталогу моделей">
+              <div style={{ width: 38, height: 38, borderRadius: 6, background: "#173d31" }} className="flex items-center justify-center"><AvalonLogo size={26} /></div>
+              <div><div className="font-bold text-sm tracking-wide" style={{ color: "#173d31" }}>AVALON</div><div className="text-xs" style={{ color: "#6a736e" }}>Кошики для кондиціонерів</div></div>
+            </button>
+            <button type="button" onClick={() => goTo("request")} className="px-3 sm:px-4 py-2 text-sm font-bold" style={{ border: "1px solid #173d31", borderRadius: 6, color: "#173d31", background: "#fff" }}>
+              Заявка <span style={{ color: "#8f7340" }}>({items.length})</span>
+            </button>
+          </div>
+        </header>
+      );
+
+      const ErrorText = ({ visible, children }) => visible ? <p className="mt-1 text-xs font-semibold" style={{ color: "#c2413b" }}>{children}</p> : null;
+      const MeasureChoice = ({ id, title, description }) => (
+        <button type="button" onClick={() => changeMeasureMode(id)} className="text-left p-3" style={{ border: measureMode === id ? "2px solid #173d31" : "1px solid #d5dbd6", background: measureMode === id ? "#edf5f0" : "#fff", borderRadius: 6 }}>
+          <div className="font-bold text-sm" style={{ color: "#26322d" }}>{title}</div><div className="mt-1 text-xs leading-5" style={{ color: "#66716b" }}>{description}</div>
+        </button>
+      );
+
+      return (
+        <div className="min-h-screen" style={{ background: "#f4f5f3" }}>
+          {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+          <HelpWidget />
+          <Header />
+
+          {view === "catalog" && (
+            <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+              <section className="max-w-2xl mb-8 sm:mb-10">
+                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#8f7340" }}>Каталог моделей</p>
+                <h1 className="mt-2 text-3xl sm:text-4xl font-bold" style={{ color: "#1f2925" }}>Оберіть кошик для свого кондиціонера</h1>
+                <p className="mt-3 text-base leading-7" style={{ color: "#5c6861" }}>Відкрийте модель, перегляньте її особливості та додайте параметри для індивідуального прорахунку.</p>
+              </section>
+              <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Моделі кошиків">
+                {CATALOG_MODELS.map(model => (
+                  <button key={model.id} type="button" onClick={() => selectModel(model)} className="text-left overflow-hidden bg-white" style={{ border: "1px solid #dce1dc", borderRadius: 8, boxShadow: "0 2px 12px rgba(31,41,37,.05)" }}>
+                    <img src={model.image} alt={model.fullName} className="block w-full" style={{ aspectRatio: "4 / 3", objectFit: "cover", background: "#eff1ef" }} />
+                    <div className="p-4">
+                      <div className="text-xs font-bold tracking-widest" style={{ color: "#8f7340" }}>{model.id}</div>
+                      <h2 className="mt-1 text-lg font-bold" style={{ color: "#1f2925" }}>{model.name}</h2>
+                      <p className="mt-2 text-sm leading-5" style={{ color: "#66716b" }}>{model.summary}</p>
+                      <div className="mt-4 text-sm font-bold" style={{ color: "#173d31" }}>Переглянути модель <span aria-hidden="true">→</span></div>
+                    </div>
+                  </button>
+                ))}
+              </section>
+              <section className="mt-10 grid gap-4 md:grid-cols-2 py-6 border-y" style={{ borderColor: "#dce1dc" }}>
+                <div><h2 className="font-bold" style={{ color: "#26322d" }}>Не знаєте, яка модель потрібна?</h2><p className="mt-1 text-sm leading-6" style={{ color: "#66716b" }}>Оберіть будь-яку схожу модель. Менеджер допоможе підібрати остаточне рішення.</p></div>
+                <div className="flex flex-wrap gap-2 md:justify-end md:items-center"><a className="call-btn" href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> {SETTINGS.phone_contact}</a><a className="tg-btn" href="https://t.me/avalon_metal_design" target="_blank" rel="noopener noreferrer"><IconMessageCircle /> Написати в Telegram</a></div>
+              </section>
+            </main>
+          )}
+
+          {view === "model" && selectedModel && (
+            <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
+              <button type="button" onClick={() => goTo("catalog")} className="text-sm font-semibold mb-5" style={{ color: "#173d31" }}>← Усі моделі</button>
+              <section className="grid gap-7 lg:grid-cols-2 items-start">
+                <img src={selectedModel.image} alt={selectedModel.fullName} className="w-full bg-white" style={{ aspectRatio: "4 / 3", objectFit: "cover", borderRadius: 8, border: "1px solid #dce1dc" }} />
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#8f7340" }}>{selectedModel.id}</p>
+                  <h1 className="mt-2 text-3xl font-bold" style={{ color: "#1f2925" }}>{selectedModel.fullName}</h1>
+                  <p className="mt-4 text-base leading-7" style={{ color: "#5c6861" }}>{selectedModel.summary}</p>
+                  <dl className="mt-6 grid gap-3 sm:grid-cols-2">
+                    <div className="py-3 border-t" style={{ borderColor: "#dce1dc" }}><dt className="text-xs font-bold uppercase tracking-wider" style={{ color: "#8f7340" }}>Монтаж</dt><dd className="mt-1 text-sm font-semibold" style={{ color: "#26322d" }}>{selectedModel.mounting}</dd></div>
+                    <div className="py-3 border-t" style={{ borderColor: "#dce1dc" }}><dt className="text-xs font-bold uppercase tracking-wider" style={{ color: "#8f7340" }}>Конструкція</dt><dd className="mt-1 text-sm font-semibold" style={{ color: "#26322d" }}>{selectedModel.construction}</dd></div>
+                  </dl>
+                  <ul className="mt-3 space-y-2 text-sm" style={{ color: "#46514b" }}>{selectedModel.benefits.map(benefit => <li key={benefit}>✓ {benefit}</li>)}</ul>
+                </div>
+              </section>
+
+              <section className="mt-10 bg-white p-5 sm:p-7" style={{ border: "1px solid #dce1dc", borderRadius: 8 }}>
+                <div className="flex flex-wrap items-end justify-between gap-3 border-b pb-5" style={{ borderColor: "#dce1dc" }}>
+                  <div><p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#8f7340" }}>Параметри</p><h2 className="mt-1 text-2xl font-bold" style={{ color: "#1f2925" }}>Додайте модель до прорахунку</h2></div>
+                  <span className="text-sm font-semibold px-3 py-1.5" style={{ background: "#edf5f0", color: "#173d31", borderRadius: 999 }}>{selectedModel.id}</span>
+                </div>
+
+                <div className="mt-7 grid gap-8 lg:grid-cols-2">
+                  <div className="space-y-7">
+                    <div>
+                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Виконання</h3>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        {[{ value: "Декоративний", label: "Декоративний" }, { value: "Антивандальний (більша товщина металу+ каркас)", label: "Антивандальний" }].map(option => (
+                          <button key={option.value} type="button" onClick={() => set("basket_type", option.value)} className="py-3 px-3 text-sm font-semibold" style={{ border: form.basket_type === option.value ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.basket_type === option.value ? "#edf5f0" : "#fff", color: "#26322d", borderRadius: 6 }}>{option.label}</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Колір</h3>
+                      <p className="mt-1 text-xs" style={{ color: "#66716b" }}>Натисніть на потрібний RAL.</p>
+                      <div className="mt-3 flex flex-wrap gap-3">
+                        {CATALOG_COLORS.map(color => <button key={color.label} type="button" title={color.label} aria-label={color.label} onClick={() => { set("color", color.label); set("color_custom", ""); }} className="flex items-center justify-center" style={{ width: 48, height: 48, borderRadius: "50%", background: color.hex || "#fff", border: form.color === color.label ? "3px solid #173d31" : color.hex === "#F3F3F3" ? "1px solid #adb6af" : "1px solid transparent", boxShadow: form.color === color.label ? "0 0 0 3px #cddbd2" : "0 1px 4px rgba(0,0,0,.15)" }}>{color.hex ? <span className="sr-only">{color.label}</span> : <span className="text-xs font-bold" style={{ color: "#173d31" }}>RAL</span>}</button>)}
+                      </div>
+                      <div className="mt-3 text-sm font-semibold" style={{ color: form.color ? "#26322d" : "#9aa49d" }}>{form.color || "Оберіть колір"}</div>
+                      {form.color === "Інший RAL" && <StyledInput className="mt-3" placeholder="Вкажіть номер RAL або опишіть колір" value={form.color_custom} onChange={event => set("color_custom", event.target.value)} error={showErrors && !form.color_custom.trim()} />}
+                      <ErrorText visible={showErrors && !colorIsComplete()}>Оберіть колір.</ErrorText>
+                    </div>
+
+                    <div>
+                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Візерунок</h3>
+                      <div className="mt-3 grid grid-cols-4 sm:grid-cols-6 gap-2">
+                        {SETTINGS.patterns.map(pattern => <button key={pattern} type="button" onClick={() => { set("pattern", pattern); if (pattern !== "Інший") set("pattern_custom", ""); }} className="py-2 text-sm font-bold" style={{ border: form.pattern === pattern ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.pattern === pattern ? "#173d31" : "#fff", color: form.pattern === pattern ? "#fff" : "#26322d", borderRadius: 6 }}>{pattern}</button>)}
+                      </div>
+                      <details className="mt-3"><summary className="cursor-pointer text-sm font-semibold" style={{ color: "#173d31" }}>Переглянути всі візерунки</summary><img className="mt-4 w-full" src={SETTINGS.pattern_image_url} alt="Візерунки кошиків" style={{ border: "1px solid #dce1dc", borderRadius: 6 }} /></details>
+                      {form.pattern === "Інший" && <div className="mt-3 space-y-3"><StyledInput placeholder="Опишіть бажаний візерунок" value={form.pattern_custom} onChange={event => set("pattern_custom", event.target.value)} error={showErrors && !form.pattern_custom.trim()} /><label htmlFor="catalog-pattern-file" className="upload-zone block text-sm font-semibold" style={{ borderRadius: 6 }}><span className="inline-flex items-center gap-2"><IconUpload /> {patternFile ? patternFile.name : "Додати ескіз або фото"}</span></label><input id="catalog-pattern-file" type="file" className="hidden" accept="image/*,.pdf" onChange={event => setPatternFile(event.target.files?.[0] || null)} /></div>}
+                      <ErrorText visible={showErrors && (!form.pattern || (form.pattern === "Інший" && !form.pattern_custom.trim()))}>Оберіть або опишіть візерунок.</ErrorText>
+                    </div>
+                  </div>
+
+                  <div className="space-y-7">
+                    <div>
+                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Верхня кришка</h3>
+                      {selectedModel.defaultCover ? <p className="mt-3 text-sm font-semibold p-3" style={{ color: "#173d31", background: "#edf5f0", borderRadius: 6 }}>Передбачена конструкцією цієї моделі.</p> : <div className="mt-3 grid grid-cols-2 gap-2">{[{ value: false, label: "Без кришки" }, { value: true, label: "З кришкою" }].map(option => <button key={String(option.value)} type="button" onClick={() => set("has_cover", option.value)} className="py-3 px-3 text-sm font-semibold" style={{ border: form.has_cover === option.value ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.has_cover === option.value ? "#edf5f0" : "#fff", color: "#26322d", borderRadius: 6 }}>{option.label}</button>)}</div>}
+                    </div>
+
+                    <div>
+                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Як визначити розмір?</h3>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <MeasureChoice id="basket" title="За розмірами кошика" description="Якщо готові габарити вже відомі." />
+                        <MeasureChoice id="ac" title="За розмірами блоку" description="Вкажіть габарити зовнішнього блоку." />
+                        <MeasureChoice id="model" title="За брендом і моделлю" description="Менеджер підбере габарити." />
+                        <MeasureChoice id="url" title="За посиланням" description="Вставте сторінку моделі кондиціонера." />
+                      </div>
+                    </div>
+
+                    {measureMode === "basket" && <div className="grid grid-cols-3 gap-2"><Field label="Ширина, мм"><StyledInput type="number" min="1" value={form.size_w} onChange={event => set("size_w", event.target.value)} error={showErrors && !hasSize(form)} /></Field><Field label="Висота, мм"><StyledInput type="number" min="1" value={form.size_h} onChange={event => set("size_h", event.target.value)} error={showErrors && !hasSize(form)} /></Field><Field label="Глибина, мм"><StyledInput type="number" min="1" value={form.size_d} onChange={event => set("size_d", event.target.value)} error={showErrors && !hasSize(form)} /></Field></div>}
+
+                    {measureMode === "ac" && <div className="space-y-3"><p className="text-sm leading-6" style={{ color: "#66716b" }}>Вкажіть габарити зовнішнього блоку. Ми додамо необхідний запас для монтажу.</p><div className="grid grid-cols-3 gap-2"><Field label="Ширина, мм"><StyledInput type="number" min="1" value={acDims.w} onChange={event => setAcDims(current => ({ ...current, w: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Висота, мм"><StyledInput type="number" min="1" value={acDims.h} onChange={event => setAcDims(current => ({ ...current, h: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Глибина, мм"><StyledInput type="number" min="1" value={acDims.d} onChange={event => setAcDims(current => ({ ...current, d: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field></div><div className="grid grid-cols-2 gap-2">{[{ value: true, label: "Закрити кронштейни" }, { value: false, label: "Не закривати кронштейни" }].map(option => <button key={String(option.value)} type="button" onClick={() => setCoversBrackets(option.value)} className="py-3 px-3 text-sm font-semibold" style={{ border: coversBrackets === option.value ? "2px solid #173d31" : "1px solid #d5dbd6", background: coversBrackets === option.value ? "#edf5f0" : "#fff", color: "#26322d", borderRadius: 6 }}>{option.label}</button>)}</div></div>}
+
+                    {measureMode === "model" && <div className="grid gap-3 sm:grid-cols-2"><Field label="Бренд кондиціонера"><StyledInput placeholder="Напр. Daikin" value={form.ac_brand} onChange={event => set("ac_brand", event.target.value)} error={showErrors && !measurementIsComplete()} /></Field><Field label="Модель кондиціонера"><StyledInput placeholder="Напр. FTXF35" value={form.ac_model} onChange={event => set("ac_model", event.target.value)} error={showErrors && !measurementIsComplete()} /></Field></div>}
+
+                    {measureMode === "url" && <Field label="Посилання на модель кондиціонера"><StyledInput type="url" placeholder="https://..." value={form.ac_model_url} onChange={event => set("ac_model_url", event.target.value)} error={showErrors && !measurementIsComplete()} /></Field>}
+                    <ErrorText visible={showErrors && !measurementIsComplete()}>Заповніть обраний спосіб визначення розміру.</ErrorText>
+
+                    <Field label="Кількість, шт."><StyledInput type="number" min="1" value={form.quantity} onChange={event => set("quantity", event.target.value)} error={showErrors && !(Number(form.quantity) >= 1)} /></Field>
+                  </div>
+                </div>
+                <div className="mt-8 pt-5 border-t flex flex-col-reverse sm:flex-row gap-3 sm:items-center sm:justify-between" style={{ borderColor: "#dce1dc" }}>
+                  <p className="text-sm" style={{ color: "#66716b" }}>Вартість визначить менеджер після перевірки параметрів.</p>
+                  <button type="button" onClick={addToRequest} className="px-5 py-3 text-sm font-bold text-white" style={{ background: "#173d31", borderRadius: 6 }}>Додати до заявки на прорахунок</button>
+                </div>
+              </section>
+            </main>
+          )}
+
+          {view === "request" && (
+            <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
+              <div className="flex flex-wrap items-end justify-between gap-4 border-b pb-5" style={{ borderColor: "#dce1dc" }}><div><p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#8f7340" }}>Ваша заявка</p><h1 className="mt-1 text-3xl font-bold" style={{ color: "#1f2925" }}>Прорахунок кошиків</h1></div><button type="button" onClick={() => goTo("catalog")} className="text-sm font-bold" style={{ color: "#173d31" }}>+ Додати ще модель</button></div>
+
+              {items.length === 0 ? <section className="py-16 text-center"><p className="text-lg font-semibold" style={{ color: "#26322d" }}>У заявці поки немає моделей.</p><button type="button" onClick={() => goTo("catalog")} className="mt-4 px-5 py-3 text-sm font-bold text-white" style={{ background: "#173d31", borderRadius: 6 }}>Перейти до каталогу</button></section> : <>
+                <section className="mt-6 grid gap-3" aria-label="Моделі у заявці">{items.map((item, index) => <article key={`${item.basket_model}-${index}`} className="flex gap-4 bg-white p-4" style={{ border: "1px solid #dce1dc", borderRadius: 8 }}><img src={CATALOG_MODELS.find(model => model.id === item.basket_model)?.image} alt="" className="hidden sm:block" style={{ width: 112, height: 84, objectFit: "cover", borderRadius: 5, background: "#eff1ef" }} /><div className="min-w-0 flex-1"><div className="text-xs font-bold tracking-widest" style={{ color: "#8f7340" }}>{item.basket_model}</div><h2 className="mt-1 font-bold" style={{ color: "#26322d" }}>{item.basket_model_name}</h2><p className="mt-1 text-sm" style={{ color: "#66716b" }}>{itemMeasurement(item)} · {item.quantity} шт.</p><p className="mt-1 text-xs" style={{ color: "#66716b" }}>{[item.basket_type, item.color_custom ? `${item.color}: ${item.color_custom}` : item.color, item.pattern_custom ? `${item.pattern}: ${item.pattern_custom}` : item.pattern, item.has_cover ? "з кришкою" : null].filter(Boolean).join(" · ")}</p></div><button type="button" onClick={() => removeItem(index)} aria-label={`Видалити ${item.basket_model_name}`} className="self-start p-2 text-sm font-bold" style={{ color: "#b54842" }}>Видалити</button></article>)}</section>
+
+                <form className="mt-10" onSubmit={submitRequest} noValidate>
+                  <section className="bg-white p-5 sm:p-7" style={{ border: "1px solid #dce1dc", borderRadius: 8 }}>
+                    <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#8f7340" }}>Контакти</p><h2 className="mt-1 text-2xl font-bold" style={{ color: "#1f2925" }}>Куди надіслати відповідь?</h2>
+                    <div className="mt-6 grid gap-4 sm:grid-cols-2"><Field label="Ваше ім'я *"><StyledInput placeholder="Ім'я" value={form.first_name} onChange={event => set("first_name", event.target.value)} error={showErrors && !form.first_name.trim()} /></Field><Field label="Телефон *"><StyledInput placeholder="+380 __ ___ __ __" value={form.phone} onChange={event => set("phone", formatPhoneUA(event.target.value))} error={showErrors && !isValidPhoneUA(form.phone)} /></Field><Field label="Місто"><StyledInput placeholder="Напр. Хмельницький" value={form.city} onChange={event => set("city", event.target.value)} /></Field><Field label="Бажаний спосіб отримання"><StyledSelect value={form.delivery_location} onChange={value => { const labels = { manager: "Уточнити з менеджером", local: "Доставка по Хмельницькому", remote: "Відправлення в інше місто", pickup: "Самовивіз" }; setForm(current => ({ ...current, delivery_location: value, transport: labels[value] })); }} placeholder="Оберіть спосіб"><option value="manager">Уточнити з менеджером</option><option value="local">Доставка по Хмельницькому</option><option value="remote">Відправлення в інше місто</option><option value="pickup">Самовивіз</option></StyledSelect></Field></div>
+                    {form.delivery_location === "remote" && <div className="mt-4"><Field label="Місто, відділення або адреса"><StyledInput placeholder="Вкажіть місто та дані для відправлення" value={form.delivery_address} onChange={event => set("delivery_address", event.target.value)} /></Field></div>}
+                    <div className="mt-4"><Field label="Коли потрібен кошик?"><StyledInput type="date" value={form.delivery_date} onChange={event => set("delivery_date", event.target.value)} /></Field></div>
+                    <div className="mt-5"><Field label="Коментар або питання"><textarea value={form.notes} onChange={event => set("notes", event.target.value)} placeholder="Наприклад: особливості фасаду, бажаний термін, потрібна допомога з вибором." rows="4" className="w-full p-3 text-sm" style={{ border: "1px solid #d1d5db", borderRadius: 6, resize: "vertical" }} /></Field></div>
+                    <label className="mt-6 flex gap-3 items-start cursor-pointer"><input type="checkbox" checked={form.terms_accepted} onChange={event => set("terms_accepted", event.target.checked)} className="mt-1" style={{ accentColor: "#173d31" }} /><span className="text-sm leading-6" style={{ color: "#3e4943" }}>Я ознайомився(лася) з умовами замовлення та погоджуюсь на зв'язок для прорахунку. *</span></label><ErrorText visible={showErrors && !form.terms_accepted}>Підтвердіть умови, щоб надіслати заявку.</ErrorText>
+                    <details className="mt-5 border-t pt-4" style={{ borderColor: "#dce1dc" }}><summary className="cursor-pointer text-sm font-semibold" style={{ color: "#173d31" }}>Умови замовлення</summary><div className="mt-3"><TermsBlock /></div></details>
+                    <div className="mt-7 flex flex-col-reverse sm:flex-row gap-3 sm:items-center sm:justify-between"><a className="call-btn justify-center" href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> Потрібна допомога</a><button type="submit" disabled={submitting} className="px-5 py-3 text-sm font-bold text-white disabled:opacity-60" style={{ background: "#173d31", borderRadius: 6 }}>{submitting ? "Надсилання..." : "Надіслати заявку на прорахунок"}</button></div>
+                  </section>
+                </form>
+              </>}
+            </main>
+          )}
+        </div>
+      );
+    }
+
+    // ============================================================
     // RENDER
     // ============================================================
-    ReactDOM.createRoot(document.getElementById("root")).render(<OrderForm />);
+    ReactDOM.createRoot(document.getElementById("root")).render(<CatalogOrderForm />);
   </script>
   <!-- Chat widget placeholder — uncomment and configure when ready -->
   <!-- Option 1: Tawk.to (100% free) — register at https://tawk.to, get your Property ID -->
