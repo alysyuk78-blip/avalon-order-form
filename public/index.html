@@ -265,17 +265,12 @@
     .contact-method-button { grid-column: span 2; display: grid; justify-items: center; gap: 8px; padding: 4px; border: 0; background: transparent; color: #3a4144; font-size: 13px; font-weight: 650; transition: color .2s ease; }
     .contact-method-button:nth-child(4) { grid-column: 2 / span 2; }
     .contact-method-button:nth-child(5) { grid-column: 4 / span 2; }
-    .contact-method-icon { width: 54px; height: 54px; display: grid; place-items: center; border-radius: 17px; color: #fff; box-shadow: 0 8px 16px rgba(29,29,31,.16); transition: transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s ease, filter .22s ease; }
-    .contact-method-icon svg { width: 29px; height: 29px; }
-    .contact-method-icon.phone { background: #34c759; }
-    .contact-method-icon.telegram { background: #2AABEE; }
-    .contact-method-icon.viber { background: #7360f2; }
-    .contact-method-icon.whatsapp { background: #25d366; }
-    .contact-method-icon.email { background: #0a84ff; }
-    .contact-method-button:hover .contact-method-icon { transform: translateY(-3px) scale(1.04); box-shadow: 0 13px 24px rgba(29,29,31,.2); filter: saturate(1.08); }
+    .contact-method-icon { width: 62px; height: 62px; display: block; transition: transform .22s cubic-bezier(.2,.8,.2,1), filter .22s ease; }
+    .contact-method-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .contact-method-button:hover .contact-method-icon { transform: translateY(-3px) scale(1.04); filter: saturate(1.08) brightness(1.02); }
     .contact-method-button:active .contact-method-icon { transform: translateY(0) scale(.96); }
     .contact-method-button.is-active { color: var(--avalon-7016); }
-    .contact-method-button.is-active .contact-method-icon { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--avalon-7016), 0 12px 24px rgba(29,29,31,.2); }
+    .contact-method-button.is-active .contact-method-icon { transform: translateY(-2px) scale(1.04); filter: saturate(1.1) brightness(1.03); }
     .contact-method-button:focus-visible { outline: 2px solid var(--avalon-7016); outline-offset: 5px; border-radius: 18px; }
     .delivery-choice-grid, .source-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .catalog-option { min-height: 48px; display: flex; align-items: center; justify-content: center; padding: 10px 12px; border: 1px solid #d2d5d8; border-radius: 999px; color: var(--avalon-7016); background: #fff; font-size: 13px; font-weight: 650; text-align: center; transition: transform .2s cubic-bezier(.2,.8,.2,1), background-color .2s ease, box-shadow .2s ease, border-color .2s ease; }
@@ -2661,11 +2656,11 @@
       const removeItem = (index) => setItems(current => current.filter((_, itemIndex) => itemIndex !== index));
       const contactLabels = { phone: "Телефон", telegram: "Telegram", viber: "Viber", whatsapp: "WhatsApp", email: "E-mail" };
       const contactMethods = [
-        { value: "phone", label: "Телефон", Icon: IconPhone },
-        { value: "telegram", label: "Telegram", Icon: IconContactTelegram },
-        { value: "viber", label: "Viber", Icon: IconContactViber },
-        { value: "whatsapp", label: "WhatsApp", Icon: IconContactWhatsApp },
-        { value: "email", label: "Пошта", Icon: IconContactEmail }
+        { value: "phone", label: "Телефон", image: "images/contact-methods/phone.png" },
+        { value: "telegram", label: "Telegram", image: "images/contact-methods/telegram.png" },
+        { value: "viber", label: "Viber", image: "images/contact-methods/viber.png" },
+        { value: "whatsapp", label: "WhatsApp", image: "images/contact-methods/whatsapp.png" },
+        { value: "email", label: "Пошта", image: "images/contact-methods/email.png" }
       ];
       const isEmail = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
       const telegramHandle = value => String(value || "").trim().replace(/^https?:\/\/(?:www\.)?t\.me\//i, "").replace(/^@/, "").replace(/\?.*$/, "");
@@ -2956,7 +2951,7 @@
                     <div className="mt-5">
                       <p className="mb-2 text-sm font-bold" style={{ color: "#383e42" }}>Зручний спосіб зв'язку *</p>
                       <div className={`contact-method-grid ${showErrors && !form.contact_method ? "catalog-choice-group is-error" : ""}`}>
-                        {contactMethods.map(method => { const MethodIcon = method.Icon; return <button key={method.value} type="button" onClick={() => set("contact_method", method.value)} className={`contact-method-button ${form.contact_method === method.value ? "is-active" : ""}`} aria-pressed={form.contact_method === method.value}><span className={`contact-method-icon ${method.value}`}><MethodIcon /></span><span>{method.label}</span></button>; })}
+                        {contactMethods.map(method => <button key={method.value} type="button" onClick={() => set("contact_method", method.value)} className={`contact-method-button ${form.contact_method === method.value ? "is-active" : ""}`} aria-pressed={form.contact_method === method.value}><span className="contact-method-icon"><img src={method.image} alt="" /></span><span>{method.label}</span></button>)}
                       </div>
                       <ErrorText visible={showErrors && !form.contact_method}>Оберіть зручний спосіб зв'язку.</ErrorText>
                     </div>
