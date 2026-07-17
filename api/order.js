@@ -139,9 +139,18 @@ async function sendPatternFileToTelegram(token, chatId, order) {
 // ============================================================
 // TELEGRAM MESSAGE
 // ============================================================
+function getCustomerContact(order) {
+  const allowed = ["phone", "telegram", "viber", "whatsapp", "email"];
+  const method = allowed.includes(order?.contact_method) ? order.contact_method : "phone";
+  const labels = { phone: "Телефон", telegram: "Telegram", viber: "Viber", whatsapp: "WhatsApp", email: "E-mail" };
+  const value = method === "telegram" ? order?.contact_telegram : method === "email" ? order?.contact_email : order?.phone;
+  return { method, label: labels[method], value: String(value || "").trim() };
+}
+
 function formatTelegramMessage(order) {
   const e = (v) => escHtml(v);
   const num = (v) => Number(v || 0).toLocaleString("uk-UA");
+  const contact = getCustomerContact(order);
   const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
     basket_model: order.basket_model, basket_model_name: order.basket_model_name,
     basket_type: order.basket_type, construction_type: order.construction_type,
@@ -163,7 +172,8 @@ function formatTelegramMessage(order) {
   // ── ЗАМОВНИК ──
   msg += `\n👤 <b>ЗАМОВНИК</b>\n`;
   msg += `${e(order.first_name)} ${e(order.last_name)}\n`;
-  if (order.phone) msg += `📞 ${e(order.phone)}\n`;
+  if (contact.value) msg += `${contact.method === "phone" ? "📞" : "💬"} ${e(contact.label)}: ${e(contact.method === "telegram" ? "@" + contact.value.replace(/^@/, "") : contact.value)}\n`;
+  if (order.phone && ["telegram", "email"].includes(contact.method)) msg += `📞 Телефон: ${e(order.phone)}\n`;
   if (order.city) msg += `🏙 ${e(order.city)}\n`;
 
   // ── ВИРОБНИЦТВО (специфікація) ──
@@ -219,6 +229,8 @@ function formatTelegramMessage(order) {
   if (transport) msg += `• Спосіб: <b>${e(transport)}</b>\n`;
   if (order.delivery_address) msg += `• Адреса: ${e(order.delivery_address)}\n`;
   if (order.delivery_date) msg += `• Дата: <b>${formatDeliveryDate(order.delivery_date)}</b>\n`;
+  const howFound = order.how_found === "Інше" ? order.how_found_custom : order.how_found;
+  if (howFound) msg += `• Як дізналися про нас: ${e(howFound)}\n`;
   if (order.notes) msg += `• Примітка: ${e(order.notes)}\n`;
   if (order.pattern_file?.name) msg += `• Файл візерунку: <b>${e(order.pattern_file.name)}</b>\n`;
 
@@ -319,7 +331,7 @@ module.exports = async function handler(req, res) {
 
   try {
     const order = req.body;
-    if (!order || !order.first_name || !order.phone) {
+    if (!order || !String(order.first_name || "").trim() || !getCustomerContact(order).value) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 

@@ -130,8 +130,8 @@
     .submit-ready:active:not(:disabled) { transform: scale(0.97) !important; animation: none !important; }
     .upload-zone { border: 2px dashed #383E4255; border-radius: 10px; padding: 16px; text-align: center; cursor: pointer; transition: all 0.2s ease; background: #f4f4f5; }
     .upload-zone:hover { border-color: #383E42; background: #efefef; }
-    input[type="text"], input[type="number"], textarea, select { border-radius: 10px !important; border: 1px solid #e4e1db !important; letter-spacing: 0.01em !important; color: #1a1d1f !important; transition: border-color 0.2s ease, box-shadow 0.2s ease !important; box-sizing: border-box !important; max-width: 100% !important; }
-    input[type="text"]:focus, input[type="number"]:focus, textarea:focus { border-color: #383E42 !important; box-shadow: 0 0 0 2px rgba(56,62,66,0.06) !important; outline: none !important; }
+    input[type="text"], input[type="number"], input[type="email"], input[type="date"], textarea, select { border-radius: 10px !important; border: 1px solid #e4e1db !important; letter-spacing: 0.01em !important; color: #1a1d1f !important; transition: border-color 0.2s ease, box-shadow 0.2s ease !important; box-sizing: border-box !important; max-width: 100% !important; }
+    input[type="text"]:focus, input[type="number"]:focus, input[type="email"]:focus, input[type="date"]:focus, textarea:focus { border-color: #383E42 !important; box-shadow: 0 0 0 2px rgba(56,62,66,0.06) !important; outline: none !important; }
     .tg-btn { transition: all 0.2s ease; border: 1px solid #383E42; color: #383E42; background: transparent; border-radius: 10px; padding: 10px 22px; font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; letter-spacing: 0.04em; text-decoration: none; }
     .tg-btn:hover { background: #383E42; color: #fff; box-shadow: 0 4px 16px rgba(56,62,66,0.3); transform: translateY(-1px); }
     @keyframes tgShake { 0%,100%{transform:rotate(0deg)} 15%{transform:rotate(-15deg)} 30%{transform:rotate(12deg)} 45%{transform:rotate(-10deg)} 60%{transform:rotate(8deg)} 75%{transform:rotate(-5deg)} 90%{transform:rotate(3deg)} }
@@ -215,8 +215,36 @@
     .color-choice.is-active .color-swatch { border: 3px solid var(--avalon-7016); }
     .ral-colors-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); justify-items: center; gap: 14px 8px; }
     .pattern-choice { width: 100%; min-width: 0; }
-    .pattern-choice img { transition: transform .24s cubic-bezier(.2,.8,.2,1), filter .24s ease; }
-    @media (hover: hover) { .pattern-choice:hover img { transform: scale(1.035); filter: contrast(1.04); } }
+    .pattern-choice { overflow: hidden; border-radius: 12px !important; background: #fff; }
+    .pattern-choice img { display: block; width: 100%; aspect-ratio: 9 / 7; object-fit: contain; background: #050505; transition: transform .24s cubic-bezier(.2,.8,.2,1), filter .24s ease; }
+    .pattern-choice .pattern-label { display: block; padding: 9px 8px 10px; text-align: center; color: #1d1d1f; font-size: 12px; font-weight: 750; background: #fff; }
+    .pattern-other { min-height: 0; aspect-ratio: 9 / 7; display: grid; place-items: center; padding: 12px; border-style: dashed !important; }
+    @media (hover: hover) { .pattern-choice:hover img { transform: scale(1.018); filter: contrast(1.03); } }
+    .catalog-request-heading { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; padding-bottom: 22px; border-bottom: 1px solid var(--apple-line); }
+    .catalog-request-heading .eyebrow, .catalog-section .eyebrow { margin: 0; color: var(--apple-muted); font-size: 11px; line-height: 1.2; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+    .catalog-request-heading h1, .catalog-section h2 { margin: 6px 0 0; color: var(--apple-ink); letter-spacing: 0; }
+    .catalog-section { padding: 24px; border: 1px solid var(--apple-line); border-radius: 18px; background: rgba(255,255,255,.94); box-shadow: 0 10px 30px rgba(29,29,31,.05); }
+    .catalog-request-item { border: 1px solid var(--apple-line); border-radius: 16px; background: rgba(255,255,255,.94); box-shadow: 0 6px 18px rgba(29,29,31,.04); }
+    section[aria-label="Моделі у заявці"] article { border: 1px solid var(--apple-line) !important; border-radius: 16px !important; background: rgba(255,255,255,.94) !important; box-shadow: 0 6px 18px rgba(29,29,31,.04) !important; }
+    section[aria-label="Моделі у заявці"] article > img { border-radius: 10px !important; }
+    .contact-method-grid, .delivery-choice-grid, .source-choice-grid { display: grid; gap: 10px; }
+    .contact-method-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .delivery-choice-grid, .source-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .catalog-option { min-height: 48px; display: flex; align-items: center; justify-content: center; padding: 10px 12px; border: 1px solid #d2d5d8; border-radius: 12px; color: var(--avalon-7016); background: #fff; font-size: 13px; font-weight: 650; text-align: center; transition: transform .2s cubic-bezier(.2,.8,.2,1), background-color .2s ease, box-shadow .2s ease, border-color .2s ease; }
+    .catalog-option:hover { border-color: rgba(56,62,66,.58); }
+    .catalog-option.is-active { color: #fff; background: var(--avalon-7016); border-color: var(--avalon-7016); box-shadow: 0 8px 18px rgba(29,29,31,.14); }
+    .catalog-option:active { transform: scale(.98); }
+    .catalog-submit { min-height: 48px; padding: 12px 20px; border: 1px solid var(--avalon-7016); border-radius: 999px; color: #fff; background: var(--avalon-7016); font-size: 14px; font-weight: 700; box-shadow: 0 6px 16px rgba(29,29,31,.14); transition: transform .2s ease, box-shadow .2s ease, background-color .2s ease; }
+    .catalog-submit:hover:not(:disabled) { background: #22272a; transform: translateY(-1px); box-shadow: 0 10px 24px rgba(29,29,31,.2); }
+    .catalog-submit:active:not(:disabled) { transform: scale(.98); }
+    .catalog-submit:disabled { opacity: .62; cursor: wait; }
+    .catalog-secondary { min-height: 44px; padding: 10px 16px; border: 1px solid rgba(56,62,66,.6); border-radius: 999px; color: var(--avalon-7016); background: #fff; font-size: 13px; font-weight: 700; transition: background-color .2s ease, transform .2s ease, box-shadow .2s ease; }
+    .catalog-secondary:hover { background: #f5f5f7; transform: translateY(-1px); box-shadow: 0 6px 18px rgba(29,29,31,.1); }
+    .catalog-textarea { width: 100%; min-height: 118px; padding: 13px 14px; border: 1px solid #d1d5db; border-radius: 12px; color: #1d1d1f; background: #fff; font-size: 14px; line-height: 1.5; resize: vertical; }
+    .catalog-textarea:focus { outline: none; border-color: var(--avalon-7016); box-shadow: 0 0 0 3px rgba(56,62,66,.10); }
+    .catalog-check { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border: 1px solid var(--apple-line); border-radius: 12px; color: #3d4245; font-size: 13px; line-height: 1.5; cursor: pointer; }
+    .catalog-check input { width: 18px; height: 18px; margin-top: 1px; accent-color: var(--avalon-7016); flex: 0 0 auto; }
+    @media (min-width: 640px) { .contact-method-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } .delivery-choice-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .source-choice-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
     .btu-choice { min-height: 42px; border-radius: 8px; font-size: 12px; font-weight: 800; }
     @media (min-width: 640px) { .ral-colors-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
     @media (min-width: 1024px) { .ral-colors-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
@@ -1427,7 +1455,7 @@
     // ============================================================
     function OrderForm() {
       const defaultForm = {
-        first_name: "", last_name: "", phone: "", city: "",
+        first_name: "", last_name: "", phone: "", city: "", contact_method: "phone", contact_telegram: "", contact_email: "",
         construction_type: "", basket_type: "", quantity: "", has_cover: false,
         color: "", color_custom: "", pattern: "", pattern_custom: "",
         size_w: "", size_h: "", size_d: "", ac_brand: "", ac_model: "", block_w: "", block_h: "", block_d: "",
@@ -2383,8 +2411,8 @@
         quantity: "1", has_cover: false, color: "", color_custom: "", pattern: "", pattern_custom: "", model_comment: "",
         size_w: "", size_h: "", size_d: "", block_w: "", block_h: "", block_d: "",
         ac_brand: "", ac_model: "", ac_model_url: "", bracket_model_from: "", bracket_model_to: "",
-        transport: "Уточнити з менеджером", transport_custom: "", delivery_address: "", delivery_location: "manager",
-        delivery_date: "", payment_method: "Уточнити з менеджером", how_found: "", how_found_custom: "",
+        transport: "", transport_custom: "", delivery_address: "", delivery_location: "",
+        delivery_date: "", payment_method: "", how_found: "", how_found_custom: "",
         notes: "", terms_accepted: false, referral_source: "direct"
       };
       const [form, setForm] = useState(() => {
@@ -2553,7 +2581,26 @@
       };
 
       const removeItem = (index) => setItems(current => current.filter((_, itemIndex) => itemIndex !== index));
-      const contactsValid = form.first_name.trim() && isValidPhoneUA(form.phone) && form.terms_accepted;
+      const contactLabels = { phone: "Телефон", telegram: "Telegram", viber: "Viber", whatsapp: "WhatsApp", email: "E-mail" };
+      const isEmail = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+      const telegramHandle = value => String(value || "").trim().replace(/^https?:\/\/(?:www\.)?t\.me\//i, "").replace(/^@/, "").replace(/\?.*$/, "");
+      const contactIsValid = () => {
+        if (form.contact_method === "telegram") return telegramHandle(form.contact_telegram).length >= 3;
+        if (form.contact_method === "email") return isEmail(form.contact_email);
+        return isValidPhoneUA(form.phone);
+      };
+      const localAddressRequired = form.delivery_location === "local" && form.transport === "Адресна доставка";
+      const remoteAddressRequired = form.delivery_location === "remote";
+      const deliveryIsValid = () => {
+        const addressIsNotRequired = !localAddressRequired && !remoteAddressRequired;
+        return !!(
+          form.delivery_location && form.transport &&
+          (addressIsNotRequired || form.delivery_address.trim()) &&
+          (form.transport !== "Інше" || form.transport_custom.trim())
+        );
+      };
+      const sourceIsValid = () => !!(form.how_found && (form.how_found !== "Інше" || form.how_found_custom.trim()));
+      const contactsValid = form.first_name.trim() && contactIsValid() && deliveryIsValid() && !!form.payment_method && sourceIsValid() && form.terms_accepted;
       const canSubmit = items.length > 0 && contactsValid;
 
       const submitRequest = async (event) => {
@@ -2561,7 +2608,7 @@
         if (submittingRef.current) return;
         if (!canSubmit) {
           setShowErrors(true);
-          setToast({ type: "error", message: items.length ? "Вкажіть ім'я, номер телефону та підтвердіть умови." : "Додайте щонайменше одну модель до заявки." });
+          setToast({ type: "error", message: items.length ? "Заповніть контакти, доставку, оплату, джерело звернення та підтвердіть умови." : "Додайте щонайменше одну модель до заявки." });
           return;
         }
         submittingRef.current = true;
@@ -2571,11 +2618,13 @@
           patternFilePayload = await fileToOrderPayload(patternFile);
           const first = items[0];
           const itemComments = items.filter(item => item.model_comment).map(item => `${item.basket_model}: ${item.model_comment}`).join("\n");
+          const contactDetails = form.contact_method === "telegram" ? `Telegram: @${telegramHandle(form.contact_telegram)}` : form.contact_method === "email" ? `E-mail: ${form.contact_email.trim()}` : form.contact_method === "viber" ? `Viber: ${form.phone.trim()}` : form.contact_method === "whatsapp" ? `WhatsApp: ${form.phone.trim()}` : "";
           await submitOrder({
             first_name: form.first_name.trim(), last_name: form.last_name.trim(), phone: form.phone.trim(), city: form.city.trim(),
+            contact_method: form.contact_method, contact_telegram: telegramHandle(form.contact_telegram), contact_email: form.contact_email.trim(),
             transport: form.transport, transport_custom: form.transport_custom, delivery_address: form.delivery_address.trim(),
             delivery_location: form.delivery_location, delivery_date: form.delivery_date, payment_method: form.payment_method,
-            how_found: form.how_found, how_found_custom: form.how_found_custom, notes: [form.notes.trim(), itemComments].filter(Boolean).join("\n"),
+            how_found: form.how_found, how_found_custom: form.how_found_custom, notes: [contactDetails, form.notes.trim(), itemComments].filter(Boolean).join("\n"),
             referral_source: form.referral_source || "direct", items, quote_required: true,
             price_total: 0, prepayment: 0, cost_total: 0, profit: 0,
             pattern_file: patternFilePayload,
@@ -2739,9 +2788,9 @@
                     <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Візерунок</h3>
                       <p className="mt-1 text-xs" style={{ color: "#66716b" }}>Натисніть на візерунок, який вам подобається.</p>
-                      <div className="mt-3" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(72px, 92px))", gap: 10 }}>
-                        {CATALOG_PATTERN_OPTIONS.map(pattern => <button key={pattern.label} type="button" onClick={() => { set("pattern", pattern.label); set("pattern_custom", ""); }} className={`catalog-choice pattern-choice text-left ${form.pattern === pattern.label ? "is-active" : ""}`} style={{ border: form.pattern === pattern.label ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.pattern === pattern.label ? "#edf5f0" : "#fff", borderRadius: 8 }}><img src={pattern.image} alt={`Візерунок ${pattern.label}`} className="block w-full" style={{ aspectRatio: "1 / 1", objectFit: "contain", padding: 3, background: "#111", borderRadius: "7px 7px 0 0" }} /><span className="block px-1 py-1.5 text-center text-[11px] font-bold" style={{ color: "#26322d" }}>{pattern.label}</span></button>)}
-                        <button type="button" onClick={() => set("pattern", "Інший")} className={`catalog-choice pattern-choice p-2 text-center ${form.pattern === "Інший" ? "is-active" : ""}`} style={{ border: form.pattern === "Інший" ? "2px solid #173d31" : "1px dashed #aeb8b1", background: form.pattern === "Інший" ? "#edf5f0" : "#fff", borderRadius: 6 }}><span className="block text-[11px] font-bold" style={{ color: "#26322d" }}>Інший</span><span className="mt-1 block text-[10px] leading-4" style={{ color: "#66716b" }}>Опис<br />або ескіз</span></button>
+                      <div className="mt-3" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(112px, 132px))", gap: 12 }}>
+                        {CATALOG_PATTERN_OPTIONS.map(pattern => <button key={pattern.label} type="button" onClick={() => { set("pattern", pattern.label); set("pattern_custom", ""); }} className={`catalog-choice pattern-choice text-left ${form.pattern === pattern.label ? "is-active" : ""}`}><img src={pattern.image} alt={`Візерунок ${pattern.label}`} /><span className="pattern-label">{pattern.label}</span></button>)}
+                        <button type="button" onClick={() => set("pattern", "Інший")} className={`catalog-choice pattern-choice pattern-other text-center ${form.pattern === "Інший" ? "is-active" : ""}`}><span><span className="block text-sm font-bold" style={{ color: "#26322d" }}>Інший</span><span className="mt-1 block text-xs leading-5" style={{ color: "#66716b" }}>Опис або ескіз</span></span></button>
                       </div>
                       {form.pattern === "Інший" && <div className="mt-3 space-y-3"><StyledInput placeholder="Опишіть бажаний візерунок" value={form.pattern_custom} onChange={event => set("pattern_custom", event.target.value)} error={showErrors && !form.pattern_custom.trim()} /><label htmlFor="catalog-pattern-file" className="upload-zone block text-sm font-semibold" style={{ borderRadius: 6 }}><span className="inline-flex items-center gap-2"><IconUpload /> {patternFile ? patternFile.name : "Додати ескіз або фото"}</span></label><input id="catalog-pattern-file" type="file" className="hidden" accept="image/*,.pdf" onChange={event => setPatternFile(event.target.files?.[0] || null)} /></div>}
                       <ErrorText visible={showErrors && (!form.pattern || (form.pattern === "Інший" && !form.pattern_custom.trim()))}>Оберіть або опишіть візерунок.</ErrorText>
@@ -2792,23 +2841,66 @@
 
           {view === "request" && (
             <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
-              <div className="flex flex-wrap items-end justify-between gap-4 border-b pb-5" style={{ borderColor: "#dce1dc" }}><div><p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#8f7340" }}>Ваша заявка</p><h1 className="mt-1 text-3xl font-bold" style={{ color: "#1f2925" }}>Прорахунок кошиків</h1></div><button type="button" onClick={() => goTo("catalog")} className="text-sm font-bold" style={{ color: "#173d31" }}>+ Додати ще модель</button></div>
+              <div className="catalog-request-heading"><div><p className="eyebrow">Ваша заявка</p><h1 className="text-3xl font-bold">Прорахунок кошиків</h1></div><button type="button" onClick={() => goTo("catalog")} className="catalog-secondary">+ Додати ще модель</button></div>
 
               {items.length === 0 ? <section className="py-16 text-center"><p className="text-lg font-semibold" style={{ color: "#26322d" }}>У заявці поки немає моделей.</p><button type="button" onClick={() => goTo("catalog")} className="mt-4 px-5 py-3 text-sm font-bold text-white" style={{ background: "#173d31", borderRadius: 6 }}>Перейти до каталогу</button></section> : <>
                 <section className="mt-6 grid gap-3" aria-label="Моделі у заявці">{items.map((item, index) => <article key={`${item.basket_model}-${index}`} className="flex gap-4 bg-white p-4" style={{ border: "1px solid #dce1dc", borderRadius: 8 }}><img src={CATALOG_MODELS.find(model => model.id === item.basket_model)?.image} alt="" className="hidden sm:block" style={{ width: 112, height: 84, objectFit: "cover", borderRadius: 5, background: "#eff1ef" }} /><div className="min-w-0 flex-1"><div className="text-xs font-bold tracking-widest" style={{ color: "#8f7340" }}>{item.basket_model}</div><h2 className="mt-1 font-bold" style={{ color: "#26322d" }}>{item.basket_model_name}</h2><p className="mt-1 text-sm" style={{ color: "#66716b" }}>{itemMeasurement(item)} · {item.quantity} шт.</p><p className="mt-1 text-xs" style={{ color: "#66716b" }}>{[item.basket_type, item.color_custom ? `${item.color}: ${item.color_custom}` : item.color, item.pattern_custom ? `${item.pattern}: ${item.pattern_custom}` : item.pattern, item.has_cover ? "з кришкою" : null].filter(Boolean).join(" · ")}</p>{item.model_comment && <p className="mt-2 text-xs leading-5" style={{ color: "#526058" }}>Коментар: {item.model_comment}</p>}</div><button type="button" onClick={() => removeItem(index)} aria-label={`Видалити ${item.basket_model_name}`} className="self-start p-2 text-sm font-bold" style={{ color: "#b54842" }}>Видалити</button></article>)}</section>
 
-                <form className="mt-10" onSubmit={submitRequest} noValidate>
-                  <section className="bg-white p-5 sm:p-7" style={{ border: "1px solid #dce1dc", borderRadius: 8 }}>
-                    <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#8f7340" }}>Контакти</p><h2 className="mt-1 text-2xl font-bold" style={{ color: "#1f2925" }}>Куди надіслати відповідь?</h2>
-                    <div className="mt-6 grid gap-4 sm:grid-cols-2"><Field label="Ваше ім'я *"><StyledInput placeholder="Ім'я" value={form.first_name} onChange={event => set("first_name", event.target.value)} error={showErrors && !form.first_name.trim()} /></Field><Field label="Телефон *"><StyledInput placeholder="+380 __ ___ __ __" value={form.phone} onChange={event => set("phone", formatPhoneUA(event.target.value))} error={showErrors && !isValidPhoneUA(form.phone)} /></Field><Field label="Місто"><StyledInput placeholder="Напр. Хмельницький" value={form.city} onChange={event => set("city", event.target.value)} /></Field><Field label="Бажаний спосіб отримання"><StyledSelect value={form.delivery_location} onChange={value => { const labels = { manager: "Уточнити з менеджером", local: "Доставка по Хмельницькому", remote: "Відправлення в інше місто", pickup: "Самовивіз" }; setForm(current => ({ ...current, delivery_location: value, transport: labels[value] })); }} placeholder="Оберіть спосіб"><option value="manager">Уточнити з менеджером</option><option value="local">Доставка по Хмельницькому</option><option value="remote">Відправлення в інше місто</option><option value="pickup">Самовивіз</option></StyledSelect></Field></div>
-                    {form.delivery_location === "remote" && <div className="mt-4"><Field label="Місто, відділення або адреса"><StyledInput placeholder="Вкажіть місто та дані для відправлення" value={form.delivery_address} onChange={event => set("delivery_address", event.target.value)} /></Field></div>}
-                    <div className="mt-4"><Field label="Коли потрібен кошик?"><StyledInput type="date" value={form.delivery_date} onChange={event => set("delivery_date", event.target.value)} /></Field></div>
-                    <div className="mt-5"><Field label="Коментар або питання"><textarea value={form.notes} onChange={event => set("notes", event.target.value)} placeholder="Наприклад: особливості фасаду, бажаний термін, потрібна допомога з вибором." rows="4" className="w-full p-3 text-sm" style={{ border: "1px solid #d1d5db", borderRadius: 6, resize: "vertical" }} /></Field></div>
-                    <label className="mt-6 flex gap-3 items-start cursor-pointer"><input type="checkbox" checked={form.terms_accepted} onChange={event => set("terms_accepted", event.target.checked)} className="mt-1" style={{ accentColor: "#173d31" }} /><span className="text-sm leading-6" style={{ color: "#3e4943" }}>Я ознайомився(лася) з умовами замовлення та погоджуюсь на зв'язок для прорахунку. *</span></label><ErrorText visible={showErrors && !form.terms_accepted}>Підтвердіть умови, щоб надіслати заявку.</ErrorText>
-                    <details className="mt-5 border-t pt-4" style={{ borderColor: "#dce1dc" }}><summary className="cursor-pointer text-sm font-semibold" style={{ color: "#173d31" }}>Умови замовлення</summary><div className="mt-3"><TermsBlock /></div></details>
-                    <div className="mt-7 flex flex-col-reverse sm:flex-row gap-3 sm:items-center sm:justify-between"><a className="call-btn justify-center" href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> Потрібна допомога</a><button type="submit" disabled={submitting} className="px-5 py-3 text-sm font-bold text-white disabled:opacity-60" style={{ background: "#173d31", borderRadius: 6 }}>{submitting ? "Надсилання..." : "Надіслати заявку на прорахунок"}</button></div>
+                <form className="mt-6 grid gap-5" onSubmit={submitRequest} noValidate>
+                  <section className="catalog-section">
+                    <p className="eyebrow">Контакти</p>
+                    <h2 className="text-2xl font-bold">Куди надіслати відповідь?</h2>
+                    <p className="mt-2 text-sm leading-6" style={{ color: "#6e6e73" }}>Оберіть зручний спосіб зв'язку. Для Telegram достатньо вашого нікнейму.</p>
+                    <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                      <Field label="Ваше ім'я *"><StyledInput placeholder="Ім'я" value={form.first_name} onChange={event => set("first_name", event.target.value)} error={showErrors && !form.first_name.trim()} /></Field>
+                      <Field label="Місто"><StyledInput placeholder="Напр. Хмельницький" value={form.city} onChange={event => set("city", event.target.value)} /></Field>
+                    </div>
+                    <div className="mt-5">
+                      <p className="mb-2 text-sm font-bold" style={{ color: "#383e42" }}>Зручний спосіб зв'язку *</p>
+                      <div className="contact-method-grid">
+                        {[{ value: "phone", label: "Телефон" }, { value: "telegram", label: "Telegram" }, { value: "viber", label: "Viber" }, { value: "whatsapp", label: "WhatsApp" }, { value: "email", label: "E-mail" }].map(method => <button key={method.value} type="button" onClick={() => set("contact_method", method.value)} className={`catalog-option ${form.contact_method === method.value ? "is-active" : ""}`}>{method.label}</button>)}
+                      </div>
+                    </div>
+                    <div className="mt-5">
+                      {["phone", "viber", "whatsapp"].includes(form.contact_method) && <Field label={`${contactLabels[form.contact_method]} *`}><StyledInput placeholder="+380 __ ___ __ __" value={form.phone} onChange={event => set("phone", formatPhoneUA(event.target.value))} error={showErrors && !contactIsValid()} /></Field>}
+                      {form.contact_method === "telegram" && <Field label="Ваш Telegram *"><StyledInput placeholder="@username або t.me/username" value={form.contact_telegram} onChange={event => set("contact_telegram", event.target.value)} error={showErrors && !contactIsValid()} /></Field>}
+                      {form.contact_method === "email" && <Field label="Ваш e-mail *"><StyledInput type="email" placeholder="name@example.com" value={form.contact_email} onChange={event => set("contact_email", event.target.value)} error={showErrors && !contactIsValid()} /></Field>}
+                    </div>
+                  </section>
+
+                  <section className="catalog-section">
+                    <p className="eyebrow">Доставка</p>
+                    <h2 className="text-2xl font-bold">Як зручно отримати замовлення?</h2>
+                    <div className="mt-6 delivery-choice-grid">
+                      {[{ value: "manager", label: "Уточнити з менеджером", transport: "Уточнити з менеджером" }, { value: "local", label: "Доставка по Хмельницькому", transport: "" }, { value: "remote", label: "Відправлення в інше місто", transport: "" }, { value: "pickup", label: "Самовивіз", transport: "Самовивіз — пров. Шевченка, 39" }].map(option => <button key={option.value} type="button" onClick={() => setForm(current => ({ ...current, delivery_location: option.value, transport: option.transport, transport_custom: "", delivery_address: "" }))} className={`catalog-option ${form.delivery_location === option.value ? "is-active" : ""}`}>{option.label}</button>)}
+                    </div>
+                    {form.delivery_location === "manager" && <p className="mt-4 text-sm" style={{ color: "#6e6e73" }}>Менеджер узгодить спосіб і вартість доставки після прорахунку.</p>}
+                    {form.delivery_location === "pickup" && <p className="mt-4 text-sm" style={{ color: "#6e6e73" }}>Самовивіз: пров. Шевченка, 39, Хмельницький. Час узгодить менеджер.</p>}
+                    {form.delivery_location === "local" && <div className="mt-5 space-y-4"><div><p className="mb-2 text-sm font-bold" style={{ color: "#383e42" }}>Спосіб доставки *</p><div className="delivery-choice-grid"><button type="button" onClick={() => set("transport", "Безкоштовна — пров. Шевченка, 39")} className={`catalog-option ${form.transport === "Безкоштовна — пров. Шевченка, 39" ? "is-active" : ""}`}>Безкоштовна — пров. Шевченка, 39</button><button type="button" onClick={() => set("transport", "Адресна доставка")} className={`catalog-option ${form.transport === "Адресна доставка" ? "is-active" : ""}`}>Адресна доставка</button></div></div>{localAddressRequired && <Field label="Адреса доставки *"><StyledInput placeholder="Вулиця, будинок, квартира або офіс" value={form.delivery_address} onChange={event => set("delivery_address", event.target.value)} error={showErrors && !form.delivery_address.trim()} /></Field>}</div>}
+                    {form.delivery_location === "remote" && <div className="mt-5 grid gap-4 sm:grid-cols-2"><Field label="Служба доставки *"><StyledSelect value={form.transport} onChange={value => setForm(current => ({ ...current, transport: value, transport_custom: "" }))} placeholder="Оберіть службу" error={showErrors && !form.transport}><option value="Нова пошта">Нова пошта</option><option value="Укрпошта">Укрпошта</option><option value="Делівері">Делівері</option><option value="Інше">Інше</option></StyledSelect></Field>{form.transport === "Інше" && <Field label="Назва служби *"><StyledInput placeholder="Вкажіть службу доставки" value={form.transport_custom} onChange={event => set("transport_custom", event.target.value)} error={showErrors && !form.transport_custom.trim()} /></Field>}<div className={form.transport === "Інше" ? "sm:col-span-2" : "sm:col-span-2"}><Field label="Місто, відділення або адреса *"><StyledInput placeholder="Напр. Хмельницький, відділення №5" value={form.delivery_address} onChange={event => set("delivery_address", event.target.value)} error={showErrors && !form.delivery_address.trim()} /></Field></div></div>}
+                    <div className="mt-5"><Field label="Коли потрібен кошик?"><StyledInput type="date" value={form.delivery_date} onChange={event => set("delivery_date", event.target.value)} /></Field></div>
+                  </section>
+
+                  <section className="catalog-section">
+                    <p className="eyebrow">Деталі заявки</p>
+                    <h2 className="text-2xl font-bold">Оплата й джерело звернення</h2>
+                    <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                      <Field label="Форма оплати *"><StyledSelect value={form.payment_method} onChange={value => set("payment_method", value)} placeholder="Оберіть форму оплати" error={showErrors && !form.payment_method}><option value="На карту">На карту</option><option value="На рахунок ФО-П">На рахунок ФО-П</option><option value="На рахунок ТОВ">На рахунок ТОВ</option><option value="Уточнити з менеджером">Уточнити з менеджером</option></StyledSelect></Field>
+                      <Field label="Як ви дізналися про нас? *"><StyledSelect value={form.how_found} onChange={value => setForm(current => ({ ...current, how_found: value, how_found_custom: "" }))} placeholder="Оберіть варіант" error={showErrors && !sourceIsValid()}><option value="Google / пошук">Google / пошук</option><option value="Instagram / Facebook">Instagram / Facebook</option><option value="Реклама / оголошення">Реклама / оголошення</option><option value="Рекомендація знайомих">Рекомендація знайомих</option><option value="Голова / чат ОСББ">Голова / чат ОСББ</option><option value="Партнер або підрядник">Партнер або підрядник</option><option value="Інше">Інше</option></StyledSelect></Field>
+                    </div>
+                    {form.how_found === "Інше" && <div className="mt-4"><Field label="Вкажіть джерело *"><StyledInput placeholder="Напишіть, де ви нас знайшли" value={form.how_found_custom} onChange={event => set("how_found_custom", event.target.value)} error={showErrors && !form.how_found_custom.trim()} /></Field></div>}
+                  </section>
+
+                  <section className="catalog-section">
+                    <p className="eyebrow">Завершення</p>
+                    <h2 className="text-2xl font-bold">Коментар і підтвердження</h2>
+                    <div className="mt-6"><Field label="Коментар або питання"><textarea value={form.notes} onChange={event => set("notes", event.target.value)} placeholder="Наприклад: особливості фасаду, бажаний термін, потрібна допомога з вибором." rows="5" className="catalog-textarea" /></Field></div>
+                    <label className="catalog-check mt-6"><input type="checkbox" checked={form.terms_accepted} onChange={event => set("terms_accepted", event.target.checked)} /><span>Я погоджуюсь на зв'язок для прорахунку та ознайомився(лася) з умовами замовлення. *</span></label><ErrorText visible={showErrors && !form.terms_accepted}>Підтвердіть умови, щоб надіслати заявку.</ErrorText>
+                    <details className="mt-5 border-t pt-4" style={{ borderColor: "#e3e3e6" }}><summary className="cursor-pointer text-sm font-semibold" style={{ color: "#383e42" }}>Умови замовлення</summary><div className="mt-3"><TermsBlock /></div></details>
+                    <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between"><a className="catalog-secondary inline-flex items-center justify-center gap-2" href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> Потрібна допомога</a><button type="submit" disabled={submitting} className="catalog-submit">{submitting ? "Надсилання..." : "Надіслати заявку на прорахунок"}</button></div>
                   </section>
                 </form>
+
               </>}
             </main>
           )}
