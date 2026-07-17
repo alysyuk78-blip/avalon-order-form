@@ -148,6 +148,7 @@ function formatTelegramMessage(order) {
     color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
     size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
     ac_brand: order.ac_brand, ac_model: order.ac_model, ac_model_url: order.ac_model_url,
+    bracket_model_from: order.bracket_model_from, bracket_model_to: order.bracket_model_to, model_comment: order.model_comment,
     price_total: order.price_total, area_m2: order.area_m2, cost_total: order.cost_total,
     has_cover: order.has_cover, basket_area_m2: order.basket_area_m2, cover_area_m2: order.cover_area_m2,
     basket_cost_per_m2: order.basket_cost_per_m2, cover_cost_per_m2: order.cover_cost_per_m2,
@@ -177,13 +178,17 @@ function formatTelegramMessage(order) {
     if (it.has_cover) msg += `• Верхня кришка: <b>Так</b>\n`;
     if (color) msg += `• Колір: <b>${color}</b>\n`;
     if (pattern) msg += `• Візерунок: <b>${pattern}</b>\n`;
+    if (it.bracket_model_from || it.bracket_model_to) msg += `• Кронштейни: <b>${e(it.bracket_model_from)} — ${e(it.bracket_model_to)}</b>\n`;
     if (it.ac_brand || it.ac_model) msg += `• Кондиціонер: <b>${e([it.ac_brand, it.ac_model].filter(Boolean).join(" "))}</b>\n`;
     if (it.ac_model_url) msg += `• Посилання на кондиціонер: ${e(it.ac_model_url)}\n`;
     if (Number(it.size_w) > 0) {
       msg += `• Розміри (мм):\n   Висота — <b>${it.size_h}</b>\n   Ширина — <b>${it.size_w}</b>\n   Глибина — <b>${it.size_d}</b>\n`;
+    } else if (it.bracket_model_from || it.bracket_model_to) {
+      msg += `• Розміри: <i>підбираються за діапазоном моделей</i>\n`;
     } else {
       msg += `• Розміри: <i>розрахує менеджер</i>\n`;
     }
+    if (it.model_comment) msg += `• Коментар до моделі: ${e(it.model_comment)}\n`;
     msg += `• Кількість: <b>${Number(it.quantity) || 1} шт.</b>\n`;
   });
 
@@ -233,6 +238,7 @@ function formatProductionMessage(order) {
     color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
     size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
     ac_brand: order.ac_brand, ac_model: order.ac_model, ac_model_url: order.ac_model_url,
+    bracket_model_from: order.bracket_model_from, bracket_model_to: order.bracket_model_to, model_comment: order.model_comment,
   }];
   let msg = `🏭 <b>ДЛЯ ВИРОБНИЦТВА</b> · ${e(order.order_number)}\n`;
   items.forEach((it, i) => {
@@ -241,10 +247,13 @@ function formatProductionMessage(order) {
     const pattern = it.pattern === "Інший" ? (it.pattern_custom || it.pattern) : it.pattern;
     const size = Number(it.size_w) > 0
       ? `${it.size_w}×${it.size_h}×${it.size_d} мм (Ш×В×Г)`
-      : `⚠️ розмір визначити${(it.ac_brand || it.ac_model) ? " — " + e([it.ac_brand, it.ac_model].filter(Boolean).join(" ")) : ""}`;
+      : (it.bracket_model_from || it.bracket_model_to)
+        ? `Кронштейни: ${e(it.bracket_model_from)} — ${e(it.bracket_model_to)}`
+        : `⚠️ розмір визначити${(it.ac_brand || it.ac_model) ? " — " + e([it.ac_brand, it.ac_model].filter(Boolean).join(" ")) : ""}`;
     const model = it.basket_model_name || it.basket_model;
     msg += `\n${i + 1}. <b>${model ? e(model) + " · " : ""}${size}</b>\n   ${e(constr)}, ${e(color)}, візерунок ${e(pattern)}${it.has_cover ? ", <b>з верхньою кришкою</b>" : ""}, <b>${it.quantity} шт.</b>\n`;
     if (it.ac_model_url) msg += `   Посилання на кондиціонер: ${e(it.ac_model_url)}\n`;
+    if (it.model_comment) msg += `   Коментар: ${e(it.model_comment)}\n`;
   });
   return msg;
 }
