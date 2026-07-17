@@ -210,11 +210,11 @@
     .choice-row { min-height: 44px; }
     /* Інтерактивні елементи каталогу: помітний, але спокійний відгук на вибір. */
     .catalog-choice { position: relative; -webkit-tap-highlight-color: transparent; transition: transform .24s cubic-bezier(.2,.8,.2,1), box-shadow .24s ease, border-color .24s ease, background-color .24s ease; }
-    .catalog-choice:focus-visible { outline: 3px solid rgba(143,115,64,.45); outline-offset: 3px; }
+    .catalog-choice:focus-visible { outline: 2px solid rgba(33,83,67,.58); outline-offset: 3px; }
     @media (hover: hover) { .catalog-choice:hover { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(29,29,31,.12); } }
     .catalog-choice:active { transform: translateY(0) scale(.96); }
-    .catalog-choice.is-active { border-color: var(--avalon-7016) !important; box-shadow: 0 0 0 3px rgba(56,62,66,.14), 0 10px 22px rgba(29,29,31,.13) !important; }
-    .catalog-choice.is-active::after { content: "✓"; position: absolute; top: -7px; right: -7px; z-index: 2; width: 20px; height: 20px; border-radius: 999px; display: flex; align-items: center; justify-content: center; background: var(--avalon-7016); color: #fff; font-size: 12px; font-weight: 800; box-shadow: 0 3px 9px rgba(29,29,31,.22); }
+    .catalog-choice.is-active { border-color: rgba(33,83,67,.60) !important; background: #f0f7f2 !important; color: #173d31 !important; box-shadow: 0 7px 20px rgba(33,83,67,.10) !important; }
+    .catalog-choice.is-active::after { display: none; }
     /* Кольорові варіанти: рухається тільки коло, а не підпис під ним. */
     .color-choice { width: 58px; display: flex; flex-direction: column; align-items: center; gap: 5px; margin: 0; padding: 0 !important; overflow: visible; background: transparent !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; color: #526058; font-size: 10px; font-weight: 700; line-height: 1.1; transform: none !important; transition: none !important; }
     .color-choice.catalog-choice:hover, .color-choice.catalog-choice:active { box-shadow: none !important; transform: none !important; }
@@ -222,9 +222,10 @@
     .color-swatch { position: relative; display: grid; width: 48px; height: 48px; margin: 0; border: 1px solid rgba(38,50,45,.28); border-radius: 50%; box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 2px 5px rgba(0,0,0,.14); transition: transform .24s cubic-bezier(.2,.8,.2,1), box-shadow .24s ease, border-color .24s ease; }
     @media (hover: hover) { .color-choice:hover .color-swatch { transform: translateY(-3px) scale(1.035); box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 9px 18px rgba(29,29,31,.18); } }
     .color-choice:active .color-swatch { transform: scale(.96); }
-    .color-choice.is-active .color-swatch { border: 3px solid var(--avalon-7016); box-shadow: 0 0 0 3px rgba(56,62,66,.12), inset 0 1px 0 rgba(255,255,255,.45), 0 3px 8px rgba(0,0,0,.14); }
-    .color-choice.is-active .color-swatch::after { content: "✓"; position: absolute; right: -3px; bottom: -3px; width: 17px; height: 17px; display: grid; place-items: center; border: 2px solid #fff; border-radius: 50%; background: var(--avalon-7016); color: #fff; font-size: 10px; font-weight: 800; box-shadow: 0 2px 6px rgba(29,29,31,.22); }
+    .color-choice.is-active .color-swatch { border: 1.5px solid #215343 !important; box-shadow: 0 0 0 2px rgba(33,83,67,.12), 0 7px 15px rgba(33,83,67,.18) !important; }
+    .color-choice.is-active .color-swatch::after { content: "✓"; position: absolute; right: -3px; bottom: -3px; width: 18px; height: 18px; display: grid; place-items: center; border: 2px solid #fff; border-radius: 50%; background: #215343; color: #fff; font-size: 11px; font-weight: 800; box-shadow: 0 2px 7px rgba(33,83,67,.20); }
     .ral-palette-swatch { align-content: center; justify-items: center; gap: 4px; background: #f4f5f5; }
+    .color-choice.is-active .ral-palette-swatch::after { display: none; }
     .ral-palette-swatch i { display: block; width: 22px; height: 2px; border-radius: 999px; background: var(--avalon-7016); }
     .ral-colors-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); justify-items: center; gap: 14px 8px; }
     .pattern-choice { width: 100%; min-width: 0; overflow: hidden; padding: 5px 5px 0; border: 1px solid #d2d5d8; border-radius: 14px !important; background: #fff; }
@@ -242,13 +243,17 @@
     .contact-method-grid, .delivery-choice-grid, .source-choice-grid { display: grid; gap: 10px; }
     .contact-method-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .delivery-choice-grid, .source-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .catalog-option { min-height: 48px; display: flex; align-items: center; justify-content: center; padding: 10px 12px; border: 1px solid #d2d5d8; border-radius: 12px; color: var(--avalon-7016); background: #fff; font-size: 13px; font-weight: 650; text-align: center; transition: transform .2s cubic-bezier(.2,.8,.2,1), background-color .2s ease, box-shadow .2s ease, border-color .2s ease; }
-    .catalog-option:hover { border-color: rgba(56,62,66,.58); }
-    .catalog-option.is-active { color: #fff; background: var(--avalon-7016); border-color: var(--avalon-7016); box-shadow: 0 8px 18px rgba(29,29,31,.14); }
-    .catalog-option:active { transform: scale(.98); }
+    .catalog-option { min-height: 48px; display: flex; align-items: center; justify-content: center; padding: 10px 12px; border: 1px solid #d2d5d8; border-radius: 999px; color: var(--avalon-7016); background: #fff; font-size: 13px; font-weight: 650; text-align: center; transition: transform .2s cubic-bezier(.2,.8,.2,1), background-color .2s ease, box-shadow .2s ease, border-color .2s ease; }
+    .catalog-option:hover { border-color: rgba(33,83,67,.54); transform: translateY(-2px); box-shadow: 0 8px 18px rgba(33,83,67,.08); }
+    .catalog-option.is-active { color: #173d31; background: #f0f7f2; border-color: rgba(33,83,67,.60); box-shadow: 0 7px 20px rgba(33,83,67,.10); }
+    .catalog-option:active { transform: translateY(0) scale(.98); }
+    .catalog-option:focus-visible, .catalog-secondary:focus-visible, .catalog-submit:focus-visible, .catalog-primary-action:focus-visible { outline: 2px solid rgba(33,83,67,.58); outline-offset: 3px; }
     .catalog-submit, .catalog-primary-action { min-height: 48px; padding: 12px 20px; border: 1px solid var(--avalon-7016); border-radius: 999px; color: #fff; background: var(--avalon-7016); font-size: 14px; font-weight: 700; box-shadow: 0 6px 16px rgba(29,29,31,.14); transition: transform .2s ease, box-shadow .2s ease, background-color .2s ease; }
     .catalog-submit:hover:not(:disabled), .catalog-primary-action:hover { background: #22272a; transform: translateY(-1px); box-shadow: 0 10px 24px rgba(29,29,31,.2); }
     .catalog-submit:active:not(:disabled), .catalog-primary-action:active { transform: scale(.98); }
+    .catalog-add-to-request { position: relative; isolation: isolate; overflow: hidden; }
+    .catalog-add-to-request::before { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; background: linear-gradient(112deg, transparent 22%, rgba(255,255,255,.24) 45%, transparent 66%); transform: translateX(-130%); transition: transform .62s cubic-bezier(.2,.8,.2,1); }
+    .catalog-add-to-request:hover::before { transform: translateX(130%); }
     .catalog-submit:disabled { opacity: .62; cursor: wait; }
     .catalog-secondary { min-height: 44px; padding: 10px 16px; border: 1px solid rgba(56,62,66,.6); border-radius: 999px; color: var(--avalon-7016); background: #fff; font-size: 13px; font-weight: 700; transition: background-color .2s ease, transform .2s ease, box-shadow .2s ease; }
     .catalog-secondary:hover { background: #f5f5f7; transform: translateY(-1px); box-shadow: 0 6px 18px rgba(29,29,31,.1); }
@@ -256,8 +261,11 @@
     .catalog-textarea:focus { outline: none; border-color: var(--avalon-7016); box-shadow: 0 0 0 3px rgba(56,62,66,.10); }
     .catalog-check { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border: 1px solid var(--apple-line); border-radius: 12px; color: #3d4245; font-size: 13px; line-height: 1.5; cursor: pointer; }
     .catalog-check input { width: 18px; height: 18px; margin-top: 1px; accent-color: var(--avalon-7016); flex: 0 0 auto; }
+    .catalog-check.is-error { border-color: #ef4444; background: #fff8f8; }
+    .catalog-choice-group.is-error { padding: 8px; border: 1px solid #ef4444; border-radius: 16px; background: #fff8f8; }
+    .measure-choice { display: block; min-height: 96px; padding: 16px; text-align: left; }
     @media (min-width: 640px) { .contact-method-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } .delivery-choice-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .source-choice-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-    .btu-choice { min-height: 42px; border-radius: 8px; font-size: 12px; font-weight: 800; }
+    .btu-choice { min-height: 42px; border-radius: 999px; font-size: 12px; font-weight: 800; }
     @media (min-width: 640px) { .ral-colors-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
     @media (min-width: 1024px) { .ral-colors-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
     #form-start { scroll-margin-top: 100px; }
@@ -431,7 +439,7 @@
 
     // Повна локальна палітра RAL Classic завантажується з data/ral-classic.js.
     const CATALOG_RAL_COLORS = (window.AVALON_RAL_CLASSIC || []).filter(color => !CATALOG_PRIMARY_COLORS.some(primary => primary.code === color.code));
-    const CATALOG_BTU_OPTIONS = ["7 000", "9 000", "12 000", "18 000", "24 000", "30 000", "36 000"];
+    const CATALOG_BTU_OPTIONS = ["7", "9", "12", "18", "24", "30", "36"];
 
     const CATALOG_PATTERN_OPTIONS = SETTINGS.patterns.filter(pattern => pattern !== "Інший").map(pattern => ({
       label: pattern,
@@ -2431,7 +2439,7 @@
     function CatalogOrderForm() {
       const baseForm = {
         first_name: "", last_name: "", phone: "", city: "",
-        basket_model: "", basket_model_name: "", construction_type: "", basket_type: "Декоративний",
+        basket_model: "", basket_model_name: "", construction_type: "", basket_type: "",
         quantity: "1", has_cover: false, color: "", color_custom: "", pattern: "", pattern_custom: "", model_comment: "",
         size_w: "", size_h: "", size_d: "", block_w: "", block_h: "", block_d: "",
         ac_brand: "", ac_model: "", ac_model_url: "", bracket_model_from: "", bracket_model_to: "",
@@ -2509,7 +2517,7 @@
           basket_model: model.id,
           basket_model_name: model.fullName,
           construction_type: `${model.construction} · ${model.id}`,
-          basket_type: model.id === "AVL-02" ? "Декоративний" : (current.basket_type || "Декоративний"),
+          basket_type: "",
           has_cover: model.defaultCover
         }));
         setMeasureMode(model.id === "AVL-02" ? "bracket_range" : "ac");
@@ -2539,7 +2547,7 @@
       };
       const colorIsComplete = () => !!form.color;
       const configuratorIsComplete = () => !!(
-        selectedModel && form.basket_type && colorIsComplete() && form.pattern &&
+        selectedModel && colorIsComplete() && form.pattern &&
         (form.pattern !== "Інший" || form.pattern_custom.trim()) && Number(form.quantity) >= 1 && measurementIsComplete()
       );
 
@@ -2586,7 +2594,7 @@
         setShowErrors(false);
         setForm(current => ({
           ...current,
-          basket_model: "", basket_model_name: "", construction_type: "", basket_type: "Декоративний",
+          basket_model: "", basket_model_name: "", construction_type: "", basket_type: "",
           quantity: "1", has_cover: false, color: "", color_custom: "", pattern: "", pattern_custom: "", model_comment: "",
           size_w: "", size_h: "", size_d: "", block_w: "", block_h: "", block_d: "",
           ac_brand: "", ac_model: "", ac_model_url: "", bracket_model_from: "", bracket_model_to: ""
@@ -2706,7 +2714,7 @@
             <div className="mx-auto mb-5 flex items-center justify-center" style={{ width: 64, height: 64 }}><AvalonLogo size={64} /></div>
               <h1 className="text-2xl font-bold" style={{ color: "#1f2925" }}>Заявку на прорахунок надіслано</h1>
               <p className="mt-3 text-sm leading-6" style={{ color: "#59645e" }}>Менеджер перевірить параметри та зв'яжеться з вами для уточнення деталей.</p>
-              <button type="button" onClick={startNewRequest} className="mt-7 px-5 py-3 text-sm font-bold text-white" style={{ background: "#173d31", borderRadius: 6 }}>Створити ще одну заявку</button>
+              <button type="button" onClick={startNewRequest} className="catalog-primary-action catalog-add-to-request mt-7">Створити ще одну заявку</button>
             </div>
           </div>
         );
@@ -2718,7 +2726,7 @@
             <button type="button" onClick={() => goTo("catalog")} className="text-left" aria-label="До каталогу моделей">
               <AvalonBrand />
             </button>
-            <button type="button" onClick={() => goTo("request")} className="apple-action catalog-choice px-3 sm:px-4 py-2 text-sm font-bold" style={{ border: "1px solid #173d31", borderRadius: 6, color: "#173d31", background: "#fff" }}>
+            <button type="button" onClick={() => goTo("request")} className="catalog-secondary catalog-choice px-3 sm:px-4 py-2 text-sm font-bold">
               Заявка <span style={{ color: "#8f7340" }}>({items.length})</span>
             </button>
           </div>
@@ -2727,7 +2735,7 @@
 
       const ErrorText = ({ visible, children }) => visible ? <p className="mt-1 text-xs font-semibold" style={{ color: "#c2413b" }}>{children}</p> : null;
       const MeasureChoice = ({ id, title, description }) => (
-        <button type="button" onClick={() => changeMeasureMode(id)} className="text-left p-3" style={{ border: measureMode === id ? "2px solid #173d31" : "1px solid #d5dbd6", background: measureMode === id ? "#edf5f0" : "#fff", borderRadius: 6 }}>
+        <button type="button" onClick={() => changeMeasureMode(id)} className={`catalog-option catalog-choice measure-choice ${measureMode === id ? "is-active" : ""}`}>
           <div className="font-bold text-sm" style={{ color: "#26322d" }}>{title}</div><div className="mt-1 text-xs leading-5" style={{ color: "#66716b" }}>{description}</div>
         </button>
       );
@@ -2773,14 +2781,14 @@
               </section>
               <section className="mt-10 grid gap-4 md:grid-cols-2 py-6 border-y" style={{ borderColor: "#dce1dc" }}>
                 <div><h2 className="font-bold" style={{ color: "#26322d" }}>Не знаєте, яка модель потрібна?</h2><p className="mt-1 text-sm leading-6" style={{ color: "#66716b" }}>Оберіть будь-яку схожу модель. Менеджер допоможе підібрати остаточне рішення.</p></div>
-                <div className="flex flex-wrap gap-2 md:justify-end md:items-center"><a className="call-btn" href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> {SETTINGS.phone_contact}</a><a className="tg-btn" href="https://t.me/avalon_metal_design" target="_blank" rel="noopener noreferrer"><IconMessageCircle /> Написати в Telegram</a></div>
+                <div className="flex flex-wrap gap-2 md:justify-end md:items-center"><a className="catalog-secondary catalog-choice inline-flex items-center gap-2" href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> {SETTINGS.phone_contact}</a><a className="catalog-secondary catalog-choice inline-flex items-center gap-2" href="https://t.me/avalon_metal_design" target="_blank" rel="noopener noreferrer"><IconMessageCircle /> Написати в Telegram</a></div>
               </section>
             </main>
           )}
 
           {view === "model" && selectedModel && (
             <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
-              <button type="button" onClick={() => goTo("catalog")} className="text-sm font-semibold mb-5" style={{ color: "#173d31" }}>← Усі моделі</button>
+              <button type="button" onClick={() => goTo("catalog")} className="catalog-secondary catalog-choice mb-5 text-sm font-semibold">← Усі моделі</button>
               <section className="grid gap-7 lg:grid-cols-2 items-start">
                 <img src={selectedModel.image} alt={selectedModel.fullName} className="apple-model-image w-full bg-white" style={{ aspectRatio: "4 / 3", objectFit: "cover", borderRadius: 8, border: "1px solid #dce1dc" }} />
                 <div>
@@ -2805,21 +2813,9 @@
                 <div className="mt-7 grid gap-8 lg:grid-cols-2">
                   <div className="space-y-7">
                     <div>
-                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Виконання</h3>
-                      {selectedModel.id === "AVL-02" ? <div className="mt-3 p-3 text-sm font-semibold" style={{ color: "#173d31", background: "#edf5f0", border: "1px solid #cddbd2", borderRadius: 6 }}>Декоративний</div> : <>
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          {[{ value: "Декоративний", label: "Декоративний" }, { value: "Антивандальний (більша товщина металу+ каркас)", label: "Антивандальний" }].map(option => (
-                            <button key={option.value} type="button" onClick={() => set("basket_type", option.value)} className={`catalog-choice py-3 px-3 text-sm font-semibold ${form.basket_type === option.value ? "is-active" : ""}`} style={{ border: form.basket_type === option.value ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.basket_type === option.value ? "#edf5f0" : "#fff", color: "#26322d", borderRadius: 6 }}>{option.label}</button>
-                          ))}
-                        </div>
-                        {form.basket_type.startsWith("Антивандальний") && <p className="mt-3 p-3 text-sm leading-6" style={{ color: "#435149", background: "#f3f7f4", borderLeft: "3px solid #173d31", borderRadius: 4 }}>Антивандальне виконання — посилена конструкція: каркас із профільної труби, на який наварюється листовий метал більшої товщини.</p>}
-                      </>}
-                    </div>
-
-                    <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Колір</h3>
                       <p className="mt-1 text-xs" style={{ color: "#66716b" }}>Оберіть стандартний колір або відкрийте повну палітру RAL у каталозі.</p>
-                      <div className="mt-3 flex flex-wrap gap-3">
+                      <div className={`mt-3 flex flex-wrap gap-3 ${showErrors && !colorIsComplete() ? "catalog-choice-group is-error" : ""}`}>
                         {CATALOG_PRIMARY_COLORS.map(color => <button key={color.label} type="button" title={color.label} aria-label={color.label} onClick={() => { set("color", color.label); set("color_custom", ""); }} className={`catalog-choice color-choice ${form.color === color.label ? "is-active" : ""}`}><span className="color-swatch" style={{ background: color.hex }} /><span>{color.code}</span></button>)}
                         <button type="button" title="Палітра RAL" aria-label="Відкрити або закрити палітру RAL" onClick={() => { setShowRalPalette(current => !current); setVisibleRalCount(24); }} className={`catalog-choice color-choice ${showRalPalette ? "is-active" : ""}`}><span className="color-swatch ral-palette-swatch"><i /><i /><i /></span><span>Палітра RAL</span></button>
                       </div>
@@ -2831,7 +2827,7 @@
                     <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Візерунок</h3>
                       <p className="mt-1 text-xs" style={{ color: "#66716b" }}>Натисніть на візерунок, який вам подобається.</p>
-                      <div className="mt-3" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(112px, 132px))", gap: 12 }}>
+                      <div className={`mt-3 ${showErrors && (!form.pattern || (form.pattern === "Інший" && !form.pattern_custom.trim())) ? "catalog-choice-group is-error" : ""}`} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(112px, 132px))", gap: 12 }}>
                         {CATALOG_PATTERN_OPTIONS.map(pattern => <button key={pattern.label} type="button" onClick={() => { set("pattern", pattern.label); set("pattern_custom", ""); }} className={`catalog-choice pattern-choice text-left ${form.pattern === pattern.label ? "is-active" : ""}`}><img src={pattern.image} alt={`Візерунок ${pattern.label}`} /><span className="pattern-label">{pattern.label}</span></button>)}
                         <button type="button" onClick={() => set("pattern", "Інший")} className={`catalog-choice pattern-choice pattern-other text-center ${form.pattern === "Інший" ? "is-active" : ""}`}><span><span className="block text-sm font-bold" style={{ color: "#26322d" }}>Інший</span><span className="mt-1 block text-xs leading-5" style={{ color: "#66716b" }}>Опис або ескіз</span></span></button>
                       </div>
@@ -2843,13 +2839,13 @@
                   <div className="space-y-7">
                     <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Верхня кришка</h3>
-                      {selectedModel.coverAllowed === false ? <p className="mt-3 text-sm font-semibold p-3" style={{ color: "#526058", background: "#f4f5f3", borderRadius: 6 }}>Для цієї моделі верхня кришка не передбачена.</p> : selectedModel.defaultCover ? <p className="mt-3 text-sm font-semibold p-3" style={{ color: "#173d31", background: "#edf5f0", borderRadius: 6 }}>Передбачена конструкцією цієї моделі.</p> : <div className="mt-3 grid grid-cols-2 gap-2">{[{ value: false, label: "Без кришки" }, { value: true, label: "З кришкою" }].map(option => <button key={String(option.value)} type="button" onClick={() => set("has_cover", option.value)} className="py-3 px-3 text-sm font-semibold" style={{ border: form.has_cover === option.value ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.has_cover === option.value ? "#edf5f0" : "#fff", color: "#26322d", borderRadius: 6 }}>{option.label}</button>)}</div>}
+                      {selectedModel.coverAllowed === false ? <p className="mt-3 text-sm font-semibold p-3" style={{ color: "#526058", background: "#f4f5f3", borderRadius: 16 }}>Для цієї моделі верхня кришка не передбачена.</p> : selectedModel.defaultCover ? <p className="mt-3 text-sm font-semibold p-3" style={{ color: "#173d31", background: "#edf5f0", borderRadius: 16 }}>Передбачена конструкцією цієї моделі.</p> : <div className="mt-3 grid grid-cols-2 gap-2">{[{ value: false, label: "Без кришки" }, { value: true, label: "З кришкою" }].map(option => <button key={String(option.value)} type="button" onClick={() => set("has_cover", option.value)} className={`catalog-option catalog-choice text-sm font-semibold ${form.has_cover === option.value ? "is-active" : ""}`}>{option.label}</button>)}</div>}
                     </div>
 
-                    {selectedModel.id === "AVL-02" ? <div className="p-4" style={{ background: "#f3f7f4", borderRadius: 6, border: "1px solid #dce1dc" }}>
+                    {selectedModel.id === "AVL-02" ? <div className={`p-4 ${showErrors && !measurementIsComplete() ? "catalog-choice-group is-error" : ""}`} style={{ background: showErrors && !measurementIsComplete() ? "#fff8f8" : "#f3f7f4", borderRadius: 16, border: showErrors && !measurementIsComplete() ? "1px solid #ef4444" : "1px solid #dce1dc" }}>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Для якої потужності кондиціонера потрібна система?</h3>
                       <p className="mt-2 text-sm leading-6" style={{ color: "#66716b" }}>Оберіть діапазон потужності зовнішніх блоків у BTU. Регульовані перемички дозволяють підлаштувати кронштейни під різну ширину та глибину блока.</p>
-                      <div className="mt-4 grid gap-4 sm:grid-cols-2"><div><p className="mb-2 text-xs font-bold uppercase tracking-wider" style={{ color: "#66716b" }}>Від, BTU</p><div className="grid grid-cols-4 gap-2">{CATALOG_BTU_OPTIONS.map(option => { const value = `${option} BTU`; return <button key={value} type="button" onClick={() => set("bracket_model_from", value)} className={`catalog-choice btu-choice px-1 ${form.bracket_model_from === value ? "is-active" : ""}`} style={{ border: form.bracket_model_from === value ? "2px solid #173d31" : "1px solid #cfd7d1", background: form.bracket_model_from === value ? "#edf5f0" : "#fff", color: "#26322d" }}>{option}</button>; })}</div></div><div><p className="mb-2 text-xs font-bold uppercase tracking-wider" style={{ color: "#66716b" }}>До, BTU</p><div className="grid grid-cols-4 gap-2">{CATALOG_BTU_OPTIONS.map(option => { const value = `${option} BTU`; return <button key={value} type="button" onClick={() => set("bracket_model_to", value)} className={`catalog-choice btu-choice px-1 ${form.bracket_model_to === value ? "is-active" : ""}`} style={{ border: form.bracket_model_to === value ? "2px solid #173d31" : "1px solid #cfd7d1", background: form.bracket_model_to === value ? "#edf5f0" : "#fff", color: "#26322d" }}>{option}</button>; })}</div></div></div>
+                      <div className="mt-4 grid gap-4 sm:grid-cols-2"><div><p className="mb-2 text-xs font-bold uppercase tracking-wider" style={{ color: "#66716b" }}>Від, BTU</p><div className="grid grid-cols-4 gap-2">{CATALOG_BTU_OPTIONS.map(option => { const value = `${option} BTU`; return <button key={value} type="button" onClick={() => set("bracket_model_from", value)} className={`catalog-option catalog-choice btu-choice px-1 ${form.bracket_model_from === value ? "is-active" : ""}`}>{option}</button>; })}</div></div><div><p className="mb-2 text-xs font-bold uppercase tracking-wider" style={{ color: "#66716b" }}>До, BTU</p><div className="grid grid-cols-4 gap-2">{CATALOG_BTU_OPTIONS.map(option => { const value = `${option} BTU`; return <button key={value} type="button" onClick={() => set("bracket_model_to", value)} className={`catalog-option catalog-choice btu-choice px-1 ${form.bracket_model_to === value ? "is-active" : ""}`}>{option}</button>; })}</div></div></div>
                     </div> : <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Як визначити розмір?</h3>
                       <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -2863,7 +2859,7 @@
                     {measureMode === "bracket_range" && <ErrorText visible={showErrors && !measurementIsComplete()}>Оберіть коректний діапазон потужності: від меншого до більшого значення BTU.</ErrorText>}
                     {measureMode === "basket" && <div className="grid grid-cols-3 gap-2"><Field label="Ширина, мм"><StyledInput type="number" min="1" value={form.size_w} onChange={event => set("size_w", event.target.value)} error={showErrors && !hasSize(form)} /></Field><Field label="Висота, мм"><StyledInput type="number" min="1" value={form.size_h} onChange={event => set("size_h", event.target.value)} error={showErrors && !hasSize(form)} /></Field><Field label="Глибина, мм"><StyledInput type="number" min="1" value={form.size_d} onChange={event => set("size_d", event.target.value)} error={showErrors && !hasSize(form)} /></Field></div>}
 
-                    {measureMode === "ac" && <div className="space-y-3"><p className="text-sm leading-6" style={{ color: "#66716b" }}>Вкажіть габарити зовнішнього блоку. Ми додамо необхідний запас для монтажу.</p><div className="grid grid-cols-3 gap-2"><Field label="Ширина, мм"><StyledInput type="number" min="1" value={acDims.w} onChange={event => setAcDims(current => ({ ...current, w: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Висота, мм"><StyledInput type="number" min="1" value={acDims.h} onChange={event => setAcDims(current => ({ ...current, h: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Глибина, мм"><StyledInput type="number" min="1" value={acDims.d} onChange={event => setAcDims(current => ({ ...current, d: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field></div><div className="grid grid-cols-2 gap-2">{[{ value: true, label: "Закрити кронштейни" }, { value: false, label: "Не закривати кронштейни" }].map(option => <button key={String(option.value)} type="button" onClick={() => setCoversBrackets(option.value)} className="py-3 px-3 text-sm font-semibold" style={{ border: coversBrackets === option.value ? "2px solid #173d31" : "1px solid #d5dbd6", background: coversBrackets === option.value ? "#edf5f0" : "#fff", color: "#26322d", borderRadius: 6 }}>{option.label}</button>)}</div></div>}
+                    {measureMode === "ac" && <div className="space-y-3"><p className="text-sm leading-6" style={{ color: "#66716b" }}>Вкажіть габарити зовнішнього блоку. Ми додамо необхідний запас для монтажу.</p><div className="grid grid-cols-3 gap-2"><Field label="Ширина, мм"><StyledInput type="number" min="1" value={acDims.w} onChange={event => setAcDims(current => ({ ...current, w: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Висота, мм"><StyledInput type="number" min="1" value={acDims.h} onChange={event => setAcDims(current => ({ ...current, h: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Глибина, мм"><StyledInput type="number" min="1" value={acDims.d} onChange={event => setAcDims(current => ({ ...current, d: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field></div><div className={`grid grid-cols-2 gap-2 ${showErrors && coversBrackets === null ? "catalog-choice-group is-error" : ""}`}>{[{ value: true, label: "Закрити кронштейни" }, { value: false, label: "Не закривати кронштейни" }].map(option => <button key={String(option.value)} type="button" onClick={() => setCoversBrackets(option.value)} className={`catalog-option catalog-choice text-sm font-semibold ${coversBrackets === option.value ? "is-active" : ""}`}>{option.label}</button>)}</div></div>}
 
                     {measureMode === "model" && <div className="grid gap-3 sm:grid-cols-2"><Field label="Бренд кондиціонера"><StyledInput placeholder="Напр. Daikin" value={form.ac_brand} onChange={event => set("ac_brand", event.target.value)} error={showErrors && !measurementIsComplete()} /></Field><Field label="Модель кондиціонера"><StyledInput placeholder="Напр. FTXF35" value={form.ac_model} onChange={event => set("ac_model", event.target.value)} error={showErrors && !measurementIsComplete()} /></Field></div>}
 
@@ -2871,12 +2867,12 @@
                     <ErrorText visible={showErrors && measureMode !== "bracket_range" && !measurementIsComplete()}>Заповніть обраний спосіб визначення розміру.</ErrorText>
 
                     <Field label="Кількість, шт."><StyledInput type="number" min="1" value={form.quantity} onChange={event => set("quantity", event.target.value)} error={showErrors && !(Number(form.quantity) >= 1)} /></Field>
-                    <Field label="Коментар до цієї моделі"><textarea value={form.model_comment} onChange={event => set("model_comment", event.target.value)} placeholder="Наприклад: особливості монтажу, розміщення блока або побажання до виробу." rows="4" className="w-full p-3 text-sm" style={{ border: "1px solid #d1d5db", borderRadius: 6, resize: "vertical" }} /></Field>
+                    <Field label="Коментар до цієї моделі"><textarea value={form.model_comment} onChange={event => set("model_comment", event.target.value)} placeholder="Наприклад: особливості монтажу, розміщення блока або побажання до виробу." rows="4" className="catalog-textarea" /></Field>
                   </div>
                 </div>
                 <div className="mt-8 pt-5 border-t flex flex-col-reverse sm:flex-row gap-3 sm:items-center sm:justify-between" style={{ borderColor: "#dce1dc" }}>
                   <p className="text-sm" style={{ color: "#66716b" }}>Вартість визначить менеджер після перевірки параметрів.</p>
-                  <button type="button" onClick={addToRequest} className="catalog-primary-action">Додати до заявки на прорахунок</button>
+                  <button type="button" onClick={addToRequest} className="catalog-primary-action catalog-add-to-request">Додати до заявки на прорахунок</button>
                 </div>
               </section>
             </main>
@@ -2884,9 +2880,9 @@
 
           {view === "request" && (
             <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
-              <div className="catalog-request-heading"><div><p className="eyebrow">Ваша заявка</p><h1 className="text-3xl font-bold">Прорахунок кошиків</h1></div><button type="button" onClick={() => goTo("catalog")} className="catalog-secondary">+ Додати ще модель</button></div>
+              <div className="catalog-request-heading"><div><p className="eyebrow">Ваша заявка</p><h1 className="text-3xl font-bold">Прорахунок кошиків</h1></div><button type="button" onClick={() => goTo("catalog")} className="catalog-secondary catalog-choice">+ Додати ще модель</button></div>
 
-              {items.length === 0 ? <section className="py-16 text-center"><p className="text-lg font-semibold" style={{ color: "#26322d" }}>У заявці поки немає моделей.</p><button type="button" onClick={() => goTo("catalog")} className="catalog-primary-action mt-4">Перейти до каталогу</button></section> : <>
+              {items.length === 0 ? <section className="py-16 text-center"><p className="text-lg font-semibold" style={{ color: "#26322d" }}>У заявці поки немає моделей.</p><button type="button" onClick={() => goTo("catalog")} className="catalog-primary-action catalog-add-to-request mt-4">Перейти до каталогу</button></section> : <>
                 <section className="mt-6 grid gap-3" aria-label="Моделі у заявці">{items.map((item, index) => <article key={`${item.basket_model}-${index}`} className="flex gap-4 bg-white p-4" style={{ border: "1px solid #dce1dc", borderRadius: 8 }}><img src={CATALOG_MODELS.find(model => model.id === item.basket_model)?.image} alt="" className="hidden sm:block" style={{ width: 112, height: 84, objectFit: "cover", borderRadius: 5, background: "#eff1ef" }} /><div className="min-w-0 flex-1"><div className="text-xs font-bold tracking-widest" style={{ color: "#8f7340" }}>{item.basket_model}</div><h2 className="mt-1 font-bold" style={{ color: "#26322d" }}>{item.basket_model_name}</h2><p className="mt-1 text-sm" style={{ color: "#66716b" }}>{itemMeasurement(item)} · {item.quantity} шт.</p><p className="mt-1 text-xs" style={{ color: "#66716b" }}>{[item.basket_type, item.color_custom ? `${item.color}: ${item.color_custom}` : item.color, item.pattern_custom ? `${item.pattern}: ${item.pattern_custom}` : item.pattern, item.has_cover ? "з кришкою" : null].filter(Boolean).join(" · ")}</p>{item.model_comment && <p className="mt-2 text-xs leading-5" style={{ color: "#526058" }}>Коментар: {item.model_comment}</p>}</div><button type="button" onClick={() => removeItem(index)} aria-label={`Видалити ${item.basket_model_name}`} className="self-start p-2 text-sm font-bold" style={{ color: "#b54842" }}>Видалити</button></article>)}</section>
 
                 <form className="mt-6 grid gap-5" onSubmit={submitRequest} noValidate>
@@ -2900,9 +2896,10 @@
                     </div>
                     <div className="mt-5">
                       <p className="mb-2 text-sm font-bold" style={{ color: "#383e42" }}>Зручний спосіб зв'язку *</p>
-                      <div className="contact-method-grid">
+                      <div className={`contact-method-grid ${showErrors && !form.contact_method ? "catalog-choice-group is-error" : ""}`}>
                         {[{ value: "phone", label: "Телефон" }, { value: "telegram", label: "Telegram" }, { value: "viber", label: "Viber" }, { value: "whatsapp", label: "WhatsApp" }, { value: "email", label: "E-mail" }].map(method => <button key={method.value} type="button" onClick={() => set("contact_method", method.value)} className={`catalog-option ${form.contact_method === method.value ? "is-active" : ""}`}>{method.label}</button>)}
                       </div>
+                      <ErrorText visible={showErrors && !form.contact_method}>Оберіть зручний спосіб зв'язку.</ErrorText>
                     </div>
                     <div className="mt-5">
                       {["phone", "viber", "whatsapp"].includes(form.contact_method) && <Field label={`${contactLabels[form.contact_method]} *`}><StyledInput placeholder="+380 __ ___ __ __" value={form.phone} onChange={event => set("phone", formatPhoneUA(event.target.value))} error={showErrors && !contactIsValid()} /></Field>}
@@ -2914,17 +2911,17 @@
                   <section className="catalog-section">
                     <p className="eyebrow">Доставка</p>
                     <h2 className="text-2xl font-bold">Як зручно отримати замовлення?</h2>
-                    <div className="mt-6 delivery-choice-grid">
+                    <div className={`mt-6 delivery-choice-grid ${showErrors && !form.delivery_location ? "catalog-choice-group is-error" : ""}`}>
                       {[{ value: "manager", label: "Уточнити з менеджером", transport: "Уточнити з менеджером" }, { value: "local", label: "Доставка по Хмельницькому", transport: "" }, { value: "remote", label: "Відправлення в інше місто", transport: "" }, { value: "pickup", label: "Самовивіз", transport: "Самовивіз — пров. Шевченка, 39" }].map(option => <button key={option.value} type="button" onClick={() => setForm(current => ({ ...current, delivery_location: option.value, transport: option.transport, transport_custom: "", delivery_address: "" }))} className={`catalog-option ${form.delivery_location === option.value ? "is-active" : ""}`}>{option.label}</button>)}
                     </div>
                     {form.delivery_location === "manager" && <p className="mt-4 text-sm" style={{ color: "#6e6e73" }}>Менеджер узгодить спосіб і вартість доставки після прорахунку.</p>}
                     {form.delivery_location === "pickup" && <p className="mt-4 text-sm" style={{ color: "#6e6e73" }}>Самовивіз: пров. Шевченка, 39, Хмельницький. Час узгодить менеджер.</p>}
-                    {form.delivery_location === "local" && <div className="mt-5 space-y-4"><div><p className="mb-2 text-sm font-bold" style={{ color: "#383e42" }}>Спосіб доставки *</p><div className="delivery-choice-grid"><button type="button" onClick={() => set("transport", "Безкоштовна — пров. Шевченка, 39")} className={`catalog-option ${form.transport === "Безкоштовна — пров. Шевченка, 39" ? "is-active" : ""}`}>Безкоштовна — пров. Шевченка, 39</button><button type="button" onClick={() => set("transport", "Адресна доставка")} className={`catalog-option ${form.transport === "Адресна доставка" ? "is-active" : ""}`}>Адресна доставка</button></div></div>{localAddressRequired && <Field label="Адреса доставки *"><StyledInput placeholder="Вулиця, будинок, квартира або офіс" value={form.delivery_address} onChange={event => set("delivery_address", event.target.value)} error={showErrors && !form.delivery_address.trim()} /></Field>}</div>}
+                    {form.delivery_location === "local" && <div className="mt-5 space-y-4"><div><p className="mb-2 text-sm font-bold" style={{ color: "#383e42" }}>Спосіб доставки *</p><div className={`delivery-choice-grid ${showErrors && !form.transport ? "catalog-choice-group is-error" : ""}`}><button type="button" onClick={() => set("transport", "Безкоштовна — пров. Шевченка, 39")} className={`catalog-option ${form.transport === "Безкоштовна — пров. Шевченка, 39" ? "is-active" : ""}`}>Безкоштовна — пров. Шевченка, 39</button><button type="button" onClick={() => set("transport", "Адресна доставка")} className={`catalog-option ${form.transport === "Адресна доставка" ? "is-active" : ""}`}>Адресна доставка</button></div></div>{localAddressRequired && <Field label="Адреса доставки *"><StyledInput placeholder="Вулиця, будинок, квартира або офіс" value={form.delivery_address} onChange={event => set("delivery_address", event.target.value)} error={showErrors && !form.delivery_address.trim()} /></Field>}</div>}
                     {form.delivery_location === "remote" && <div className="mt-5 grid gap-4 sm:grid-cols-2"><Field label="Служба доставки *"><StyledSelect value={form.transport} onChange={value => setForm(current => ({ ...current, transport: value, transport_custom: "" }))} placeholder="Оберіть службу" error={showErrors && !form.transport}><option value="Нова пошта">Нова пошта</option><option value="Укрпошта">Укрпошта</option><option value="Делівері">Делівері</option><option value="Інше">Інше</option></StyledSelect></Field>{form.transport === "Інше" && <Field label="Назва служби *"><StyledInput placeholder="Вкажіть службу доставки" value={form.transport_custom} onChange={event => set("transport_custom", event.target.value)} error={showErrors && !form.transport_custom.trim()} /></Field>}<div className={form.transport === "Інше" ? "sm:col-span-2" : "sm:col-span-2"}><Field label="Місто, відділення або адреса *"><StyledInput placeholder="Напр. Хмельницький, відділення №5" value={form.delivery_address} onChange={event => set("delivery_address", event.target.value)} error={showErrors && !form.delivery_address.trim()} /></Field></div></div>}
                     <div className="mt-5">
                       <Field label={`${deliveryDateLabel} *`}>
                         <p className="mb-2 text-xs leading-5" style={{ color: "#6e6e73" }}>Оберіть орієнтовну дату. Менеджер підтвердить її після перевірки замовлення та виробничого графіка.</p>
-                        <button type="button" onClick={() => setShowCalendar(true)} className="catalog-secondary w-full flex items-center gap-2 text-left" style={{ minHeight: 52, color: form.delivery_date ? "#26322d" : "#8a9690", borderColor: showErrors && !form.delivery_date ? "#c2413b" : undefined }}>
+                        <button type="button" onClick={() => setShowCalendar(true)} className="catalog-secondary catalog-choice w-full flex items-center gap-2 text-left" style={{ minHeight: 52, color: form.delivery_date ? "#26322d" : "#8a9690", borderColor: showErrors && !form.delivery_date ? "#c2413b" : undefined }}>
                           <span style={{ color: "#173d31", flexShrink: 0 }}><IconCalendar /></span>
                           {form.delivery_date ? formatDeliveryDate(form.delivery_date) : "Оберіть дату"}
                         </button>
@@ -2947,9 +2944,9 @@
                     <p className="eyebrow">Завершення</p>
                     <h2 className="text-2xl font-bold">Коментар і підтвердження</h2>
                     <div className="mt-6"><Field label="Коментар або питання"><textarea value={form.notes} onChange={event => set("notes", event.target.value)} placeholder="Наприклад: особливості фасаду, бажаний термін, потрібна допомога з вибором." rows="5" className="catalog-textarea" /></Field></div>
-                    <label className="catalog-check mt-6"><input type="checkbox" checked={form.terms_accepted} onChange={event => set("terms_accepted", event.target.checked)} /><span>Я погоджуюсь на зв'язок для прорахунку та ознайомився(лася) з умовами замовлення. *</span></label><ErrorText visible={showErrors && !form.terms_accepted}>Підтвердіть умови, щоб надіслати заявку.</ErrorText>
+                    <label className={`catalog-check mt-6 ${showErrors && !form.terms_accepted ? "is-error" : ""}`}><input type="checkbox" checked={form.terms_accepted} onChange={event => set("terms_accepted", event.target.checked)} /><span>Я погоджуюсь на зв'язок для прорахунку та ознайомився(лася) з умовами замовлення. *</span></label><ErrorText visible={showErrors && !form.terms_accepted}>Підтвердіть умови, щоб надіслати заявку.</ErrorText>
                     <details className="mt-5 border-t pt-4" style={{ borderColor: "#e3e3e6" }}><summary className="cursor-pointer text-sm font-semibold" style={{ color: "#383e42" }}>Умови замовлення</summary><div className="mt-3"><TermsBlock /></div></details>
-                    <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between"><a className="catalog-secondary inline-flex items-center justify-center gap-2" href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> Потрібна допомога</a><button type="submit" disabled={submitting} className="catalog-submit">{submitting ? "Надсилання..." : "Надіслати заявку на прорахунок"}</button></div>
+                    <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between"><a className="catalog-secondary catalog-choice inline-flex items-center justify-center gap-2" href={`tel:${SETTINGS.phone_contact.replace(/\s/g, "")}`}><IconPhone /> Потрібна допомога</a><button type="submit" disabled={submitting} className="catalog-submit catalog-add-to-request">{submitting ? "Надсилання..." : "Надіслати заявку на прорахунок"}</button></div>
                   </section>
                 </form>
 
