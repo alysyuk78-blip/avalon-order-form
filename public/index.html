@@ -228,8 +228,8 @@
     .color-choice.is-active .ral-palette-swatch::after { display: none; }
     .ral-palette-swatch i { display: block; width: 22px; height: 2px; border-radius: 999px; background: var(--avalon-7016); }
     .ral-colors-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); justify-items: center; gap: 14px 8px; }
-    .pattern-choice { width: 100%; min-width: 0; overflow: hidden; padding: 5px 5px 0; border: 1px solid #d2d5d8; border-radius: 14px !important; background: #fff; }
-    .pattern-choice img { display: block; width: 100%; aspect-ratio: 4 / 3; border-radius: 9px 9px 0 0; object-fit: cover; background: #050505; transition: transform .24s cubic-bezier(.2,.8,.2,1), filter .24s ease; }
+    .pattern-choice { width: 100%; min-width: 0; overflow: hidden; padding: 6px 6px 0; border: 1px solid #d2d5d8; border-radius: 18px !important; background: #fff; }
+    .pattern-choice img { display: block; width: 100%; aspect-ratio: 4 / 3; padding: 3px; border-radius: 12px; object-fit: contain; background: #050505; transition: transform .24s cubic-bezier(.2,.8,.2,1), filter .24s ease; }
     .pattern-choice .pattern-label { display: block; padding: 10px 8px 11px; text-align: center; color: #1d1d1f; font-size: 12px; font-weight: 750; background: #fff; }
     .pattern-other { min-height: 0; aspect-ratio: 9 / 7; display: grid; place-items: center; padding: 12px; border-style: dashed !important; }
     @media (hover: hover) { .pattern-choice:hover img { transform: scale(1.018); filter: contrast(1.03); } }
@@ -277,6 +277,7 @@
       .step-nav button { width: 100%; }
       .metal-palette-grid { grid-template-columns: 1fr; }
       .bracket-choice-grid { grid-template-columns: 1fr !important; }
+      .pattern-choice-grid { justify-content: center; }
     }
   </style>
 </head>
@@ -2827,7 +2828,7 @@
                     <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Візерунок</h3>
                       <p className="mt-1 text-xs" style={{ color: "#66716b" }}>Натисніть на візерунок, який вам подобається.</p>
-                      <div className={`mt-3 ${showErrors && (!form.pattern || (form.pattern === "Інший" && !form.pattern_custom.trim())) ? "catalog-choice-group is-error" : ""}`} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(112px, 132px))", gap: 12 }}>
+                      <div className={`pattern-choice-grid mt-3 ${showErrors && (!form.pattern || (form.pattern === "Інший" && !form.pattern_custom.trim())) ? "catalog-choice-group is-error" : ""}`} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(112px, 132px))", gap: 12 }}>
                         {CATALOG_PATTERN_OPTIONS.map(pattern => <button key={pattern.label} type="button" onClick={() => { set("pattern", pattern.label); set("pattern_custom", ""); }} className={`catalog-choice pattern-choice text-left ${form.pattern === pattern.label ? "is-active" : ""}`}><img src={pattern.image} alt={`Візерунок ${pattern.label}`} /><span className="pattern-label">{pattern.label}</span></button>)}
                         <button type="button" onClick={() => set("pattern", "Інший")} className={`catalog-choice pattern-choice pattern-other text-center ${form.pattern === "Інший" ? "is-active" : ""}`}><span><span className="block text-sm font-bold" style={{ color: "#26322d" }}>Інший</span><span className="mt-1 block text-xs leading-5" style={{ color: "#66716b" }}>Опис або ескіз</span></span></button>
                       </div>
