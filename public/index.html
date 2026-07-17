@@ -2761,18 +2761,15 @@
         const dimensions = (width, height, depth) => Number(width) > 0 && Number(height) > 0 && Number(depth) > 0 ? `${width} × ${height} × ${depth} мм` : "";
         const basketDimensions = dimensions(item.size_w, item.size_h, item.size_d);
         const blockDimensions = dimensions(item.block_w, item.block_h, item.block_d);
-        if (item.size_mode === "ac") return {
-          primary: basketDimensions ? `Розміри кошика: ${basketDimensions}` : "Розміри кошика уточнить менеджер",
-          secondary: blockDimensions ? `Розміри зовнішнього блоку: ${blockDimensions}` : null
-        };
-        if (item.size_mode === "basket" || basketDimensions) return { primary: `Розміри кошика: ${basketDimensions}` };
+        if (item.size_mode === "ac") return { primary: blockDimensions ? `Блок: ${blockDimensions}` : "Блок уточнить менеджер" };
+        if (item.size_mode === "basket" || basketDimensions) return { primary: `Кошик: ${basketDimensions}` };
         if (item.size_mode === "bracket_range") return { primary: `Діапазон потужності: ${item.bracket_model_from} — ${item.bracket_model_to}` };
         if (item.size_mode === "url") return { primary: "Кондиціонер: за посиланням" };
         return { primary: `Кондиціонер: ${[item.ac_brand, item.ac_model].filter(Boolean).join(" ") || "уточнить менеджер"}` };
       };
       const ItemMeasurement = ({ item }) => {
         const summary = itemMeasurement(item);
-        return <div className="mt-1 text-sm" style={{ color: "#66716b" }}><p>{summary.primary} · {item.quantity} шт.</p>{summary.secondary && <p className="mt-1 text-xs" style={{ color: "#7a847f" }}>{summary.secondary}</p>}</div>;
+        return <p className="mt-1 text-sm" style={{ color: "#66716b" }}>{summary.primary} · {item.quantity} шт.</p>;
       };
 
       if (submitted) {
