@@ -2724,10 +2724,21 @@
       };
 
       const itemMeasurement = (item) => {
-        if (Number(item.size_w) > 0) return `${item.size_w} × ${item.size_h} × ${item.size_d} мм`;
-        if (item.size_mode === "bracket_range") return `Потужність: ${item.bracket_model_from} — ${item.bracket_model_to}`;
-        if (item.size_mode === "url") return "Посилання на модель кондиціонера";
-        return [item.ac_brand, item.ac_model].filter(Boolean).join(" ") || "Розмір уточнить менеджер";
+        const dimensions = (width, height, depth) => Number(width) > 0 && Number(height) > 0 && Number(depth) > 0 ? `${width} × ${height} × ${depth} мм` : "";
+        const basketDimensions = dimensions(item.size_w, item.size_h, item.size_d);
+        const blockDimensions = dimensions(item.block_w, item.block_h, item.block_d);
+        if (item.size_mode === "ac") return {
+          primary: basketDimensions ? `Розміри кошика: ${basketDimensions}` : "Розміри кошика уточнить менеджер",
+          secondary: blockDimensions ? `Розміри зовнішнього блоку: ${blockDimensions}` : null
+        };
+        if (item.size_mode === "basket" || basketDimensions) return { primary: `Розміри кошика: ${basketDimensions}` };
+        if (item.size_mode === "bracket_range") return { primary: `Діапазон потужності: ${item.bracket_model_from} — ${item.bracket_model_to}` };
+        if (item.size_mode === "url") return { primary: "Кондиціонер: за посиланням" };
+        return { primary: `Кондиціонер: ${[item.ac_brand, item.ac_model].filter(Boolean).join(" ") || "уточнить менеджер"}` };
+      };
+      const ItemMeasurement = ({ item }) => {
+        const summary = itemMeasurement(item);
+        return <div className="mt-1 text-sm" style={{ color: "#66716b" }}><p>{summary.primary} · {item.quantity} шт.</p>{summary.secondary && <p className="mt-1 text-xs" style={{ color: "#7a847f" }}>{summary.secondary}</p>}</div>;
       };
 
       if (submitted) {
@@ -2906,7 +2917,7 @@
               <div className="catalog-request-heading"><div><p className="eyebrow">Ваша заявка</p><h1 className="text-3xl font-bold">Прорахунок кошиків</h1></div><button type="button" onClick={() => goTo("catalog")} className="catalog-secondary catalog-choice">+ Додати ще модель</button></div>
 
               {items.length === 0 ? <section className="py-16 text-center"><p className="text-lg font-semibold" style={{ color: "#26322d" }}>У заявці поки немає моделей.</p><button type="button" onClick={() => goTo("catalog")} className="catalog-primary-action catalog-add-to-request mt-4">Перейти до каталогу</button></section> : <>
-                <section className="mt-6 grid gap-3" aria-label="Моделі у заявці">{items.map((item, index) => <article key={`${item.basket_model}-${index}`} className="flex gap-4 bg-white p-4" style={{ border: "1px solid #dce1dc", borderRadius: 8 }}><img src={CATALOG_MODELS.find(model => model.id === item.basket_model)?.image} alt="" className="hidden sm:block" style={{ width: 112, height: 84, objectFit: "cover", borderRadius: 5, background: "#eff1ef" }} /><div className="min-w-0 flex-1"><div className="text-xs font-bold tracking-widest" style={{ color: "#8f7340" }}>{item.basket_model}</div><h2 className="mt-1 font-bold" style={{ color: "#26322d" }}>{item.basket_model_name}</h2><p className="mt-1 text-sm" style={{ color: "#66716b" }}>{itemMeasurement(item)} · {item.quantity} шт.</p><p className="mt-1 text-xs" style={{ color: "#66716b" }}>{[item.basket_type, item.color_custom ? `${item.color}: ${item.color_custom}` : item.color, item.pattern_custom ? `${item.pattern}: ${item.pattern_custom}` : item.pattern, item.has_cover ? "з кришкою" : null].filter(Boolean).join(" · ")}</p>{item.model_comment && <p className="mt-2 text-xs leading-5" style={{ color: "#526058" }}>Коментар: {item.model_comment}</p>}</div><button type="button" onClick={() => removeItem(index)} aria-label={`Видалити ${item.basket_model_name}`} className="self-start p-2 text-sm font-bold" style={{ color: "#b54842" }}>Видалити</button></article>)}</section>
+                <section className="mt-6 grid gap-3" aria-label="Моделі у заявці">{items.map((item, index) => <article key={`${item.basket_model}-${index}`} className="flex gap-4 bg-white p-4" style={{ border: "1px solid #dce1dc", borderRadius: 8 }}><img src={CATALOG_MODELS.find(model => model.id === item.basket_model)?.image} alt="" className="hidden sm:block" style={{ width: 112, height: 84, objectFit: "cover", borderRadius: 5, background: "#eff1ef" }} /><div className="min-w-0 flex-1"><div className="text-xs font-bold tracking-widest" style={{ color: "#8f7340" }}>{item.basket_model}</div><h2 className="mt-1 font-bold" style={{ color: "#26322d" }}>{item.basket_model_name}</h2><ItemMeasurement item={item} /><p className="mt-1 text-xs" style={{ color: "#66716b" }}>{[item.basket_type, item.color_custom ? `${item.color}: ${item.color_custom}` : item.color, item.pattern_custom ? `${item.pattern}: ${item.pattern_custom}` : item.pattern, item.has_cover ? "з кришкою" : null].filter(Boolean).join(" · ")}</p>{item.model_comment && <p className="mt-2 text-xs leading-5" style={{ color: "#526058" }}>Коментар: {item.model_comment}</p>}</div><button type="button" onClick={() => removeItem(index)} aria-label={`Видалити ${item.basket_model_name}`} className="self-start p-2 text-sm font-bold" style={{ color: "#b54842" }}>Видалити</button></article>)}</section>
 
                 <form className="mt-6 grid gap-5" onSubmit={submitRequest} noValidate>
                   <section className="catalog-section">
