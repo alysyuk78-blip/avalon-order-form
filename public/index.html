@@ -193,6 +193,23 @@
       .size-mode-panel { animation: none; }
     }
     .choice-row { min-height: 44px; }
+    /* Інтерактивні елементи каталогу: помітний, але спокійний відгук на вибір. */
+    .catalog-choice { position: relative; -webkit-tap-highlight-color: transparent; transition: transform .18s cubic-bezier(.2,.7,.3,1), box-shadow .2s ease, border-color .2s ease, background-color .2s ease; }
+    .catalog-choice:focus-visible { outline: 3px solid rgba(143,115,64,.45); outline-offset: 3px; }
+    @media (hover: hover) { .catalog-choice:hover { transform: translateY(-2px); box-shadow: 0 7px 16px rgba(23,61,49,.14); } }
+    .catalog-choice:active { transform: translateY(0) scale(.96); }
+    .catalog-choice.is-active { border-color: #173d31 !important; box-shadow: 0 0 0 3px rgba(23,61,49,.17), 0 7px 18px rgba(23,61,49,.16) !important; }
+    .catalog-choice.is-active::after { content: "✓"; position: absolute; top: -7px; right: -7px; z-index: 2; width: 20px; height: 20px; border-radius: 999px; display: flex; align-items: center; justify-content: center; background: #173d31; color: #fff; font-size: 12px; font-weight: 800; box-shadow: 0 2px 7px rgba(0,0,0,.22); }
+    .color-choice { width: 58px; display: flex; flex-direction: column; align-items: center; gap: 5px; background: transparent; border: 0; color: #526058; font-size: 10px; font-weight: 700; line-height: 1.1; }
+    .color-swatch { width: 48px; height: 48px; border-radius: 50%; border: 1px solid rgba(38,50,45,.28); box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 2px 5px rgba(0,0,0,.14); }
+    .color-choice.is-active .color-swatch { border: 3px solid #173d31; }
+    .ral-colors-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); justify-items: center; gap: 14px 8px; }
+    .pattern-choice { min-width: 0; }
+    .pattern-choice img { transition: transform .2s ease, filter .2s ease; }
+    @media (hover: hover) { .pattern-choice:hover img { transform: scale(1.06); filter: contrast(1.05); } }
+    .btu-choice { min-height: 42px; border-radius: 8px; font-size: 12px; font-weight: 800; }
+    @media (min-width: 640px) { .ral-colors-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+    @media (min-width: 1024px) { .ral-colors-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
     #form-start { scroll-margin-top: 100px; }
     @media (max-width: 480px) {
       .help-toggle { width: 48px; height: 48px; padding: 0; }
@@ -207,6 +224,7 @@
 </head>
 <body>
   <div id="root"></div>
+  <script src="data/ral-classic.js"></script>
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
@@ -356,26 +374,14 @@
     ];
 
     const CATALOG_PRIMARY_COLORS = [
-      { label: "Білий (RAL 9016)", hex: "#F3F3F3" },
-      { label: "Сірий (RAL 7016)", hex: "#373F43" },
-      { label: "Чорний (RAL 9005)", hex: "#0A0A0A" }
+      { label: "Білий (RAL 9016)", code: "RAL 9016", hex: "#F3F3F3" },
+      { label: "Сірий (RAL 7016)", code: "RAL 7016", hex: "#373F43" },
+      { label: "Чорний (RAL 9005)", code: "RAL 9005", hex: "#0A0A0A" }
     ];
 
-    // Популярні відтінки RAL Classic для швидкого вибору. Повний каталог відкривається за посиланням у формі.
-    const CATALOG_RAL_COLORS = [
-      { label: "Кремовий (RAL 1013)", hex: "#E9E4D0" },
-      { label: "Жовтий (RAL 1023)", hex: "#F5A400" },
-      { label: "Червоний (RAL 3005)", hex: "#5A2028" },
-      { label: "Синій (RAL 5005)", hex: "#005387" },
-      { label: "Зелений (RAL 6005)", hex: "#0D3A2C" },
-      { label: "Сріблястий (RAL 7001)", hex: "#8F9692" },
-      { label: "Графіт (RAL 7024)", hex: "#4B5054" },
-      { label: "Світло-сірий (RAL 7035)", hex: "#D3D7D1" },
-      { label: "Темно-сірий (RAL 7021)", hex: "#20232A" },
-      { label: "Коричневий (RAL 8017)", hex: "#45312B" },
-      { label: "Темно-коричневий (RAL 8019)", hex: "#342C2A" },
-      { label: "Алюмінієвий (RAL 9006)", hex: "#A5A5A0" }
-    ];
+    // Повна локальна палітра RAL Classic завантажується з data/ral-classic.js.
+    const CATALOG_RAL_COLORS = (window.AVALON_RAL_CLASSIC || []).filter(color => !CATALOG_PRIMARY_COLORS.some(primary => primary.code === color.code));
+    const CATALOG_BTU_OPTIONS = ["7 000", "9 000", "12 000", "18 000", "24 000", "30 000", "36 000"];
 
     const CATALOG_PATTERN_OPTIONS = SETTINGS.patterns.filter(pattern => pattern !== "Інший").map(pattern => ({
       label: pattern,
@@ -2382,6 +2388,7 @@
       const [coversBrackets, setCoversBrackets] = useState(null);
       const [patternFile, setPatternFile] = useState(null);
       const [showRalPalette, setShowRalPalette] = useState(false);
+      const [visibleRalCount, setVisibleRalCount] = useState(24);
       const [showErrors, setShowErrors] = useState(false);
       const [submitting, setSubmitting] = useState(false);
       const submittingRef = useRef(false);
@@ -2438,7 +2445,7 @@
           basket_model: model.id,
           basket_model_name: model.fullName,
           construction_type: `${model.construction} · ${model.id}`,
-          basket_type: current.basket_type || "Декоративний",
+          basket_type: model.id === "AVL-02" ? "Декоративний" : (current.basket_type || "Декоративний"),
           has_cover: model.defaultCover
         }));
         setMeasureMode(model.id === "AVL-02" ? "bracket_range" : "ac");
@@ -2457,8 +2464,10 @@
       };
 
       const hasSize = candidate => Number(candidate.size_w) > 0 && Number(candidate.size_h) > 0 && Number(candidate.size_d) > 0;
+      const btuNumber = value => Number(String(value || "").replace(/\D/g, ""));
+      const bracketRangeIsValid = () => btuNumber(form.bracket_model_from) > 0 && btuNumber(form.bracket_model_to) > 0 && btuNumber(form.bracket_model_from) <= btuNumber(form.bracket_model_to);
       const measurementIsComplete = () => {
-        if (measureMode === "bracket_range") return !!(form.bracket_model_from.trim() && form.bracket_model_to.trim());
+        if (measureMode === "bracket_range") return bracketRangeIsValid();
         if (measureMode === "basket") return hasSize(form);
         if (measureMode === "ac") return coversBrackets !== null && hasSize(form);
         if (measureMode === "model") return !!(form.ac_brand.trim() && form.ac_model.trim());
@@ -2594,7 +2603,7 @@
 
       const itemMeasurement = (item) => {
         if (Number(item.size_w) > 0) return `${item.size_w} × ${item.size_h} × ${item.size_d} мм`;
-        if (item.size_mode === "bracket_range") return `Кронштейни: ${item.bracket_model_from} — ${item.bracket_model_to}`;
+        if (item.size_mode === "bracket_range") return `Потужність: ${item.bracket_model_from} — ${item.bracket_model_to}`;
         if (item.size_mode === "url") return "Посилання на модель кондиціонера";
         return [item.ac_brand, item.ac_model].filter(Boolean).join(" ") || "Розмір уточнить менеджер";
       };
@@ -2694,22 +2703,24 @@
                   <div className="space-y-7">
                     <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Виконання</h3>
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        {[{ value: "Декоративний", label: "Декоративний" }, { value: "Антивандальний (більша товщина металу+ каркас)", label: "Антивандальний" }].map(option => (
-                          <button key={option.value} type="button" onClick={() => set("basket_type", option.value)} className="py-3 px-3 text-sm font-semibold" style={{ border: form.basket_type === option.value ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.basket_type === option.value ? "#edf5f0" : "#fff", color: "#26322d", borderRadius: 6 }}>{option.label}</button>
-                        ))}
-                      </div>
-                      {form.basket_type.startsWith("Антивандальний") && <p className="mt-3 p-3 text-sm leading-6" style={{ color: "#435149", background: "#f3f7f4", borderLeft: "3px solid #173d31", borderRadius: 4 }}>Антивандальне виконання — посилена конструкція: каркас із профільної труби, на який наварюється листовий метал більшої товщини.</p>}
+                      {selectedModel.id === "AVL-02" ? <div className="mt-3 p-3 text-sm font-semibold" style={{ color: "#173d31", background: "#edf5f0", border: "1px solid #cddbd2", borderRadius: 6 }}>Декоративний</div> : <>
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          {[{ value: "Декоративний", label: "Декоративний" }, { value: "Антивандальний (більша товщина металу+ каркас)", label: "Антивандальний" }].map(option => (
+                            <button key={option.value} type="button" onClick={() => set("basket_type", option.value)} className={`catalog-choice py-3 px-3 text-sm font-semibold ${form.basket_type === option.value ? "is-active" : ""}`} style={{ border: form.basket_type === option.value ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.basket_type === option.value ? "#edf5f0" : "#fff", color: "#26322d", borderRadius: 6 }}>{option.label}</button>
+                          ))}
+                        </div>
+                        {form.basket_type.startsWith("Антивандальний") && <p className="mt-3 p-3 text-sm leading-6" style={{ color: "#435149", background: "#f3f7f4", borderLeft: "3px solid #173d31", borderRadius: 4 }}>Антивандальне виконання — посилена конструкція: каркас із профільної труби, на який наварюється листовий метал більшої товщини.</p>}
+                      </>}
                     </div>
 
                     <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Колір</h3>
-                      <p className="mt-1 text-xs" style={{ color: "#66716b" }}>Оберіть стандартний колір або відкрийте палітру RAL.</p>
+                      <p className="mt-1 text-xs" style={{ color: "#66716b" }}>Оберіть стандартний колір або відкрийте повну палітру RAL у каталозі.</p>
                       <div className="mt-3 flex flex-wrap gap-3">
-                        {CATALOG_PRIMARY_COLORS.map(color => <button key={color.label} type="button" title={color.label} aria-label={color.label} onClick={() => { set("color", color.label); set("color_custom", ""); setShowRalPalette(false); }} className="flex items-center justify-center" style={{ width: 48, height: 48, borderRadius: "50%", background: color.hex, border: form.color === color.label ? "3px solid #173d31" : color.hex === "#F3F3F3" ? "1px solid #adb6af" : "1px solid transparent", boxShadow: form.color === color.label ? "0 0 0 3px #cddbd2" : "0 1px 4px rgba(0,0,0,.15)" }}><span className="sr-only">{color.label}</span></button>)}
-                        <button type="button" onClick={() => setShowRalPalette(current => !current)} className="px-4 text-sm font-bold" style={{ height: 48, borderRadius: 6, border: showRalPalette ? "2px solid #173d31" : "1px solid #173d31", background: showRalPalette ? "#edf5f0" : "#fff", color: "#173d31" }}>RAL</button>
+                        {CATALOG_PRIMARY_COLORS.map(color => <button key={color.label} type="button" title={color.label} aria-label={color.label} onClick={() => { set("color", color.label); set("color_custom", ""); }} className={`catalog-choice color-choice ${form.color === color.label ? "is-active" : ""}`}><span className="color-swatch" style={{ background: color.hex }} /><span>{color.code}</span></button>)}
+                        <button type="button" onClick={() => { setShowRalPalette(current => !current); setVisibleRalCount(24); }} className={`catalog-choice px-4 text-sm font-bold ${showRalPalette ? "is-active" : ""}`} style={{ minHeight: 48, borderRadius: 8, border: showRalPalette ? "2px solid #173d31" : "1px solid #173d31", background: showRalPalette ? "#edf5f0" : "#fff", color: "#173d31" }}>Палітра RAL</button>
                       </div>
-                      {showRalPalette && <div className="mt-3 p-4" style={{ border: "1px solid #dce1dc", background: "#f8faf8", borderRadius: 6 }}><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs leading-5" style={{ color: "#66716b" }}>Інші кольори з палітри RAL: +200 ₴.</p><a href="https://lacover.ua/katalog-ral/" target="_blank" rel="noopener noreferrer" className="text-xs font-bold" style={{ color: "#173d31" }}>Весь каталог RAL ↗</a></div><div className="mt-3 grid grid-cols-6 sm:grid-cols-8 gap-2">{CATALOG_RAL_COLORS.map(color => <button key={color.label} type="button" title={color.label} aria-label={color.label} onClick={() => { set("color", color.label); set("color_custom", ""); setShowRalPalette(false); }} className="flex items-center justify-center" style={{ aspectRatio: "1", borderRadius: 5, background: color.hex, border: form.color === color.label ? "3px solid #173d31" : ["#E9E4D0", "#D3D7D1", "#A5A5A0"].includes(color.hex) ? "1px solid #adb6af" : "1px solid transparent", boxShadow: form.color === color.label ? "0 0 0 2px #cddbd2" : "0 1px 3px rgba(0,0,0,.12)" }}><span className="sr-only">{color.label}</span></button>)}</div></div>}
+                      {showRalPalette && <div className="mt-4 p-4" style={{ border: "1px solid #dce1dc", background: "#f8faf8", borderRadius: 8 }}><p className="text-xs leading-5" style={{ color: "#66716b" }}>Інші кольори RAL: +200 ₴ до вартості замовлення. Оберіть відтінок нижче.</p><div className="ral-colors-grid mt-4">{CATALOG_RAL_COLORS.slice(0, visibleRalCount).map(color => <button key={color.code} type="button" title={color.code} aria-label={color.code} onClick={() => { set("color", color.code); set("color_custom", ""); }} className={`catalog-choice color-choice ${form.color === color.code ? "is-active" : ""}`}><span className="color-swatch" style={{ background: color.hex }} /><span>{color.code}</span></button>)}</div>{visibleRalCount < CATALOG_RAL_COLORS.length && <button type="button" onClick={() => setVisibleRalCount(current => Math.min(current + 24, CATALOG_RAL_COLORS.length))} className="catalog-choice mt-5 w-full px-4 py-3 text-sm font-bold" style={{ border: "1px solid #173d31", borderRadius: 8, background: "#fff", color: "#173d31" }}>Показати ще ({CATALOG_RAL_COLORS.length - visibleRalCount})</button>}<p className="mt-4 text-center text-xs" style={{ color: "#77817b" }}>Показано {Math.min(visibleRalCount, CATALOG_RAL_COLORS.length)} з {CATALOG_RAL_COLORS.length} кольорів.</p></div>}
                       <div className="mt-3 text-sm font-semibold" style={{ color: form.color ? "#26322d" : "#9aa49d" }}>{form.color || "Оберіть колір"}</div>
                       <ErrorText visible={showErrors && !colorIsComplete()}>Оберіть колір.</ErrorText>
                     </div>
@@ -2717,9 +2728,9 @@
                     <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Візерунок</h3>
                       <p className="mt-1 text-xs" style={{ color: "#66716b" }}>Натисніть на візерунок, який вам подобається.</p>
-                      <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-                        {CATALOG_PATTERN_OPTIONS.map(pattern => <button key={pattern.label} type="button" onClick={() => { set("pattern", pattern.label); set("pattern_custom", ""); }} className="overflow-hidden text-left" style={{ border: form.pattern === pattern.label ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.pattern === pattern.label ? "#edf5f0" : "#fff", borderRadius: 6, boxShadow: form.pattern === pattern.label ? "0 0 0 2px #cddbd2" : "none" }}><img src={pattern.image} alt={`Візерунок ${pattern.label}`} className="block w-full" style={{ aspectRatio: "1.25 / 1", objectFit: "cover", background: "#111" }} /><span className="block px-2 py-2 text-center text-sm font-bold" style={{ color: "#26322d" }}>{pattern.label}</span></button>)}
-                        <button type="button" onClick={() => set("pattern", "Інший")} className="p-3 text-left" style={{ border: form.pattern === "Інший" ? "2px solid #173d31" : "1px dashed #aeb8b1", background: form.pattern === "Інший" ? "#edf5f0" : "#fff", borderRadius: 6 }}><span className="block text-sm font-bold" style={{ color: "#26322d" }}>Інший візерунок</span><span className="mt-1 block text-xs leading-5" style={{ color: "#66716b" }}>Додайте опис або ескіз.</span></button>
+                      <div className="mt-3 grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-10 gap-2">
+                        {CATALOG_PATTERN_OPTIONS.map(pattern => <button key={pattern.label} type="button" onClick={() => { set("pattern", pattern.label); set("pattern_custom", ""); }} className={`catalog-choice pattern-choice overflow-hidden text-left ${form.pattern === pattern.label ? "is-active" : ""}`} style={{ border: form.pattern === pattern.label ? "2px solid #173d31" : "1px solid #d5dbd6", background: form.pattern === pattern.label ? "#edf5f0" : "#fff", borderRadius: 6 }}><img src={pattern.image} alt={`Візерунок ${pattern.label}`} className="block w-full" style={{ aspectRatio: "1 / 1", objectFit: "cover", background: "#111" }} /><span className="block px-1 py-1.5 text-center text-[11px] font-bold" style={{ color: "#26322d" }}>{pattern.label}</span></button>)}
+                        <button type="button" onClick={() => set("pattern", "Інший")} className={`catalog-choice pattern-choice p-2 text-center ${form.pattern === "Інший" ? "is-active" : ""}`} style={{ border: form.pattern === "Інший" ? "2px solid #173d31" : "1px dashed #aeb8b1", background: form.pattern === "Інший" ? "#edf5f0" : "#fff", borderRadius: 6 }}><span className="block text-[11px] font-bold" style={{ color: "#26322d" }}>Інший</span><span className="mt-1 block text-[10px] leading-4" style={{ color: "#66716b" }}>Опис<br />або ескіз</span></button>
                       </div>
                       {form.pattern === "Інший" && <div className="mt-3 space-y-3"><StyledInput placeholder="Опишіть бажаний візерунок" value={form.pattern_custom} onChange={event => set("pattern_custom", event.target.value)} error={showErrors && !form.pattern_custom.trim()} /><label htmlFor="catalog-pattern-file" className="upload-zone block text-sm font-semibold" style={{ borderRadius: 6 }}><span className="inline-flex items-center gap-2"><IconUpload /> {patternFile ? patternFile.name : "Додати ескіз або фото"}</span></label><input id="catalog-pattern-file" type="file" className="hidden" accept="image/*,.pdf" onChange={event => setPatternFile(event.target.files?.[0] || null)} /></div>}
                       <ErrorText visible={showErrors && (!form.pattern || (form.pattern === "Інший" && !form.pattern_custom.trim()))}>Оберіть або опишіть візерунок.</ErrorText>
@@ -2733,9 +2744,9 @@
                     </div>
 
                     {selectedModel.id === "AVL-02" ? <div className="p-4" style={{ background: "#f3f7f4", borderRadius: 6, border: "1px solid #dce1dc" }}>
-                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Для яких моделей кондиціонера потрібна система?</h3>
-                      <p className="mt-2 text-sm leading-6" style={{ color: "#66716b" }}>Вкажіть діапазон моделей. Регульовані перемички дозволяють підлаштувати кронштейни під різну ширину та глибину зовнішнього блока.</p>
-                      <div className="mt-4 grid gap-3 sm:grid-cols-2"><Field label="Від якої моделі"><StyledInput placeholder="Напр. Daikin FTXF20" value={form.bracket_model_from} onChange={event => set("bracket_model_from", event.target.value)} error={showErrors && !measurementIsComplete()} /></Field><Field label="До якої моделі"><StyledInput placeholder="Напр. Daikin FTXF50" value={form.bracket_model_to} onChange={event => set("bracket_model_to", event.target.value)} error={showErrors && !measurementIsComplete()} /></Field></div>
+                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Для якої потужності кондиціонера потрібна система?</h3>
+                      <p className="mt-2 text-sm leading-6" style={{ color: "#66716b" }}>Оберіть діапазон потужності зовнішніх блоків у BTU. Регульовані перемички дозволяють підлаштувати кронштейни під різну ширину та глибину блока.</p>
+                      <div className="mt-4 grid gap-4 sm:grid-cols-2"><div><p className="mb-2 text-xs font-bold uppercase tracking-wider" style={{ color: "#66716b" }}>Від, BTU</p><div className="grid grid-cols-4 gap-2">{CATALOG_BTU_OPTIONS.map(option => { const value = `${option} BTU`; return <button key={value} type="button" onClick={() => set("bracket_model_from", value)} className={`catalog-choice btu-choice px-1 ${form.bracket_model_from === value ? "is-active" : ""}`} style={{ border: form.bracket_model_from === value ? "2px solid #173d31" : "1px solid #cfd7d1", background: form.bracket_model_from === value ? "#edf5f0" : "#fff", color: "#26322d" }}>{option}</button>; })}</div></div><div><p className="mb-2 text-xs font-bold uppercase tracking-wider" style={{ color: "#66716b" }}>До, BTU</p><div className="grid grid-cols-4 gap-2">{CATALOG_BTU_OPTIONS.map(option => { const value = `${option} BTU`; return <button key={value} type="button" onClick={() => set("bracket_model_to", value)} className={`catalog-choice btu-choice px-1 ${form.bracket_model_to === value ? "is-active" : ""}`} style={{ border: form.bracket_model_to === value ? "2px solid #173d31" : "1px solid #cfd7d1", background: form.bracket_model_to === value ? "#edf5f0" : "#fff", color: "#26322d" }}>{option}</button>; })}</div></div></div>
                     </div> : <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Як визначити розмір?</h3>
                       <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -2746,7 +2757,7 @@
                       </div>
                     </div>}
 
-                    {measureMode === "bracket_range" && <ErrorText visible={showErrors && !measurementIsComplete()}>Вкажіть початкову та кінцеву моделі кондиціонера.</ErrorText>}
+                    {measureMode === "bracket_range" && <ErrorText visible={showErrors && !measurementIsComplete()}>Оберіть коректний діапазон потужності: від меншого до більшого значення BTU.</ErrorText>}
                     {measureMode === "basket" && <div className="grid grid-cols-3 gap-2"><Field label="Ширина, мм"><StyledInput type="number" min="1" value={form.size_w} onChange={event => set("size_w", event.target.value)} error={showErrors && !hasSize(form)} /></Field><Field label="Висота, мм"><StyledInput type="number" min="1" value={form.size_h} onChange={event => set("size_h", event.target.value)} error={showErrors && !hasSize(form)} /></Field><Field label="Глибина, мм"><StyledInput type="number" min="1" value={form.size_d} onChange={event => set("size_d", event.target.value)} error={showErrors && !hasSize(form)} /></Field></div>}
 
                     {measureMode === "ac" && <div className="space-y-3"><p className="text-sm leading-6" style={{ color: "#66716b" }}>Вкажіть габарити зовнішнього блоку. Ми додамо необхідний запас для монтажу.</p><div className="grid grid-cols-3 gap-2"><Field label="Ширина, мм"><StyledInput type="number" min="1" value={acDims.w} onChange={event => setAcDims(current => ({ ...current, w: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Висота, мм"><StyledInput type="number" min="1" value={acDims.h} onChange={event => setAcDims(current => ({ ...current, h: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Глибина, мм"><StyledInput type="number" min="1" value={acDims.d} onChange={event => setAcDims(current => ({ ...current, d: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field></div><div className="grid grid-cols-2 gap-2">{[{ value: true, label: "Закрити кронштейни" }, { value: false, label: "Не закривати кронштейни" }].map(option => <button key={String(option.value)} type="button" onClick={() => setCoversBrackets(option.value)} className="py-3 px-3 text-sm font-semibold" style={{ border: coversBrackets === option.value ? "2px solid #173d31" : "1px solid #d5dbd6", background: coversBrackets === option.value ? "#edf5f0" : "#fff", color: "#26322d", borderRadius: 6 }}>{option.label}</button>)}</div></div>}

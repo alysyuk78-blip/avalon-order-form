@@ -178,13 +178,13 @@ function formatTelegramMessage(order) {
     if (it.has_cover) msg += `• Верхня кришка: <b>Так</b>\n`;
     if (color) msg += `• Колір: <b>${color}</b>\n`;
     if (pattern) msg += `• Візерунок: <b>${pattern}</b>\n`;
-    if (it.bracket_model_from || it.bracket_model_to) msg += `• Кронштейни: <b>${e(it.bracket_model_from)} — ${e(it.bracket_model_to)}</b>\n`;
+    if (it.bracket_model_from || it.bracket_model_to) msg += `• Потужність кондиціонера: <b>${e(it.bracket_model_from)} — ${e(it.bracket_model_to)}</b>\n`;
     if (it.ac_brand || it.ac_model) msg += `• Кондиціонер: <b>${e([it.ac_brand, it.ac_model].filter(Boolean).join(" "))}</b>\n`;
     if (it.ac_model_url) msg += `• Посилання на кондиціонер: ${e(it.ac_model_url)}\n`;
     if (Number(it.size_w) > 0) {
       msg += `• Розміри (мм):\n   Висота — <b>${it.size_h}</b>\n   Ширина — <b>${it.size_w}</b>\n   Глибина — <b>${it.size_d}</b>\n`;
     } else if (it.bracket_model_from || it.bracket_model_to) {
-      msg += `• Розміри: <i>підбираються за діапазоном моделей</i>\n`;
+      msg += `• Розміри: <i>підбираються за діапазоном BTU</i>\n`;
     } else {
       msg += `• Розміри: <i>розрахує менеджер</i>\n`;
     }
@@ -248,7 +248,7 @@ function formatProductionMessage(order) {
     const size = Number(it.size_w) > 0
       ? `${it.size_w}×${it.size_h}×${it.size_d} мм (Ш×В×Г)`
       : (it.bracket_model_from || it.bracket_model_to)
-        ? `Кронштейни: ${e(it.bracket_model_from)} — ${e(it.bracket_model_to)}`
+        ? `Потужність: ${e(it.bracket_model_from)} — ${e(it.bracket_model_to)}`
         : `⚠️ розмір визначити${(it.ac_brand || it.ac_model) ? " — " + e([it.ac_brand, it.ac_model].filter(Boolean).join(" ")) : ""}`;
     const model = it.basket_model_name || it.basket_model;
     msg += `\n${i + 1}. <b>${model ? e(model) + " · " : ""}${size}</b>\n   ${e(constr)}, ${e(color)}, візерунок ${e(pattern)}${it.has_cover ? ", <b>з верхньою кришкою</b>" : ""}, <b>${it.quantity} шт.</b>\n`;
