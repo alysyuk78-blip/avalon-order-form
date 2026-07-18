@@ -265,18 +265,17 @@
     .contact-method-button { grid-column: span 2; display: grid; justify-items: center; gap: 8px; padding: 4px; border: 0; background: transparent; color: #3a4144; font-size: 13px; font-weight: 650; transition: color .2s ease; }
     .contact-method-button:nth-child(4) { grid-column: 2 / span 2; }
     .contact-method-button:nth-child(5) { grid-column: 4 / span 2; }
-    .contact-method-icon { width: 64px; height: 64px; display: grid; place-items: center; overflow: visible; border-radius: 17px; background: var(--contact-color); box-shadow: 0 5px 14px rgba(29,29,31,.16); transition: transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s ease; }
-    .contact-method-icon img { display: block; width: 42px; height: 42px; object-fit: contain; filter: brightness(0) invert(1); }
-    .contact-method-icon--official { border-radius: 0; background: transparent; box-shadow: none; }
-    .contact-method-icon--official img { width: 64px; height: 64px; filter: none; }
-    .contact-method-button:hover .contact-method-icon { transform: translateY(-3px) scale(1.04); box-shadow: 0 10px 20px rgba(29,29,31,.19); }
+    .contact-method-icon { width: 64px; height: 64px; display: grid; place-items: center; overflow: visible; background: transparent; box-shadow: none; transition: transform .22s cubic-bezier(.2,.8,.2,1); }
+    .contact-method-icon img { display: block; width: 64px; height: 64px; object-fit: contain; filter: none; }
+    .contact-method-icon--official { border-radius: 0; }
+    .contact-method-button:hover .contact-method-icon { transform: translateY(-3px) scale(1.04); box-shadow: none; }
     .contact-method-button:active .contact-method-icon { transform: translateY(0) scale(.96); }
     .contact-method-button.is-active { color: var(--avalon-7016); }
-.contact-method-button.is-active .contact-method-icon { transform: translateY(-2px) scale(1.04); box-shadow: 0 8px 18px rgba(29,29,31,.18); }
+.contact-method-button.is-active .contact-method-icon { transform: translateY(-2px) scale(1.04); box-shadow: none; }
 @media (hover: hover) {
   .contact-method-button.is-active:hover .contact-method-icon {
     transform: translateY(-5px) scale(1.08);
-    box-shadow: 0 13px 24px rgba(29,29,31,.22);
+    box-shadow: none;
   }
 }
 .contact-method-button:focus-visible { outline: 2px solid var(--avalon-7016); outline-offset: 5px; border-radius: 18px; }
@@ -2664,11 +2663,11 @@
       const removeItem = (index) => setItems(current => current.filter((_, itemIndex) => itemIndex !== index));
       const contactLabels = { phone: "Телефон", telegram: "Telegram", viber: "Viber", whatsapp: "WhatsApp", email: "E-mail" };
       const contactMethods = [
-        { value: "phone", label: "Телефон", image: "images/contact-methods/vector/phone.svg", color: "#34c759" },
+        { value: "phone", label: "Телефон", image: "images/contact-methods/vector/phone.svg", color: "#34c759", official: true },
         { value: "telegram", label: "Telegram", image: "images/contact-methods/official/telegram-official.svg", color: "#2aabee", official: true },
-        { value: "viber", label: "Viber", image: "images/contact-methods/official/viber-official.svg", color: "#7360f2", official: true },
+        { value: "viber", label: "Viber", image: "images/contact-methods/official/viber-outline-official.svg", color: "#7360f2", official: true },
         { value: "whatsapp", label: "WhatsApp", image: "images/contact-methods/official/whatsapp-official.svg", color: "#25d366", official: true },
-        { value: "email", label: "Пошта", image: "images/contact-methods/vector/email.svg", color: "#0a84ff" }
+        { value: "email", label: "Пошта", image: "images/contact-methods/vector/email.svg", color: "#0a84ff", official: true }
       ];
       const isEmail = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
       const telegramHandle = value => String(value || "").trim().replace(/^https?:\/\/(?:www\.)?t\.me\//i, "").replace(/^@/, "").replace(/\?.*$/, "");
