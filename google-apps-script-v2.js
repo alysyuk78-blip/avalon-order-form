@@ -51,7 +51,7 @@ function doPost(e) {
       basket_type: data.basket_type, construction_type: data.construction_type,
       color: data.color, color_custom: data.color_custom, pattern: data.pattern, pattern_custom: data.pattern_custom,
       size_w: data.size_w, size_h: data.size_h, size_d: data.size_d, quantity: data.quantity,
-      ac_brand: data.ac_brand, ac_model: data.ac_model,
+      ac_brand: data.ac_brand, ac_model: data.ac_model, ac_model_url: data.ac_model_url, model_comment: data.model_comment,
       price_total: data.price_total, area_m2: data.area_m2, cost_total: data.cost_total,
       has_cover: data.has_cover, basket_area_m2: data.basket_area_m2, cover_area_m2: data.cover_area_m2,
       basket_cost_per_m2: data.basket_cost_per_m2, cover_cost_per_m2: data.cover_cost_per_m2,
@@ -86,6 +86,10 @@ function doPost(e) {
       var margin    = hasMoney ? Math.round((total - costTotal) / total * 1000) / 10 : "";
 
       var notes = data.notes || "";
+      var itemNotes = [];
+      if (it.ac_model_url) itemNotes.push("Посилання на кондиціонер: " + it.ac_model_url);
+      if (it.model_comment) itemNotes.push("Коментар до моделі: " + it.model_comment);
+      if (itemNotes.length) notes = [notes].concat(itemNotes).filter(function (x) { return x; }).join("\n");
       if (patternFileInfo && patternFileInfo.name) {
         notes = [notes, "Файл візерунку: " + patternFileInfo.name + " (надіслано власнику в Telegram; підряднику переслати вручну)"].filter(function (x) { return x; }).join("\n");
       }
@@ -641,14 +645,22 @@ function buildOrderFromRows_(sh, orderNumber) {
         order_number: r[0], first_name: r[4], last_name: "",
         phone: String(r[5] || "").replace(/^'/, ""), city: r[6], referral_source: r[3],
         transport: r[26], delivery_address: r[27],
-        delivery_date: toISODate(r[28]), payment_method: r[29], notes: r[31], items: []
+        delivery_date: toISODate(r[28]), payment_method: r[29], notes: "", noteLines: {}, items: []
       };
     }
+    String(r[31] || "").split(/\n+/).forEach(function (line) {
+      line = String(line || "").trim();
+      if (line) order.noteLines[line] = true;
+    });
     order.items.push({
       basket_type: r[7], construction_type: r[8], has_cover: String(r[8] || "").toLowerCase().indexOf("кришка") >= 0, color: r[9], pattern: r[10],
       ac_brand: r[11], ac_model: r[12], size_w: r[13], size_h: r[14], size_d: r[15],
       quantity: r[16], area_m2: r[17], cost_total: r[19]
     });
+  }
+  if (order) {
+    order.notes = Object.keys(order.noteLines).join("\n");
+    delete order.noteLines;
   }
   return order;
 }
@@ -726,7 +738,12 @@ function buildProductionMsg_(data) {
   if (transport) m += "• Спосіб: <b>" + esc_(transport) + "</b>\n";
   if (data.delivery_address) m += "• Адреса: " + esc_(data.delivery_address) + "\n";
   if (data.delivery_date) m += "• Дата: <b>" + fmtDate_(data.delivery_date) + "</b>\n";
-  if (data.notes) m += "• Примітка: " + esc_(data.notes) + "\n";
+  if (data.notes) {
+    m += "• Додаткова інформація:\n";
+    String(data.notes).split(/\n+/).forEach(function (line) {
+      if (String(line || "").trim()) m += "  " + esc_(line) + "\n";
+    });
+  }
 
   m += "\n🔖 Джерело заявки: " + esc_(data.referral_source || "direct") + "\n";
   return m;

@@ -2713,13 +2713,14 @@
           patternFilePayload = await fileToOrderPayload(patternFile);
           const first = items[0];
           const itemComments = items.filter(item => item.model_comment).map(item => `${item.basket_model}: ${item.model_comment}`).join("\n");
+          const acModelLinks = items.filter(item => item.ac_model_url).map(item => `${item.basket_model}: посилання на кондиціонер ${item.ac_model_url}`).join("\n");
           const contactDetails = form.contact_method === "telegram" ? `Telegram: @${telegramHandle(form.contact_telegram)}` : form.contact_method === "email" ? `E-mail: ${form.contact_email.trim()}` : form.contact_method === "viber" ? `Viber: ${form.phone.trim()}` : form.contact_method === "whatsapp" ? `WhatsApp: ${form.phone.trim()}` : "";
           await submitOrder({
             first_name: form.first_name.trim(), last_name: form.last_name.trim(), phone: form.phone.trim(), city: form.city.trim(),
             contact_method: form.contact_method, contact_telegram: telegramHandle(form.contact_telegram), contact_email: form.contact_email.trim(),
             transport: form.transport, transport_custom: form.transport_custom, delivery_address: form.delivery_address.trim(),
             delivery_location: form.delivery_location, delivery_date: form.delivery_date, payment_method: form.payment_method,
-            how_found: form.how_found, how_found_custom: form.how_found_custom, notes: [contactDetails, form.notes.trim(), itemComments].filter(Boolean).join("\n"),
+            how_found: form.how_found, how_found_custom: form.how_found_custom, notes: [contactDetails, form.notes.trim(), itemComments, acModelLinks].filter(Boolean).join("\n"),
             referral_source: form.referral_source || "direct", items, quote_required: true,
             price_total: 0, prepayment: 0, cost_total: 0, profit: 0,
             pattern_file: patternFilePayload,
@@ -2895,7 +2896,8 @@
                         {CATALOG_PATTERN_OPTIONS.map(pattern => <button key={pattern.label} type="button" onClick={() => { set("pattern", pattern.label); set("pattern_custom", ""); }} className={`catalog-choice pattern-choice text-left ${form.pattern === pattern.label ? "is-active" : ""}`}><img src={pattern.image} alt={`Візерунок ${pattern.label}`} /><span className="pattern-label">{pattern.label}</span></button>)}
                         <button type="button" onClick={() => set("pattern", "Інший")} className={`catalog-choice pattern-choice pattern-other text-center ${form.pattern === "Інший" ? "is-active" : ""}`}><span><span className="block text-sm font-bold" style={{ color: "#26322d" }}>Інший</span><span className="mt-1 block text-xs leading-5" style={{ color: "#66716b" }}>Опис або ескіз</span></span></button>
                       </div>
-                      {form.pattern === "Інший" && <div className="mt-3 space-y-3"><StyledInput placeholder="Опишіть бажаний візерунок" value={form.pattern_custom} onChange={event => set("pattern_custom", event.target.value)} error={showErrors && !form.pattern_custom.trim()} /><label htmlFor="catalog-pattern-file" className="upload-zone block text-sm font-semibold" style={{ borderRadius: 6 }}><span className="inline-flex items-center gap-2"><IconUpload /> {patternFile ? patternFile.name : "Додати ескіз або фото"}</span></label><input id="catalog-pattern-file" type="file" className="hidden" accept="image/*,.pdf" onChange={event => setPatternFile(event.target.files?.[0] || null)} /></div>}
+                      {form.pattern === "Інший" && <div className="mt-3"><StyledInput placeholder="Опишіть бажаний візерунок" value={form.pattern_custom} onChange={event => set("pattern_custom", event.target.value)} error={showErrors && !form.pattern_custom.trim()} /></div>}
+                      <div className="mt-3"><label htmlFor="catalog-pattern-file" className="upload-zone block text-sm font-semibold" style={{ borderRadius: 6 }}><span className="inline-flex items-center gap-2"><IconUpload /> {patternFile ? patternFile.name : "Додати ескіз або фото (необов'язково)"}</span></label><input id="catalog-pattern-file" type="file" className="hidden" accept="image/*,.pdf" onChange={event => setPatternFile(event.target.files?.[0] || null)} /></div>
                       <ErrorText visible={showErrors && (!form.pattern || (form.pattern === "Інший" && !form.pattern_custom.trim()))}>Оберіть або опишіть візерунок.</ErrorText>
                     </div>
                   </div>
