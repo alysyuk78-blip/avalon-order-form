@@ -270,8 +270,14 @@
     .contact-method-button:hover .contact-method-icon { transform: translateY(-3px) scale(1.04); filter: saturate(1.08) brightness(1.02); }
     .contact-method-button:active .contact-method-icon { transform: translateY(0) scale(.96); }
     .contact-method-button.is-active { color: var(--avalon-7016); }
-    .contact-method-button.is-active .contact-method-icon { transform: translateY(-2px) scale(1.04); filter: saturate(1.1) brightness(1.03); }
-    .contact-method-button:focus-visible { outline: 2px solid var(--avalon-7016); outline-offset: 5px; border-radius: 18px; }
+.contact-method-button.is-active .contact-method-icon { transform: translateY(-2px) scale(1.04); filter: saturate(1.1) brightness(1.03); }
+@media (hover: hover) {
+  .contact-method-button.is-active:hover .contact-method-icon {
+    transform: translateY(-5px) scale(1.08);
+    filter: saturate(1.14) brightness(1.04) drop-shadow(0 8px 12px rgba(29, 29, 31, .16));
+  }
+}
+.contact-method-button:focus-visible { outline: 2px solid var(--avalon-7016); outline-offset: 5px; border-radius: 18px; }
     .delivery-choice-grid, .source-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .catalog-option { min-height: 48px; display: flex; align-items: center; justify-content: center; padding: 10px 12px; border: 1px solid #d2d5d8; border-radius: 999px; color: var(--avalon-7016); background: #fff; font-size: 13px; font-weight: 650; text-align: center; transition: transform .2s cubic-bezier(.2,.8,.2,1), background-color .2s ease, box-shadow .2s ease, border-color .2s ease; }
     .catalog-option:hover { border-color: rgba(33,83,67,.54); transform: translateY(-2px); box-shadow: 0 8px 18px rgba(33,83,67,.08); }
