@@ -265,16 +265,16 @@
     .contact-method-button { grid-column: span 2; display: grid; justify-items: center; gap: 8px; padding: 4px; border: 0; background: transparent; color: #3a4144; font-size: 13px; font-weight: 650; transition: color .2s ease; }
     .contact-method-button:nth-child(4) { grid-column: 2 / span 2; }
     .contact-method-button:nth-child(5) { grid-column: 4 / span 2; }
-    .contact-method-icon { width: 64px; height: 64px; display: grid; place-items: center; overflow: visible; transition: transform .22s cubic-bezier(.2,.8,.2,1), filter .22s ease; }
-    .contact-method-icon img { display: block; width: 64px; height: 64px; object-fit: contain; }
-    .contact-method-button:hover .contact-method-icon { transform: translateY(-3px) scale(1.04); filter: saturate(1.08) brightness(1.02); }
+    .contact-method-icon { width: 64px; height: 64px; display: grid; place-items: center; overflow: visible; border-radius: 17px; background: var(--contact-color); box-shadow: 0 5px 14px rgba(29,29,31,.16); transition: transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s ease; }
+    .contact-method-icon img { display: block; width: 35px; height: 35px; object-fit: contain; filter: brightness(0) invert(1); }
+    .contact-method-button:hover .contact-method-icon { transform: translateY(-3px) scale(1.04); box-shadow: 0 10px 20px rgba(29,29,31,.19); }
     .contact-method-button:active .contact-method-icon { transform: translateY(0) scale(.96); }
     .contact-method-button.is-active { color: var(--avalon-7016); }
-.contact-method-button.is-active .contact-method-icon { transform: translateY(-2px) scale(1.04); filter: saturate(1.1) brightness(1.03); }
+.contact-method-button.is-active .contact-method-icon { transform: translateY(-2px) scale(1.04); box-shadow: 0 8px 18px rgba(29,29,31,.18); }
 @media (hover: hover) {
   .contact-method-button.is-active:hover .contact-method-icon {
     transform: translateY(-5px) scale(1.08);
-    filter: saturate(1.14) brightness(1.04) drop-shadow(0 8px 12px rgba(29, 29, 31, .16));
+    box-shadow: 0 13px 24px rgba(29,29,31,.22);
   }
 }
 .contact-method-button:focus-visible { outline: 2px solid var(--avalon-7016); outline-offset: 5px; border-radius: 18px; }
@@ -2662,11 +2662,11 @@
       const removeItem = (index) => setItems(current => current.filter((_, itemIndex) => itemIndex !== index));
       const contactLabels = { phone: "Телефон", telegram: "Telegram", viber: "Viber", whatsapp: "WhatsApp", email: "E-mail" };
       const contactMethods = [
-        { value: "phone", label: "Телефон", image: "images/contact-methods/phone.png" },
-        { value: "telegram", label: "Telegram", image: "images/contact-methods/telegram.png" },
-        { value: "viber", label: "Viber", image: "images/contact-methods/viber.png" },
-        { value: "whatsapp", label: "WhatsApp", image: "images/contact-methods/whatsapp.png" },
-        { value: "email", label: "Пошта", image: "images/contact-methods/email.png" }
+        { value: "phone", label: "Телефон", image: "images/contact-methods/vector/phone.svg", color: "#34c759" },
+        { value: "telegram", label: "Telegram", image: "images/contact-methods/vector/telegram.svg", color: "#2aabee" },
+        { value: "viber", label: "Viber", image: "images/contact-methods/vector/viber.svg", color: "#7360f2" },
+        { value: "whatsapp", label: "WhatsApp", image: "images/contact-methods/vector/whatsapp.svg", color: "#25d366" },
+        { value: "email", label: "Пошта", image: "images/contact-methods/vector/email.svg", color: "#0a84ff" }
       ];
       const isEmail = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
       const telegramHandle = value => String(value || "").trim().replace(/^https?:\/\/(?:www\.)?t\.me\//i, "").replace(/^@/, "").replace(/\?.*$/, "");
@@ -2957,7 +2957,7 @@
                     <div className="mt-5">
                       <p className="mb-2 text-sm font-bold" style={{ color: "#383e42" }}>Зручний спосіб зв'язку *</p>
                       <div className={`contact-method-grid ${showErrors && !form.contact_method ? "catalog-choice-group is-error" : ""}`}>
-                        {contactMethods.map(method => <button key={method.value} type="button" onClick={() => set("contact_method", method.value)} className={`contact-method-button ${form.contact_method === method.value ? "is-active" : ""}`} aria-pressed={form.contact_method === method.value}><span className="contact-method-icon"><img src={method.image} alt="" /></span><span>{method.label}</span></button>)}
+                        {contactMethods.map(method => <button key={method.value} type="button" onClick={() => set("contact_method", method.value)} className={`contact-method-button ${form.contact_method === method.value ? "is-active" : ""}`} aria-pressed={form.contact_method === method.value} style={{ "--contact-color": method.color }}><span className="contact-method-icon"><img src={method.image} alt="" /></span><span>{method.label}</span></button>)}
                       </div>
                       <ErrorText visible={showErrors && !form.contact_method}>Оберіть зручний спосіб зв'язку.</ErrorText>
                     </div>
