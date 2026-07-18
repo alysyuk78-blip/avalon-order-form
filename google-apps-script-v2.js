@@ -2,7 +2,8 @@
  * Google Apps Script — Avalon Order Form v3.0 (облікова система)
  *
  * Аркуші:
- *   • Замовлення — авто з форми (1 рядок = 1 кошик). 32 колонки A–AF.
+ *   • Замовлення — авто з форми (1 рядок = 1 кошик). Колонки A–AH + AI–AK (роздріб/знижка).
+ *   • Веб-кабінет /admin викликає цей же doPost з admin_action + admin_secret.
  *   • Дропшипери — реєстр партнерів за ?ref: ставка за кошик, продано, виручка,
  *     нараховано/виплачено/залишок (формули авто).
  *   • Виплати — лог фактичних виплат дропшиперам.
@@ -35,14 +36,21 @@ function doPost(e) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(30000);
+    var data = JSON.parse(e.postData.contents);
+
+    // Веб-кабінет CRM: окремий канал з секретом (не плутати з публічними заявками).
+    if (data && data.admin_action) {
+      return handleAdminRequest_(data);
+    }
+
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(SHEET_ORDERS);
     if (!sheet) { sheet = ss.insertSheet(SHEET_ORDERS); setupOrders(sheet); }
     if (sheet.getLastRow() === 0) setupOrders(sheet);
     if (!ss.getSheetByName(SHEET_PAYOUTS)) setupPayouts(ss); // Дропшипери посилається на Виплати
     if (!ss.getSheetByName(SHEET_DROP)) setupDropshippers(ss);
+    ensureDiscountColumns_(sheet);
 
-    var data = JSON.parse(e.postData.contents);
     data.order_number = nextOrderNumber();
     var patternFileInfo = getPatternFileInfo_(data);
 
@@ -270,24 +278,7 @@ function onEditDelivery(e) {
     // Статус «В роботі» → передати замовлення підряднику (тема + специфікація), один раз.
     if (col === 3) {
       var newStatus = String(range.getValue() || "").trim();
-      if (newStatus === "В роботі") {
-        var onum = sh.getRange(range.getRow(), 1).getValue();
-        if (onum && !PropertiesService.getScriptProperties().getProperty("thread_" + onum)) {
-          var ord = buildOrderFromRows_(sh, onum);
-          if (ord) {
-            try {
-              var contractorResult = createOrderTopic_(ord);
-              if (!contractorResult || !contractorResult.ok) {
-                console.error("Send to contractor: " + telegramError_(contractorResult));
-              }
-            } catch (er) {
-              console.error("Send to contractor: " + er);
-              alertOwner_("Замовлення " + onum + " НЕ надіслано підряднику.", String(er));
-            }
-          }
-        }
-      }
-      notifyOwnerStatusChange_(sh, range.getRow(), newStatus);
+      applyStatusSideEffects_(sh, range.getRow(), newStatus);
       return;
     }
 
@@ -985,6 +976,7 @@ function onOpen() {
     .addItem("📤 Повторно надіслати поточне замовлення", "resendCurrentOrderToContractor")
     .addItem("🛠 Виправити автоматичні звіти й тригери", "repairAutomation")
     .addItem("♻️ Оновити вкладку «Зведення»", "updateDashboard")
+    .addItem("➕ Додати колонки знижки (AI–AK)", "addDiscountColumns")
     .addToUi();
 }
 
@@ -1067,12 +1059,15 @@ function setupOrders(sheet) {
     "Комісія дропш.","Чистий прибуток",
     "Доставка","Адреса","Дата доставки","Оплата","Як дізнались","Примітки",
     "Оплата клієнта ✓", // AG (33): клієнт оплатив підряднику (є квитанція) → маржа до отримання
-    "Маржу отримано ✓"  // AH (34): підрядник перерахував мені маржу за це замовлення
+    "Маржу отримано ✓", // AH (34): підрядник перерахував мені маржу за це замовлення
+    "Роздрібна ціна",    // AI (35): ціна до знижки (₴ за рядок / позицію)
+    "Знижка %",          // AJ (36)
+    "Знижка ₴"           // AK (37)
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -1440,6 +1435,565 @@ function rebuildAll() {
 function authorize() {
   CalendarApp.getDefaultCalendar().getName();
   SpreadsheetApp.getActiveSpreadsheet().getName();
+}
+
+
+// ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
+
+var ADMIN_ORDER_COLS = 37; // A–AK
+var STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
+
+function applyStatusSideEffects_(sh, row, newStatus) {
+  if (!newStatus) return;
+  if (newStatus === "В роботі") {
+    var onum = sh.getRange(row, 1).getValue();
+    if (onum && !PropertiesService.getScriptProperties().getProperty("thread_" + onum)) {
+      var ord = buildOrderFromRows_(sh, onum);
+      if (ord) {
+        try {
+          var contractorResult = createOrderTopic_(ord);
+          if (!contractorResult || !contractorResult.ok) {
+            console.error("Send to contractor: " + telegramError_(contractorResult));
+          }
+        } catch (er) {
+          console.error("Send to contractor: " + er);
+          alertOwner_("Замовлення " + onum + " НЕ надіслано підряднику.", String(er));
+        }
+      }
+    }
+  }
+  notifyOwnerStatusChange_(sh, row, newStatus);
+}
+
+/** Додати AI–AK (роздріб / знижка) у наявний аркуш. Дані не чіпає. */
+function addDiscountColumns() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_ORDERS);
+  if (!sh) return;
+  ensureDiscountColumns_(sh);
+  Logger.log("Колонки Роздрібна ціна / Знижка % / Знижка ₴ додано (AI–AK).");
+}
+
+function ensureDiscountColumns_(sheet) {
+  if (!sheet) return;
+  if (sheet.getMaxColumns() < ADMIN_ORDER_COLS) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), ADMIN_ORDER_COLS - sheet.getMaxColumns());
+  }
+  var h35 = String(sheet.getRange(1, 35).getValue() || "");
+  if (h35.indexOf("Роздріб") < 0 && h35.indexOf("зниж") < 0) {
+    sheet.getRange(1, 35, 1, 3).setValues([["Роздрібна ціна", "Знижка %", "Знижка ₴"]]);
+    sheet.getRange(1, 35, 1, 3)
+      .setFontWeight("bold").setBackground(RAL7016).setFontColor(HDR_TEXT)
+      .setFontFamily(HDR_FONT).setHorizontalAlignment("center").setVerticalAlignment("middle");
+    sheet.setColumnWidth(35, 120);
+    sheet.setColumnWidth(36, 90);
+    sheet.setColumnWidth(37, 100);
+  }
+  sheet.getRange(2, 35, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat("#,##0 ₴");
+  sheet.getRange(2, 36, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat('0.0"%"');
+  sheet.getRange(2, 37, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat("#,##0 ₴");
+}
+
+function handleAdminRequest_(data) {
+  var secret = PropertiesService.getScriptProperties().getProperty("ADMIN_API_SECRET");
+  if (!secret || String(data.admin_secret || "") !== String(secret)) {
+    return jsonOut({ status: "error", code: 401, message: "Unauthorized admin request" });
+  }
+  try {
+    var action = String(data.admin_action || "");
+    if (action === "list_orders") return jsonOut(adminListOrders_(data));
+    if (action === "get_order") return jsonOut(adminGetOrder_(data));
+    if (action === "update_order") return jsonOut(adminUpdateOrder_(data));
+    if (action === "dashboard") return jsonOut(adminDashboard_());
+    if (action === "list_partners") return jsonOut(adminListPartners_());
+    if (action === "upsert_partner") return jsonOut(adminUpsertPartner_(data.partner || data));
+    if (action === "list_expenses") return jsonOut(adminListExpenses_(data));
+    if (action === "add_expense") return jsonOut(adminAddExpense_(data.expense || data));
+    if (action === "list_payouts") return jsonOut(adminListPayouts_());
+    if (action === "add_payout") return jsonOut(adminAddPayout_(data.payout || data));
+    return jsonOut({ status: "error", message: "Unknown admin_action: " + action });
+  } catch (err) {
+    return jsonOut({ status: "error", message: String(err) });
+  }
+}
+
+function adminOrdersSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_ORDERS);
+  if (!sheet) throw new Error("Аркуш «Замовлення» не знайдено");
+  ensureDiscountColumns_(sheet);
+  return sheet;
+}
+
+function cellPhone_(v) {
+  return String(v == null ? "" : v).replace(/^'/, "");
+}
+
+function cellNum_(v) {
+  if (v === "" || v == null) return null;
+  var n = Number(v);
+  return isNaN(n) ? null : n;
+}
+
+function cellBool_(v) {
+  return v === true || v === "TRUE" || v === "true";
+}
+
+function mapOrderRow_(rowIndex, v) {
+  return {
+    row: rowIndex,
+    order_number: String(v[0] || ""),
+    created_at: String(v[1] || ""),
+    status: String(v[2] || ""),
+    source: String(v[3] || ""),
+    client: String(v[4] || ""),
+    phone: cellPhone_(v[5]),
+    city: String(v[6] || ""),
+    basket_type: String(v[7] || ""),
+    construction: String(v[8] || ""),
+    color: String(v[9] || ""),
+    pattern: String(v[10] || ""),
+    ac_brand: String(v[11] || ""),
+    ac_model: String(v[12] || ""),
+    size_w: cellNum_(v[13]),
+    size_h: cellNum_(v[14]),
+    size_d: cellNum_(v[15]),
+    quantity: cellNum_(v[16]) || 1,
+    area_m2: cellNum_(v[17]),
+    cost_unit: cellNum_(v[18]),
+    cost_total: cellNum_(v[19]),
+    price_unit: cellNum_(v[20]),
+    revenue: cellNum_(v[21]),
+    profit: cellNum_(v[22]),
+    margin_pct: cellNum_(v[23]),
+    commission: cellNum_(v[24]),
+    net_profit: cellNum_(v[25]),
+    transport: String(v[26] || ""),
+    address: String(v[27] || ""),
+    delivery_date: toISODate(v[28]) || String(v[28] || ""),
+    payment_method: String(v[29] || ""),
+    how_found: String(v[30] || ""),
+    notes: String(v[31] || ""),
+    client_paid: cellBool_(v[32]),
+    margin_paid: cellBool_(v[33]),
+    list_price: cellNum_(v[34]),
+    discount_pct: cellNum_(v[35]),
+    discount_uah: cellNum_(v[36])
+  };
+}
+
+function adminListOrders_(data) {
+  var sheet = adminOrdersSheet_();
+  var last = sheet.getLastRow();
+  if (last < 2) return { status: "ok", orders: [], groups: [] };
+  var values = sheet.getRange(2, 1, last, ADMIN_ORDER_COLS).getValues();
+  var q = String(data.q || "").trim().toLowerCase();
+  var statusFilter = String(data.status || "").trim();
+  var orders = [];
+  for (var i = 0; i < values.length; i++) {
+    var num = String(values[i][0] || "").trim();
+    if (!/^ORD-\d{6}-\d{3}$/.test(num)) continue;
+    var mapped = mapOrderRow_(i + 2, values[i]);
+    if (statusFilter && mapped.status !== statusFilter) continue;
+    if (q) {
+      var hay = (mapped.order_number + " " + mapped.client + " " + mapped.phone + " " + mapped.city).toLowerCase();
+      if (hay.indexOf(q) < 0) continue;
+    }
+    orders.push(mapped);
+  }
+
+  // Групи для канбану: одне замовлення = одна картка (сума по позиціях).
+  var byNum = {};
+  orders.forEach(function (o) {
+    if (!byNum[o.order_number]) {
+      byNum[o.order_number] = {
+        order_number: o.order_number,
+        created_at: o.created_at,
+        status: o.status,
+        source: o.source,
+        client: o.client,
+        phone: o.phone,
+        city: o.city,
+        delivery_date: o.delivery_date,
+        client_paid: o.client_paid,
+        margin_paid: o.margin_paid,
+        items_count: 0,
+        quantity: 0,
+        cost_total: 0,
+        revenue: 0,
+        profit: 0,
+        commission: 0,
+        net_profit: 0,
+        list_price: 0,
+        discount_uah: 0
+      };
+    }
+    var g = byNum[o.order_number];
+    g.items_count += 1;
+    g.quantity += Number(o.quantity) || 0;
+    g.cost_total += Number(o.cost_total) || 0;
+    g.revenue += Number(o.revenue) || 0;
+    g.profit += Number(o.profit) || 0;
+    g.commission += Number(o.commission) || 0;
+    g.net_profit += Number(o.net_profit) || 0;
+    g.list_price += Number(o.list_price) || 0;
+    g.discount_uah += Number(o.discount_uah) || 0;
+    if (o.created_at && (!g.created_at || String(o.created_at) < String(g.created_at))) g.created_at = o.created_at;
+  });
+  var groups = Object.keys(byNum).map(function (k) {
+    var g = byNum[k];
+    g.margin_pct = g.revenue ? Math.round((g.profit / g.revenue) * 1000) / 10 : null;
+    return g;
+  });
+  groups.sort(function (a, b) {
+    return String(b.created_at).localeCompare(String(a.created_at));
+  });
+  return { status: "ok", orders: orders, groups: groups };
+}
+
+function adminGetOrder_(data) {
+  var orderNumber = String(data.order_number || "").trim();
+  if (!orderNumber) throw new Error("order_number required");
+  var listed = adminListOrders_({ q: orderNumber });
+  var items = listed.orders.filter(function (o) { return o.order_number === orderNumber; });
+  if (!items.length) return { status: "error", message: "Order not found" };
+  var group = null;
+  for (var i = 0; i < listed.groups.length; i++) {
+    if (listed.groups[i].order_number === orderNumber) { group = listed.groups[i]; break; }
+  }
+  return { status: "ok", order: group, items: items };
+}
+
+function applyFinanceToRow_(sh, row, patch) {
+  var qty = Number(sh.getRange(row, 17).getValue()) || 1;
+  var costTotal = patch.cost_total != null ? Math.round(Number(patch.cost_total)) : cellNum_(sh.getRange(row, 20).getValue());
+  var listPrice = patch.list_price != null ? Math.round(Number(patch.list_price)) : cellNum_(sh.getRange(row, 35).getValue());
+  var discountPct = patch.discount_pct != null ? Number(patch.discount_pct) : cellNum_(sh.getRange(row, 36).getValue());
+  var discountUah = patch.discount_uah != null ? Math.round(Number(patch.discount_uah)) : cellNum_(sh.getRange(row, 37).getValue());
+  var revenue = patch.revenue != null ? Math.round(Number(patch.revenue)) : cellNum_(sh.getRange(row, 22).getValue());
+
+  if (listPrice != null && listPrice >= 0) {
+    if (discountPct != null && discountPct > 0) {
+      discountUah = Math.round(listPrice * (discountPct / 100));
+      revenue = Math.round(listPrice - discountUah);
+    } else if (discountUah != null && discountUah > 0) {
+      discountPct = listPrice ? Math.round((discountUah / listPrice) * 1000) / 10 : 0;
+      revenue = Math.round(listPrice - discountUah);
+    } else if (patch.revenue == null && (patch.list_price != null || patch.discount_pct != null || patch.discount_uah != null)) {
+      revenue = listPrice;
+      discountPct = discountPct || 0;
+      discountUah = discountUah || 0;
+    }
+  }
+
+  if (costTotal == null) costTotal = 0;
+  if (revenue == null) revenue = 0;
+  var profit = revenue - costTotal;
+  var margin = revenue ? Math.round((profit / revenue) * 1000) / 10 : 0;
+  var costUnit = qty ? Math.round(costTotal / qty) : costTotal;
+  var priceUnit = qty ? Math.round(revenue / qty) : revenue;
+
+  sh.getRange(row, 19, 1, 6).setValues([[costUnit, costTotal, priceUnit, revenue, profit, margin]]);
+  sh.getRange(row, 35, 1, 3).setValues([[listPrice != null ? listPrice : "", discountPct != null ? discountPct : "", discountUah != null ? discountUah : ""]]);
+  sh.getRange(row, 19, 1, 5).setNumberFormat("#,##0 ₴");
+  sh.getRange(row, 24).setNumberFormat('0.0"%"');
+  sh.getRange(row, 35).setNumberFormat("#,##0 ₴");
+  sh.getRange(row, 36).setNumberFormat("0.0");
+  sh.getRange(row, 37).setNumberFormat("#,##0 ₴");
+}
+
+function adminUpdateOrder_(data) {
+  var orderNumber = String(data.order_number || "").trim();
+  var patch = data.patch || {};
+  // Не даємо випадково перезаписати службові поля з обгортки.
+  delete patch.order_number;
+  delete patch.patch;
+  delete patch.admin_action;
+  delete patch.admin_secret;
+  delete patch.row;
+
+  var sh = adminOrdersSheet_();
+  var last = sh.getLastRow();
+  if (last < 2) throw new Error("Немає замовлень");
+  var nums = sh.getRange(2, 1, last, 1).getValues();
+  var targetRows = [];
+  for (var i = 0; i < nums.length; i++) {
+    if (String(nums[i][0] || "").trim() === orderNumber) targetRows.push(i + 2);
+  }
+  if (!targetRows.length) throw new Error("Order not found");
+
+  var row = data.row ? Number(data.row) : targetRows[0];
+  if (targetRows.indexOf(row) < 0) row = targetRows[0];
+
+  var oldStatus = String(sh.getRange(row, 3).getValue() || "");
+  var financeTouched = ["cost_total", "list_price", "discount_pct", "discount_uah", "revenue"].some(function (k) {
+    return patch[k] != null;
+  });
+  if (financeTouched) applyFinanceToRow_(sh, row, patch);
+
+  if (patch.status != null) {
+    var st = String(patch.status).trim();
+    if (STATUSES.indexOf(st) < 0) throw new Error("Невідомий статус");
+    // Оновлюємо статус у всіх рядках цього замовлення.
+    targetRows.forEach(function (r) { sh.getRange(r, 3).setValue(st); });
+    if (st !== oldStatus) applyStatusSideEffects_(sh, row, st);
+  }
+  if (patch.client_paid != null) {
+    var cp = !!patch.client_paid;
+    targetRows.forEach(function (r) { sh.getRange(r, 33).setValue(cp); });
+    notifyOwnerPaymentChange_(sh, row, 33, cp);
+  }
+  if (patch.margin_paid != null) {
+    var mp = !!patch.margin_paid;
+    targetRows.forEach(function (r) { sh.getRange(r, 34).setValue(mp); });
+    notifyOwnerPaymentChange_(sh, row, 34, mp);
+  }
+  if (patch.notes != null) sh.getRange(row, 32).setValue(String(patch.notes));
+  if (patch.delivery_date != null) {
+    var iso = toISODate(patch.delivery_date) || String(patch.delivery_date || "");
+    targetRows.forEach(function (r) { sh.getRange(r, 29).setValue(iso); });
+  }
+  if (patch.payment_method != null) {
+    targetRows.forEach(function (r) { sh.getRange(r, 30).setValue(String(patch.payment_method)); });
+  }
+
+  SpreadsheetApp.flush();
+  return adminGetOrder_({ order_number: orderNumber });
+}
+
+function adminDashboard_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = adminOrdersSheet_();
+  var last = sh.getLastRow();
+  var totals = {
+    revenue: 0, cost: 0, profit: 0, commission: 0,
+    margin_ready: 0, margin_received: 0, margin_debt: 0,
+    by_status: {}
+  };
+  STATUSES.forEach(function (s) { totals.by_status[s] = 0; });
+
+  if (last >= 2) {
+    var values = sh.getRange(2, 1, last, ADMIN_ORDER_COLS).getValues();
+    for (var i = 0; i < values.length; i++) {
+      var num = String(values[i][0] || "");
+      if (!/^ORD-\d{6}-\d{3}$/.test(num)) continue;
+      var status = String(values[i][2] || "");
+      if (totals.by_status[status] != null) totals.by_status[status] += 1;
+      if (status === "Скасовано") continue;
+      var cost = Number(values[i][19]) || 0;
+      var revenue = Number(values[i][21]) || 0;
+      var profit = Number(values[i][22]) || 0;
+      var commission = Number(values[i][24]) || 0;
+      var clientPaid = cellBool_(values[i][32]);
+      var marginPaid = cellBool_(values[i][33]);
+      totals.revenue += revenue;
+      totals.cost += cost;
+      totals.profit += profit;
+      totals.commission += commission;
+      if (clientPaid) totals.margin_ready += profit;
+      if (marginPaid) totals.margin_received += profit;
+      if (clientPaid && !marginPaid) totals.margin_debt += profit;
+    }
+  }
+
+  var expensesTotal = 0;
+  var expSh = ss.getSheetByName(SHEET_EXPENSES);
+  if (expSh && expSh.getLastRow() >= 2) {
+    var expLast = expSh.getLastRow();
+    var exp = expSh.getRange(2, 4, expLast, 1).getValues();
+    for (var e = 0; e < exp.length; e++) expensesTotal += Number(exp[e][0]) || 0;
+  }
+
+  totals.expenses = expensesTotal;
+  totals.margin_pct = totals.revenue ? Math.round((totals.profit / totals.revenue) * 1000) / 10 : 0;
+  totals.net_fact = totals.margin_received - totals.commission - expensesTotal;
+
+  // Помісячно (останні 6 ключів з номерів замовлень).
+  var monthlyMap = {};
+  if (last >= 2) {
+    var vals = sh.getRange(2, 1, last, ADMIN_ORDER_COLS).getValues();
+    for (var j = 0; j < vals.length; j++) {
+      var n = String(vals[j][0] || "");
+      if (!/^ORD-\d{6}-\d{3}$/.test(n)) continue;
+      if (String(vals[j][2] || "") === "Скасовано") continue;
+      var mk = n.slice(6, 8) + ".20" + n.slice(8, 10); // MM.YYYY
+      if (!monthlyMap[mk]) monthlyMap[mk] = { month: mk, revenue: 0, cost: 0, profit: 0, commission: 0, margin_received: 0, margin_debt: 0, expenses: 0 };
+      var m = monthlyMap[mk];
+      m.revenue += Number(vals[j][21]) || 0;
+      m.cost += Number(vals[j][19]) || 0;
+      m.profit += Number(vals[j][22]) || 0;
+      m.commission += Number(vals[j][24]) || 0;
+      if (cellBool_(vals[j][33])) m.margin_received += Number(vals[j][22]) || 0;
+      if (cellBool_(vals[j][32]) && !cellBool_(vals[j][33])) m.margin_debt += Number(vals[j][22]) || 0;
+    }
+  }
+  if (expSh && expSh.getLastRow() >= 2) {
+    var erows = expSh.getRange(2, 1, expSh.getLastRow(), 4).getValues();
+    for (var x = 0; x < erows.length; x++) {
+      var iso = toISODate(erows[x][0]);
+      if (!iso) continue;
+      var parts = iso.split("-");
+      var key = parts[1] + "." + parts[0];
+      if (!monthlyMap[key]) monthlyMap[key] = { month: key, revenue: 0, cost: 0, profit: 0, commission: 0, margin_received: 0, margin_debt: 0, expenses: 0 };
+      monthlyMap[key].expenses += Number(erows[x][3]) || 0;
+    }
+  }
+  var monthly = Object.keys(monthlyMap).map(function (k) {
+    var row = monthlyMap[k];
+    row.margin_pct = row.revenue ? Math.round((row.profit / row.revenue) * 1000) / 10 : 0;
+    row.net_fact = row.margin_received - row.commission - row.expenses;
+    return row;
+  }).sort(function (a, b) { return String(b.month).localeCompare(String(a.month)); }).slice(0, 6);
+
+  return { status: "ok", totals: totals, monthly: monthly };
+}
+
+function adminListPartners_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_DROP);
+  if (!sh) return { status: "ok", partners: [] };
+  var last = sh.getLastRow();
+  if (last < 2) return { status: "ok", partners: [] };
+  var values = sh.getRange(2, 1, last, 10).getDisplayValues();
+  var partners = [];
+  for (var i = 0; i < values.length; i++) {
+    var code = String(values[i][0] || "").trim();
+    if (!code) continue;
+    partners.push({
+      row: i + 2,
+      code: code,
+      name: values[i][1],
+      type: values[i][2],
+      contact: values[i][3],
+      rate: cellNum_(values[i][4]) || 0,
+      sold: cellNum_(values[i][5]) || 0,
+      revenue: cellNum_(values[i][6]) || 0,
+      accrued: cellNum_(values[i][7]) || 0,
+      paid: cellNum_(values[i][8]) || 0,
+      balance: cellNum_(values[i][9]) || 0
+    });
+  }
+  return { status: "ok", partners: partners };
+}
+
+function adminUpsertPartner_(p) {
+  if (!p || !p.code) throw new Error("code required");
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_DROP) || setupDropshippers(ss);
+  var last = sh.getLastRow();
+  var code = String(p.code).trim();
+  var target = 0;
+  if (last >= 2) {
+    var codes = sh.getRange(2, 1, last, 1).getValues();
+    for (var i = 0; i < codes.length; i++) {
+      if (String(codes[i][0] || "").trim() === code) { target = i + 2; break; }
+    }
+  }
+  if (!target) {
+    target = last + 1;
+    if (target < 2) target = 2;
+  }
+  sh.getRange(target, 1, 1, 5).setValues([[
+    code,
+    p.name || "",
+    p.type || "",
+    p.contact || "",
+    p.rate != null ? Number(p.rate) : 0
+  ]]);
+  SpreadsheetApp.flush();
+  return adminListPartners_();
+}
+
+function adminListExpenses_(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_EXPENSES);
+  if (!sh) return { status: "ok", expenses: [] };
+  var last = sh.getLastRow();
+  if (last < 2) return { status: "ok", expenses: [] };
+  var month = String(data.month || "").trim(); // MM.YYYY
+  var values = sh.getRange(2, 1, last, 5).getValues();
+  var expenses = [];
+  for (var i = 0; i < values.length; i++) {
+    var iso = toISODate(values[i][0]);
+    if (!iso && !values[i][1] && !values[i][3]) continue;
+    if (month && iso) {
+      var parts = iso.split("-");
+      var key = parts[1] + "." + parts[0];
+      if (key !== month) continue;
+    }
+    expenses.push({
+      row: i + 2,
+      date: iso || String(values[i][0] || ""),
+      category: String(values[i][1] || ""),
+      description: String(values[i][2] || ""),
+      amount: cellNum_(values[i][3]) || 0,
+      note: String(values[i][4] || "")
+    });
+  }
+  expenses.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  return { status: "ok", expenses: expenses };
+}
+
+function adminAddExpense_(ex) {
+  if (!ex || ex.amount == null) throw new Error("amount required");
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_EXPENSES) || setupExpenses(ss);
+  var last = Math.max(sh.getLastRow(), 1);
+  var dateVal = toISODate(ex.date) || Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd");
+  var parts = dateVal.split("-");
+  var sheetDate = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+  sh.getRange(last + 1, 1, 1, 5).setValues([[
+    sheetDate,
+    ex.category || "Інше",
+    ex.description || "",
+    Math.round(Number(ex.amount) || 0),
+    ex.note || ""
+  ]]);
+  SpreadsheetApp.flush();
+  return adminListExpenses_({});
+}
+
+function adminListPayouts_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_PAYOUTS);
+  if (!sh) return { status: "ok", payouts: [] };
+  var last = sh.getLastRow();
+  if (last < 2) return { status: "ok", payouts: [] };
+  var values = sh.getRange(2, 1, last, 6).getValues();
+  var payouts = [];
+  for (var i = 0; i < values.length; i++) {
+    var code = String(values[i][1] || "").trim();
+    if (!code && !values[i][3]) continue;
+    payouts.push({
+      row: i + 2,
+      date: toISODate(values[i][0]) || String(values[i][0] || ""),
+      code: code,
+      name: String(values[i][2] || ""),
+      amount: cellNum_(values[i][3]) || 0,
+      method: String(values[i][4] || ""),
+      note: String(values[i][5] || "")
+    });
+  }
+  payouts.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  return { status: "ok", payouts: payouts };
+}
+
+function adminAddPayout_(p) {
+  if (!p || !p.code || p.amount == null) throw new Error("code and amount required");
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_PAYOUTS) || setupPayouts(ss);
+  var last = Math.max(sh.getLastRow(), 1);
+  var dateVal = toISODate(p.date) || Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd");
+  var parts = dateVal.split("-");
+  var sheetDate = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+  // C — формула ARRAYFORMULA з рядка 2; пишемо лише A,B,D,E,F
+  sh.getRange(last + 1, 1).setValue(sheetDate);
+  sh.getRange(last + 1, 2).setValue(String(p.code).trim());
+  sh.getRange(last + 1, 4).setValue(Math.round(Number(p.amount) || 0));
+  sh.getRange(last + 1, 5).setValue(p.method || "");
+  sh.getRange(last + 1, 6).setValue(p.note || "");
+  SpreadsheetApp.flush();
+  return adminListPayouts_();
 }
 
 function jsonOut(obj) {

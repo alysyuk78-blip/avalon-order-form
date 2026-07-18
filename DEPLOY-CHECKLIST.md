@@ -53,6 +53,10 @@ Vercel → Проєкт `avalon-order-form` → **Settings → Environment Varia
 - [ ] `TELEGRAM_BOT_TOKEN`
 - [ ] `TELEGRAM_CHAT_ID`
 - [ ] `GOOGLE_SHEET_URL` — URL веб-застосунку Apps Script (`.../exec`)
+- [ ] `ADMIN_PASSWORD` — пароль входу в `/admin` (міні-CRM)
+- [ ] `ADMIN_API_SECRET` — той самий секрет у Vercel і в Apps Script
+  Script Properties (`ADMIN_API_SECRET`)
+- [ ] (Опційно) `ADMIN_SESSION_SECRET` — окремий ключ підпису cookie/токена
 - [ ] Після змін env — **Redeploy** проєкту.
 
 ## 3. Викотити код у прод
