@@ -268,7 +268,7 @@
     .color-choice.is-active .ral-palette-swatch::after { display: none; }
     .ral-palette-swatch i { display: block; width: 22px; height: 2px; border-radius: 999px; background: var(--avalon-7016); }
     .ral-colors-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); justify-items: center; gap: 14px 8px; }
-    .pattern-choice { width: 100%; min-width: 0; overflow: hidden; padding: 6px 6px 0; border: 1px solid #d2d5d8; border-radius: 18px !important; background: #fff; }
+    .pattern-choice { width: 100%; min-width: 0; overflow: visible; padding: 6px 6px 0; border: 1px solid #d2d5d8; border-radius: 18px !important; background: #fff; }
     .pattern-choice img { display: block; width: 100%; aspect-ratio: 4 / 3; padding: 3px; border-radius: 12px; object-fit: contain; background: #050505; transition: transform .24s cubic-bezier(.2,.8,.2,1), filter .24s ease; }
     .pattern-choice .pattern-label { display: block; padding: 10px 8px 11px; text-align: center; color: #1d1d1f; font-size: 12px; font-weight: 750; background: #fff; }
     .pattern-other { min-height: 0; aspect-ratio: 9 / 7; display: grid; place-items: center; padding: 12px; border-style: dashed !important; }
@@ -295,7 +295,7 @@
     .contact-method-button:active .contact-method-icon { transform: translateY(0) scale(.97); }
     .contact-method-button.is-active { color: var(--avalon-7016); }
 .contact-method-button.is-active .contact-method-icon { transform: translateY(-2px) scale(1.06); box-shadow: none; }
-.contact-method-button.is-active .contact-method-icon::after { content: "✓"; position: absolute; right: -5px; bottom: -5px; z-index: 2; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: #215343; color: #fff; font-size: 11px; font-weight: 800; line-height: 1; }
+.contact-method-button.is-active .contact-method-icon::after { content: "✓"; position: absolute; right: -3px; bottom: -3px; z-index: 2; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: #215343; color: #fff; font-size: 11px; font-weight: 800; line-height: 1; }
 @media (hover: hover) {
   .contact-method-button.is-active:hover .contact-method-icon {
     transform: translateY(-4px) scale(1.09);
@@ -381,8 +381,9 @@
     .btu-choice.is-active::after {
       content: "✓";
       position: absolute;
-      top: 8px;
-      right: 8px;
+      top: auto;
+      right: -3px;
+      bottom: -3px;
       z-index: 2;
       width: 18px;
       height: 18px;
@@ -396,6 +397,11 @@
       font-weight: 800;
       line-height: 1;
       box-shadow: none;
+    }
+    /* У візерунках пташка належить мініатюрі, а не підпису K1/K2. */
+    .catalog-choice.pattern-choice.is-active::after {
+      right: -3px;
+      bottom: 27px;
     }
     .color-choice,
     .color-choice.is-active {
