@@ -358,30 +358,21 @@
         color: #8f7340 !important;
       }
     }
+    /* Обраний варіант має бути помітним без важкої кольорової заливки. */
     .catalog-option.is-active,
     .catalog-choice.is-active:not(.color-choice),
     .pattern-choice.is-active {
-      color: #173d31 !important;
-      background: #edf5f0 !important;
-      box-shadow: 0 12px 24px rgba(23,61,49,.10) !important;
+      color: #1d1d1f !important;
+      background: #fff !important;
+      box-shadow: inset 0 0 0 1.5px #383e42, 0 10px 22px rgba(29,29,31,.10) !important;
     }
     .catalog-option.is-active > *,
     .catalog-choice.is-active:not(.color-choice) > *,
     .pattern-choice.is-active > * {
-      color: #173d31 !important;
+      color: #1d1d1f !important;
     }
     .catalog-option.is-active::after,
-    .catalog-choice.is-active:not(.color-choice):not(.pattern-choice)::after {
-      content: "";
-      position: absolute;
-      top: 11px;
-      right: 13px;
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #215343;
-      box-shadow: 0 0 0 4px rgba(33,83,67,.12);
-    }
+    .catalog-choice.is-active:not(.color-choice)::after,
     .pattern-choice.is-active::after,
     .btu-choice.is-active::after {
       display: none;
