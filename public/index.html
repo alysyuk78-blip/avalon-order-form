@@ -275,6 +275,7 @@
     .catalog-request-heading { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; padding-bottom: 22px; border-bottom: 1px solid var(--apple-line); }
     .catalog-request-heading .eyebrow, .catalog-section .eyebrow { margin: 0; color: var(--apple-muted); font-size: 11px; line-height: 1.2; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
     .catalog-request-heading h1, .catalog-section h2 { margin: 6px 0 0; color: var(--apple-ink); letter-spacing: 0; }
+    .catalog-model-code { margin: 0; padding: 0; color: #8f7340; font-size: 14px; font-weight: 750; letter-spacing: .08em; line-height: 1.2; text-transform: uppercase; }
     .catalog-section { padding: 24px; border: 1px solid var(--apple-line); border-radius: 18px; background: rgba(255,255,255,.94); box-shadow: 0 10px 30px rgba(29,29,31,.05); }
     .catalog-request-item { border: 1px solid var(--apple-line); border-radius: 16px; background: rgba(255,255,255,.94); box-shadow: 0 6px 18px rgba(29,29,31,.04); }
     section[aria-label="Моделі у заявці"] article { border: 1px solid var(--apple-line) !important; border-radius: 16px !important; background: rgba(255,255,255,.94) !important; box-shadow: 0 6px 18px rgba(29,29,31,.04) !important; }
@@ -2970,7 +2971,7 @@
               <section className="apple-panel mt-10 bg-white p-5 sm:p-7" style={{ border: "1px solid #dce1dc", borderRadius: 8 }}>
                 <div className="flex flex-wrap items-end justify-between gap-3 border-b pb-5" style={{ borderColor: "#dce1dc" }}>
                   <div><p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#8f7340" }}>Параметри</p><h2 className="mt-1 text-2xl font-bold" style={{ color: "#1f2925" }}>Додайте модель до прорахунку</h2></div>
-                  <span className="text-sm font-semibold px-3 py-1.5" style={{ background: "#edf5f0", color: "#173d31", borderRadius: 999 }}>{selectedModel.id}</span>
+                  <p className="catalog-model-code">{selectedModel.id}</p>
                 </div>
 
                 <div className="mt-7 grid gap-8 lg:grid-cols-2">
