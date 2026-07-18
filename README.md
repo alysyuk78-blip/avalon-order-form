@@ -14,15 +14,21 @@
 ```
 avalon-order-form/
 ├── public/
-│   └── index.html          ← Форма (фронтенд, візуально ідентична Base44)
+│   ├── index.html          ← Форма для клієнта
+│   └── admin/index.html    ← Міні-CRM кабінет (/admin)
 ├── api/
-│   └── order.js            ← Серверна функція (Telegram + Google Sheets)
-├── google-apps-script.js   ← Скрипт для Google Sheets webhook
-├── vercel.json             ← Конфігурація Vercel
-├── package.json            ← Залежності
-├── .env.example            ← Шаблон змінних оточення
-└── README.md               ← Ця інструкція
+│   ├── order.js            ← Прийом заявок (Telegram + Sheets)
+│   └── admin/              ← Захищені API кабінету
+├── lib/                    ← Спільні модулі auth / Sheets proxy
+├── google-apps-script-v2.js ← Офіційний Apps Script (заявки + admin_action)
+├── vercel.json
+├── package.json
+├── .env.example
+└── README.md
 ```
+
+**Кабінет:** після деплою відкрийте `https://avalon-order-form.vercel.app/admin`
+(потрібні `ADMIN_PASSWORD` і `ADMIN_API_SECRET`, див. `DEPLOY-CHECKLIST.md`).
 
 ---
 
