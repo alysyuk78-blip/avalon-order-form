@@ -306,6 +306,88 @@
     .measure-choice > div { width: 100%; text-align: center; }
     @media (min-width: 640px) { .contact-method-grid { grid-template-columns: repeat(5, 62px); justify-content: start; column-gap: 16px; row-gap: 18px; } .contact-method-button, .contact-method-button:nth-child(4), .contact-method-button:nth-child(5) { grid-column: auto; } .delivery-choice-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .source-choice-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
     .btu-choice { min-height: 42px; border-radius: 999px; font-size: 12px; font-weight: 800; }
+    /* Єдиний стиль виборів: без сірих рамок, з тихим відгуком і зрозумілим станом вибору. */
+    .apple-action,
+    .catalog-option,
+    .catalog-secondary,
+    .catalog-submit,
+    .catalog-primary-action,
+    .pattern-choice {
+      border: 0 !important;
+    }
+    .apple-action,
+    .catalog-option,
+    .catalog-secondary,
+    .pattern-choice {
+      position: relative;
+      background: rgba(255,255,255,.82) !important;
+      box-shadow: 0 1px 2px rgba(29,29,31,.04);
+      transition: transform .24s cubic-bezier(.2,.8,.2,1), background-color .24s ease, box-shadow .24s ease, color .24s ease !important;
+    }
+    @media (hover: hover) {
+      .apple-action:hover,
+      .catalog-option:hover,
+      .catalog-secondary:hover,
+      .pattern-choice:hover {
+        transform: translateY(-2px);
+        background: #f8faf8 !important;
+        color: #8f7340 !important;
+        box-shadow: 0 10px 22px rgba(29,29,31,.08) !important;
+      }
+      .catalog-option:hover > *,
+      .catalog-secondary:hover > *,
+      .pattern-choice:hover > * {
+        color: #8f7340 !important;
+      }
+    }
+    .catalog-option.is-active,
+    .catalog-choice.is-active:not(.color-choice),
+    .pattern-choice.is-active {
+      color: #173d31 !important;
+      background: #edf5f0 !important;
+      box-shadow: 0 12px 24px rgba(23,61,49,.10) !important;
+    }
+    .catalog-option.is-active > *,
+    .catalog-choice.is-active:not(.color-choice) > *,
+    .pattern-choice.is-active > * {
+      color: #173d31 !important;
+    }
+    .catalog-option.is-active::after,
+    .catalog-choice.is-active:not(.color-choice):not(.pattern-choice)::after {
+      content: "";
+      position: absolute;
+      top: 11px;
+      right: 13px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #215343;
+      box-shadow: 0 0 0 4px rgba(33,83,67,.12);
+    }
+    .pattern-choice.is-active::after,
+    .btu-choice.is-active::after {
+      display: none;
+    }
+    .color-choice,
+    .color-choice.is-active {
+      background: transparent !important;
+      box-shadow: none !important;
+    }
+    .catalog-submit,
+    .catalog-primary-action {
+      box-shadow: 0 8px 20px rgba(29,29,31,.16);
+    }
+    @media (hover: hover) {
+      .catalog-submit:hover:not(:disabled),
+      .catalog-primary-action:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 14px 28px rgba(29,29,31,.24);
+      }
+    }
+    .catalog-control-error {
+      background: #fff8f8 !important;
+      box-shadow: inset 0 0 0 1px #c2413b, 0 8px 18px rgba(194,65,59,.08) !important;
+    }
     @media (min-width: 640px) { .ral-colors-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
     @media (min-width: 1024px) { .ral-colors-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
     #form-start { scroll-margin-top: 100px; }
@@ -2990,7 +3072,7 @@
                     <div className="mt-5">
                       <Field label={`${deliveryDateLabel} *`}>
                         <p className="mb-2 text-xs leading-5" style={{ color: "#6e6e73" }}>Оберіть орієнтовну дату. Менеджер підтвердить її після перевірки замовлення та виробничого графіка.</p>
-                        <button type="button" onClick={() => setShowCalendar(true)} className="catalog-secondary catalog-choice w-full flex items-center gap-2 text-left" style={{ minHeight: 52, color: form.delivery_date ? "#26322d" : "#8a9690", borderColor: showErrors && !form.delivery_date ? "#c2413b" : undefined }}>
+                        <button type="button" onClick={() => setShowCalendar(true)} className={`catalog-secondary catalog-choice w-full flex items-center gap-2 text-left ${showErrors && !form.delivery_date ? "catalog-control-error" : ""}`} style={{ minHeight: 52, color: form.delivery_date ? "#26322d" : "#8a9690" }}>
                           <span style={{ color: "#173d31", flexShrink: 0 }}><IconCalendar /></span>
                           {form.delivery_date ? formatDeliveryDate(form.delivery_date) : "Оберіть дату"}
                         </button>
