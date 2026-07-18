@@ -1,5 +1,37 @@
 # CODEX HANDOFF — avalon-order-form
 
+## Міні-CRM веб-кабінет `/admin` — 18.07.2026
+
+Додано захищений кабінет поверх наявної Google Sheets облікової системи.
+
+### Що зʼявилось
+- UI: `public/admin/index.html` — екрани Замовлення (воронка/список), Зведення,
+  Партнери (з виплатами), Витрати.
+- API: `api/admin/login.js`, `orders.js`, `order.js`, `dashboard.js`,
+  `partners.js`, `expenses.js`, `payouts.js` + спільні `lib/admin-auth.js`,
+  `lib/admin-sheets.js`.
+- Apps Script: `doPost` розпізнає `admin_action` + `admin_secret` (Script Property
+  `ADMIN_API_SECRET`). Публічні заявки без цих полів працюють як раніше.
+- Колонки знижки AI–AK: Роздрібна ціна, Знижка %, Знижка ₴. Міграція:
+  меню `AVALON → ➕ Додати колонки знижки (AI–AK)` або функція `addDiscountColumns()`.
+- Статус із кабінету викликає ті самі side-effects, що й правка в таблиці
+  (`applyStatusSideEffects_`: підрядник при «В роботі», Telegram власнику).
+
+### Env (Vercel) — без production-деплою секретів у цьому PR
+- `ADMIN_PASSWORD` — вхід у `/admin`
+- `ADMIN_API_SECRET` — той самий рядок у Apps Script Script Properties
+- опційно `ADMIN_SESSION_SECRET`
+
+### Production (окреме підтвердження власника)
+1. Злити PR → Vercel підхопить `/admin` і API.
+2. Додати env-змінні → Redeploy.
+3. `clasp push` + нова версія Apps Script deployment (інакше admin_action не
+   спрацює на живому `/exec`).
+4. Один раз `addDiscountColumns()` у таблиці.
+5. Перевірити: логін → список → зміна статусу → фінанси → витрата/виплата.
+
+Публічна форма клієнта не показує собівартість/маржу.
+
 ## Чітке виділення вибраних опцій мінікаталогу — 18.07.2026
 
 - Неактивні текстові вибори каталогу мають білу або дуже світлу поверхню без

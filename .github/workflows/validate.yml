@@ -23,6 +23,15 @@ jobs:
           node --check api/order.js
           node --check api/alert.js
           node --check api/np.js
+          node --check api/admin/login.js
+          node --check api/admin/orders.js
+          node --check api/admin/order.js
+          node --check api/admin/dashboard.js
+          node --check api/admin/partners.js
+          node --check api/admin/expenses.js
+          node --check api/admin/payouts.js
+          node --check lib/admin-auth.js
+          node --check lib/admin-sheets.js
           node --check google-apps-script-v2.js
 
       - name: Check clasp allowlist
