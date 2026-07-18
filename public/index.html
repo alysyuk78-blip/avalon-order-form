@@ -97,7 +97,7 @@
     .avalon-logo-mark { display: block; object-fit: contain; }
     .avalon-logo-mark.is-light { filter: brightness(0) invert(1); }
     .avalon-brand { display: inline-grid; justify-items: center; gap: 4px; color: var(--avalon-7016); line-height: 1; }
-    .avalon-brand-full { display: block; width: 108px; height: 78px; object-fit: contain; }
+    .avalon-brand-full { display: block; width: 48px; height: 55px; object-fit: contain; }
     .avalon-brand-copy { display: grid; gap: 3px; text-align: center; line-height: 1; }
     .avalon-brand-name { font-size: 12px; font-weight: 800; letter-spacing: .14em; }
     .avalon-brand-tagline { font-size: 7px; font-weight: 750; letter-spacing: .2em; }
@@ -1001,7 +1001,11 @@
 
     function AvalonBrand() {
       return (
-        <img src="images/avalon-logo-7016.svg" alt="AVALON Metal Design" className="avalon-brand-full" />
+        <img
+          src="images/avalon-logo-mark-7016.png"
+          alt="AVALON Metal Design"
+          className="avalon-brand-full"
+        />
       );
     }
 
