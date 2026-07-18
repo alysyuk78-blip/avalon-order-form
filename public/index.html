@@ -283,10 +283,10 @@
     section[aria-label="Моделі у заявці"] article > img { border-radius: 10px !important; }
     .contact-method-grid, .delivery-choice-grid, .source-choice-grid { display: grid; gap: 10px; }
     .contact-method-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px 10px; }
-    .contact-method-button { grid-column: span 2; display: grid; justify-items: center; gap: 7px; padding: 4px; border: 0; background: transparent; color: #3a4144; font-size: 13px; font-weight: 650; transition: color .2s ease; }
+    .contact-method-button { position: relative; grid-column: span 2; display: grid; justify-items: center; gap: 7px; padding: 4px; border: 0; background: transparent; color: #3a4144; font-size: 13px; font-weight: 650; transition: color .2s ease; }
     .contact-method-button:nth-child(4) { grid-column: 2 / span 2; }
     .contact-method-button:nth-child(5) { grid-column: 4 / span 2; }
-    .contact-method-icon { width: 34px; height: 34px; display: grid; place-items: center; overflow: visible; background: transparent; box-shadow: none; transition: transform .22s cubic-bezier(.2,.8,.2,1); }
+    .contact-method-icon { position: relative; width: 34px; height: 34px; display: grid; place-items: center; overflow: visible; background: transparent; box-shadow: none; transition: transform .22s cubic-bezier(.2,.8,.2,1); }
     .contact-method-icon img { display: block; width: 34px; height: 34px; object-fit: contain; filter: none; }
     .contact-method-icon--whatsapp img { width: auto; height: 28px; }
     .contact-method-icon--phone img { width: auto; height: 24px; }
@@ -295,6 +295,7 @@
     .contact-method-button:active .contact-method-icon { transform: translateY(0) scale(.97); }
     .contact-method-button.is-active { color: var(--avalon-7016); }
 .contact-method-button.is-active .contact-method-icon { transform: translateY(-2px) scale(1.06); box-shadow: none; }
+.contact-method-button.is-active .contact-method-icon::after { content: "✓"; position: absolute; right: -5px; bottom: -5px; z-index: 2; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: #215343; color: #fff; font-size: 11px; font-weight: 800; line-height: 1; }
 @media (hover: hover) {
   .contact-method-button.is-active:hover .contact-method-icon {
     transform: translateY(-4px) scale(1.09);
@@ -361,13 +362,13 @@
         color: #8f7340 !important;
       }
     }
-    /* Обраний варіант має бути помітним без важкої кольорової заливки. */
+    /* Обраний варіант позначається пташкою, без рамки та кольорової заливки. */
     .catalog-option.is-active,
     .catalog-choice.is-active:not(.color-choice),
     .pattern-choice.is-active {
       color: #1d1d1f !important;
       background: #fff !important;
-      box-shadow: inset 0 0 0 1.5px #383e42, 0 10px 22px rgba(29,29,31,.10) !important;
+      box-shadow: 0 1px 2px rgba(29,29,31,.04) !important;
     }
     .catalog-option.is-active > *,
     .catalog-choice.is-active:not(.color-choice) > *,
@@ -378,7 +379,23 @@
     .catalog-choice.is-active:not(.color-choice)::after,
     .pattern-choice.is-active::after,
     .btu-choice.is-active::after {
-      display: none;
+      content: "✓";
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 2;
+      width: 18px;
+      height: 18px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      background: #215343;
+      color: #fff !important;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1;
+      box-shadow: none;
     }
     .color-choice,
     .color-choice.is-active {
