@@ -55,7 +55,10 @@ function doPost(e) {
       price_total: data.price_total, area_m2: data.area_m2, cost_total: data.cost_total,
       has_cover: data.has_cover, basket_area_m2: data.basket_area_m2, cover_area_m2: data.cover_area_m2,
       basket_cost_per_m2: data.basket_cost_per_m2, cover_cost_per_m2: data.cover_cost_per_m2,
-      basket_cost_total: data.basket_cost_total, cover_cost_total: data.cover_cost_total
+      basket_cost_total: data.basket_cost_total, cover_cost_total: data.cover_cost_total,
+      basket_model: data.basket_model, basket_model_name: data.basket_model_name,
+      bracket_model_from: data.bracket_model_from, bracket_model_to: data.bracket_model_to,
+      block_w: data.block_w, block_h: data.block_h, block_d: data.block_d
     }];
     var dateStr = Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm");
     var lastRow = sheet.getLastRow();
@@ -107,7 +110,17 @@ function doPost(e) {
         "", "",                                                                        // Y-Z Комісія,Чистий (формули)
         data.transport || (data.transport_custom || ""), data.delivery_address || "",  // AA-AB
         data.delivery_date || "", data.payment_method || "",                           // AC-AD
-        data.how_found || (data.how_found_custom || ""), notes                         // AE-AF
+        data.how_found || (data.how_found_custom || ""), notes,                        // AE-AF
+        "", "",                                                                        // AG-AH галочки (порожні)
+        // AI–AS: дані каталогової форми. pick_ бере з позиції, інакше з верхнього рівня.
+        pick_(it, data, "basket_model"), pick_(it, data, "basket_model_name"),         // AI-AJ
+        pick_(it, data, "bracket_model_from"), pick_(it, data, "bracket_model_to"),    // AK-AL
+        blockDims_(it, data),                                                          // AM
+        pick_(it, data, "has_cover") === true,                                         // AN
+        contactLabel_(data.contact_method), contactValue_(data),                       // AO-AP
+        pick_(it, data, "model_comment"),                                              // AQ
+        (patternFileInfo && patternFileInfo.name) ? patternFileInfo.name : "",          // AR
+        data.quote_required === true                                                   // AS
       ];
       lastRow = appendOrderRow_(sheet, row);
       var rr = sheet.getRange(lastRow, 1, 1, row.length);
@@ -154,7 +167,9 @@ function applyOrderRowControls_(sheet, rowNumber) {
     .requireValueInList(["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"]).setAllowInvalid(false).build();
   sheet.getRange(rowNumber, 3).setDataValidation(statusRule);
   var checkboxRule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
-  sheet.getRange(rowNumber, 33, 1, 2).setDataValidation(checkboxRule);
+  sheet.getRange(rowNumber, 33, 1, 2).setDataValidation(checkboxRule); // AG, AH
+  sheet.getRange(rowNumber, 40).setDataValidation(checkboxRule);       // AN «Кришка»
+  sheet.getRange(rowNumber, 45).setDataValidation(checkboxRule);       // AS «Потрібен прорахунок»
 }
 
 function appendOrderRow_(sheet, row) {
@@ -164,6 +179,34 @@ function appendOrderRow_(sheet, row) {
   sheet.getRange(targetRow, 1, 1, row.length).setValues([row]);
   applyOrderRowControls_(sheet, targetRow);
   return targetRow;
+}
+
+// ── Хелпери для колонок AI–AS (дані каталогової форми) ──
+/** Значення з позиції (items[i]); якщо там порожньо — з верхнього рівня замовлення. */
+function pick_(it, data, key) {
+  var v = it && it[key];
+  if (v === undefined || v === null || v === "") v = data && data[key];
+  return (v === undefined || v === null) ? "" : v;
+}
+/** Габарити зовнішнього блоку кондиціонера «В×Ш×Г» — вихідні дані для розрахунку кошика. */
+function blockDims_(it, data) {
+  var h = pick_(it, data, "block_h"), w = pick_(it, data, "block_w"), d = pick_(it, data, "block_d");
+  var parts = [h, w, d].filter(function (x) { return x !== "" && x !== null && x !== undefined; });
+  return parts.length ? parts.join("×") : "";
+}
+/** Людська назва способу зв'язку. */
+function contactLabel_(method) {
+  return { phone: "Телефон", telegram: "Telegram", viber: "Viber", whatsapp: "WhatsApp", email: "E-mail" }[method] || "";
+}
+/** Значення контакту: для Telegram — @нік, для пошти — e-mail, інакше телефон. */
+function contactValue_(data) {
+  if (!data) return "";
+  if (data.contact_method === "telegram") {
+    var h = String(data.contact_telegram || "").replace(/^@/, "");
+    return h ? "@" + h : "";
+  }
+  if (data.contact_method === "email") return data.contact_email || "";
+  return data.phone || "";
 }
 
 function nextOrderNumber() {
@@ -1067,12 +1110,25 @@ function setupOrders(sheet) {
     "Комісія дропш.","Чистий прибуток",
     "Доставка","Адреса","Дата доставки","Оплата","Як дізнались","Примітки",
     "Оплата клієнта ✓", // AG (33): клієнт оплатив підряднику (є квитанція) → маржа до отримання
-    "Маржу отримано ✓"  // AH (34): підрядник перерахував мені маржу за це замовлення
+    "Маржу отримано ✓", // AH (34): підрядник перерахував мені маржу за це замовлення
+    // AI–AS (35–45): дані каталогової форми, які раніше нікуди не потрапляли
+    "Модель (код)",        // AI (35)  AVL-02
+    "Модель (назва)",      // AJ (36)  «Екран на кронштейнах під утеплювач»
+    "BTU від",             // AK (37)
+    "BTU до",              // AL (38)
+    "Блок В×Ш×Г (мм)",     // AM (39)  габарити зовнішнього блоку кондиціонера
+    "Кришка ✓",            // AN (40)  верхня кришка (впливає на ціну)
+    "Спосіб зв'язку",      // AO (41)
+    "Контакт (TG/e-mail)", // AP (42)
+    "Коментар до моделі",  // AQ (43)
+    "Файл візерунку",      // AR (44)
+    "Потрібен прорахунок ✓"// AS (45)
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,
+                110,220,80,80,150,90,130,180,220,200,120];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -1080,6 +1136,8 @@ function setupOrders(sheet) {
   sheet.getRange(2, 3, 1000, 1).setDataValidation(rule);
   var cb = SpreadsheetApp.newDataValidation().requireCheckbox().build();
   sheet.getRange(2, 33, 1000, 2).setDataValidation(cb); // AG, AH — галочки
+  sheet.getRange(2, 40, 1000, 1).setDataValidation(cb); // AN «Кришка»
+  sheet.getRange(2, 45, 1000, 1).setDataValidation(cb); // AS «Потрібен прорахунок»
   applyOrderConditionalFormats_(sheet);
   applyOrderFilter_(sheet);
 }
@@ -1101,7 +1159,7 @@ function addOrderFilter() {
 /** Умовне форматування аркуша «Замовлення»: колір статус-комірки + колір тексту всього рядка. */
 function applyOrderConditionalFormats_(sheet) {
   var sr = sheet.getRange("C2:C1000");    // статус-комірка
-  var rowR = sheet.getRange("A2:AH1000"); // увесь рядок (текст)
+  var rowR = sheet.getRange("A2:AS1000"); // увесь рядок (текст)
   // Кольори статус-комірки (як було).
   var cellRules = [
     {t:"Нове",bg:"#FFF3CD",fg:"#856404"}, {t:"В роботі",bg:"#CCE5FF",fg:"#004085"},
@@ -1134,6 +1192,27 @@ function addPaymentColumn() {
   sh.setColumnWidth(33, 120); sh.setColumnWidth(34, 130);
   sh.getRange(2, 33, 1000, 2).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
   Logger.log("Галочки «Оплата клієнта ✓» (AG) і «Маржу отримано ✓» (AH) додано.");
+}
+
+/**
+ * Додати колонки AI–AS (дані каталогової форми) у НАЯВНИЙ аркуш «Замовлення».
+ * Наявні A–AH не чіпає, тож формули «Зведення» й «Розрахунків» лишаються цілими.
+ * Старі рядки лишаються порожніми в нових колонках — це нормально.
+ */
+function addCatalogColumns() {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_ORDERS);
+  if (!sh) return;
+  if (sh.getMaxColumns() < 45) sh.insertColumnsAfter(sh.getMaxColumns(), 45 - sh.getMaxColumns());
+  var titles = ["Модель (код)", "Модель (назва)", "BTU від", "BTU до", "Блок В×Ш×Г (мм)", "Кришка ✓",
+                "Спосіб зв'язку", "Контакт (TG/e-mail)", "Коментар до моделі", "Файл візерунку", "Потрібен прорахунок ✓"];
+  sh.getRange(1, 35, 1, titles.length).setValues([titles]);
+  sh.getRange(1, 35, 1, titles.length).setFontWeight("bold").setBackground(RAL7016).setFontColor(HDR_TEXT)
+    .setFontFamily(HDR_FONT).setHorizontalAlignment("center").setVerticalAlignment("middle").setWrap(true).setFontSize(10);
+  [110, 220, 80, 80, 150, 90, 130, 180, 220, 200, 120].forEach(function (w, i) { sh.setColumnWidth(35 + i, w); });
+  var cb = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+  sh.getRange(2, 40, 1000, 1).setDataValidation(cb); // AN «Кришка»
+  sh.getRange(2, 45, 1000, 1).setDataValidation(cb); // AS «Потрібен прорахунок»
+  Logger.log("Колонки AI–AS (модель, BTU, блок, кришка, зв'язок, коментар, файл, прорахунок) додано.");
 }
 
 /**
@@ -1183,10 +1262,11 @@ function updateContractorSettlement() {
 /** ОДИН КЛІК: галочки оплати + аркуш «Розрахунки з підрядником» + фільтр + кольори рядків. Дані не чіпає. */
 function applyAllUpdates() {
   addPaymentColumn();
+  addCatalogColumns();          // AI–AS: модель, BTU, блок, кришка, зв'язок, коментар, файл, прорахунок
   updateContractorSettlement(); // перебудовує (прибирає старий ручний журнал)
   addOrderFilter();
   updateOrderColors();
-  Logger.log("Готово: галочки оплати, аркуш розрахунків, фільтр і кольори застосовано.");
+  Logger.log("Готово: галочки оплати, колонки каталогу, аркуш розрахунків, фільтр і кольори застосовано.");
 }
 
 function setupDropshippers(ss) {
