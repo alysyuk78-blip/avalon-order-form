@@ -267,6 +267,8 @@
     .contact-method-button:nth-child(5) { grid-column: 4 / span 2; }
     .contact-method-icon { width: 34px; height: 34px; display: grid; place-items: center; overflow: visible; background: transparent; box-shadow: none; transition: transform .22s cubic-bezier(.2,.8,.2,1); }
     .contact-method-icon img { display: block; width: 34px; height: 34px; object-fit: contain; filter: none; }
+    .contact-method-icon--whatsapp img { width: auto; height: 28px; }
+    .contact-method-icon--phone img { width: auto; height: 24px; }
     .contact-method-icon--official { border-radius: 0; }
     .contact-method-button:hover .contact-method-icon { transform: translateY(-2px) scale(1.06); box-shadow: none; }
     .contact-method-button:active .contact-method-icon { transform: translateY(0) scale(.97); }
@@ -2958,7 +2960,7 @@
                     <div className="mt-5">
                       <p className="mb-2 text-sm font-bold" style={{ color: "#383e42" }}>Зручний спосіб зв'язку *</p>
                       <div className={`contact-method-grid ${showErrors && !form.contact_method ? "catalog-choice-group is-error" : ""}`}>
-                        {contactMethods.map(method => <button key={method.value} type="button" onClick={() => set("contact_method", method.value)} className={`contact-method-button ${form.contact_method === method.value ? "is-active" : ""}`} aria-pressed={form.contact_method === method.value} style={{ "--contact-color": method.color }}><span className={`contact-method-icon ${method.official ? "contact-method-icon--official" : ""}`}><img src={method.image} alt="" /></span><span>{method.label}</span></button>)}
+                        {contactMethods.map(method => <button key={method.value} type="button" onClick={() => set("contact_method", method.value)} className={`contact-method-button ${form.contact_method === method.value ? "is-active" : ""}`} aria-pressed={form.contact_method === method.value} style={{ "--contact-color": method.color }}><span className={`contact-method-icon contact-method-icon--${method.value} ${method.official ? "contact-method-icon--official" : ""}`}><img src={method.image} alt="" /></span><span>{method.label}</span></button>)}
                       </div>
                       <ErrorText visible={showErrors && !form.contact_method}>Оберіть зручний спосіб зв'язку.</ErrorText>
                     </div>
