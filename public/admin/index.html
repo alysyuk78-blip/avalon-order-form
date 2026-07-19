@@ -877,8 +877,8 @@
       const [loading, setLoading] = useState(true);
       const [dragOver, setDragOver] = useState("");
       const [moving, setMoving] = useState("");
-      const dragOrderRef = React.useRef("");
-      const skipClickRef = React.useRef(false);
+      const dragOrderRef = useRef("");
+      const skipClickRef = useRef(false);
 
       async function load() {
         setLoading(true); setError("");
