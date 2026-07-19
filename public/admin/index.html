@@ -13,7 +13,6 @@
     :root {
       --ink: #1c2124;
       --muted: #5c656c;
-      --line: #d8dde1;
       --bg: #eef1f3;
       --panel: #ffffff;
       --brand: #383e42;
@@ -24,28 +23,53 @@
       --danger: #b42318;
       --shadow: 0 10px 30px rgba(28, 33, 36, 0.08);
       --radius: 14px;
-      --font: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      /* Як на сайті Apple / системний стек macOS & iOS */
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+      /* Середня прозорість колонок воронки (між блідим і насиченим) */
+      --st-new-bg: rgba(230, 184, 0, 0.08); --st-new-fg: #856404;
+      --st-work-bg: rgba(59, 130, 246, 0.08); --st-work-fg: #1d4f91;
+      --st-ready-bg: rgba(20, 184, 166, 0.08); --st-ready-fg: #0f6b5c;
+      --st-ship-bg: rgba(168, 85, 247, 0.08); --st-ship-fg: #6b21a8;
+      --st-done-bg: rgba(34, 197, 94, 0.08); --st-done-fg: #1b7a4a;
+      --st-cancel-bg: rgba(156, 163, 175, 0.10); --st-cancel-fg: #6b7280;
+      /* Бейджі трохи насиченіші за колонки, щоб читались */
+      --st-new-chip: rgba(230, 184, 0, 0.20);
+      --st-work-chip: rgba(59, 130, 246, 0.18);
+      --st-ready-chip: rgba(20, 184, 166, 0.18);
+      --st-ship-chip: rgba(168, 85, 247, 0.18);
+      --st-done-chip: rgba(34, 197, 94, 0.18);
+      --st-cancel-chip: rgba(156, 163, 175, 0.22);
     }
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+      font-family: var(--font) !important;
+      border-style: none;
+      outline: none;
+    }
     html, body { margin: 0; min-height: 100%; }
     body {
-      font-family: var(--font);
+      font-family: var(--font) !important;
       color: var(--ink);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
       background:
         radial-gradient(1200px 500px at 10% -10%, rgba(143, 115, 64, 0.12), transparent 60%),
         radial-gradient(900px 400px at 100% 0%, rgba(56, 62, 66, 0.10), transparent 55%),
         var(--bg);
     }
-    button, input, select, textarea { font: inherit; }
+    button, input, select, textarea, th, td, h1, h2, h3, strong, label, a, span, p, div {
+      font-family: var(--font) !important;
+    }
+    button, input, select, textarea { font: inherit; outline: none; border: 0; }
     button { cursor: pointer; }
     .app { min-height: 100vh; display: flex; flex-direction: column; }
     .top {
       position: sticky; top: 0; z-index: 20;
       display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
       padding: 14px 20px;
-      background: rgba(255,255,255,0.88);
+      background: rgba(255,255,255,0.92);
       backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--line);
     }
     .brand { display: flex; align-items: center; gap: 10px; min-width: 180px; }
     .brand img { height: 36px; width: auto; display: block; }
@@ -53,17 +77,17 @@
     .brand span { display: block; font-size: 11px; color: var(--muted); }
     .nav { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
     .nav button {
-      border: 0; background: transparent; color: var(--muted);
+      border: 0; outline: none; background: transparent; color: var(--muted);
       padding: 8px 12px; border-radius: 999px; font-weight: 600; font-size: 13px;
     }
     .nav button.active { background: var(--brand); color: #fff; }
     .top-actions { display: flex; gap: 8px; align-items: center; }
     .btn {
-      border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 650; font-size: 13px;
+      border: 0; outline: none; border-radius: 10px; padding: 10px 14px; font-weight: 650; font-size: 13px;
       background: var(--brand); color: #fff;
     }
     .btn.secondary { background: #e8ebed; color: var(--ink); }
-    .btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+    .btn.ghost { background: #eef1f3; color: var(--muted); }
     .btn:disabled { opacity: 0.55; cursor: wait; }
     .main { padding: 20px; flex: 1; width: min(1400px, 100%); margin: 0 auto; }
     .login-wrap {
@@ -71,40 +95,183 @@
     }
     .login-card {
       width: min(420px, 100%); background: var(--panel); border-radius: 20px;
-      box-shadow: var(--shadow); padding: 28px; border: 1px solid rgba(56,62,66,0.08);
+      box-shadow: var(--shadow); padding: 28px; border: 0;
     }
     .login-card h1 { margin: 0 0 6px; font-size: 24px; }
     .login-card p { margin: 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.45; }
     .field { display: grid; gap: 6px; margin-bottom: 12px; }
     .field label { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
     .field input, .field select, .field textarea {
-      width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
-      background: #fff; color: var(--ink);
+      width: 100%; border: 0; outline: none; border-radius: 10px; padding: 10px 12px;
+      background: #eef1f3; color: var(--ink);
     }
+    .field input:focus, .field select:focus, .field textarea:focus { background: #e4e8ec; }
     .field textarea { min-height: 80px; resize: vertical; }
     .error { color: var(--danger); font-size: 13px; margin: 8px 0 0; }
     .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
     .toolbar input[type="search"], .toolbar select {
-      border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff; min-width: 180px;
+      border: 0; outline: none; border-radius: 10px; padding: 10px 12px; background: #fff; min-width: 180px;
     }
     .view-toggle { display: flex; gap: 4px; background: #e8ebed; padding: 4px; border-radius: 12px; }
-    .view-toggle button { border: 0; background: transparent; padding: 8px 12px; border-radius: 8px; font-weight: 650; font-size: 12px; color: var(--muted); }
+    .view-toggle button { border: 0; outline: none; background: transparent; padding: 8px 12px; border-radius: 8px; font-weight: 650; font-size: 12px; color: var(--muted); }
     .view-toggle button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
     .kanban {
       display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 12px;
       overflow-x: auto; padding-bottom: 8px;
     }
     .col {
-      background: rgba(255,255,255,0.7); border: 1px solid var(--line); border-radius: var(--radius);
-      min-height: 280px; display: flex; flex-direction: column;
+      background: rgba(255,255,255,0.45); border: 0; border-radius: var(--radius);
+      min-height: 280px; display: flex; flex-direction: column; overflow: hidden;
     }
     .col h3 {
-      margin: 0; padding: 12px 12px 8px; font-size: 12px; letter-spacing: 0.06em;
-      text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between;
+      margin: 0; padding: 12px; font-size: 12px; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--muted);
+      display: flex; flex-direction: column; gap: 4px;
+      background: transparent;
     }
-    .col-body { padding: 0 8px 8px; display: grid; gap: 8px; }
+    .col h3 .col-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .col h3 .col-sum { font-size: 12px; font-weight: 750; letter-spacing: 0; text-transform: none; opacity: 0.95; }
+    .col h3 .col-margin { font-size: 11px; font-weight: 650; letter-spacing: 0; text-transform: none; opacity: 0.75; }
+    .col-body { padding: 8px; display: grid; gap: 8px; }
+    .orders-totals {
+      display: flex; flex-wrap: wrap; gap: 16px 28px; margin-bottom: 14px;
+      background: var(--panel); border-radius: var(--radius); padding: 14px 16px;
+      box-shadow: var(--shadow);
+    }
+    .orders-totals .ot-item { display: grid; gap: 2px; }
+    .orders-totals .ot-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+    .orders-totals .ot-value { font-size: 18px; font-weight: 750; }
+    .orders-totals .ot-sub { font-size: 13px; font-weight: 650; color: var(--brand-soft); }
+    .kpi .sub { margin-top: 6px; font-size: 13px; font-weight: 650; color: var(--brand-soft); }
+    .charts-grid {
+      display: grid; grid-template-columns: 1.15fr 1fr; gap: 12px; margin-bottom: 16px;
+    }
+    .chart-wrap { min-height: 200px; }
+    .chart-legend {
+      display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 14px;
+      font-size: 12px; color: var(--muted);
+    }
+    .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .chart-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+    .dual-bars {
+      display: flex; align-items: flex-end; gap: 14px; height: 180px; padding: 4px 0 0;
+    }
+    .dual-col {
+      flex: 1; min-width: 0; height: 100%;
+      display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 8px;
+    }
+    .dual-pair {
+      display: flex; align-items: flex-end; justify-content: center; gap: 4px;
+      width: 100%; height: 140px;
+    }
+    .dual-stem {
+      width: 42%; max-width: 28px; border-radius: 6px 6px 3px 3px; min-height: 3px;
+    }
+    .dual-stem.rev { background: #526058; }
+    .dual-stem.mar { background: #1b7a4a; }
+    .dual-lbl { font-size: 11px; font-weight: 650; color: var(--muted); text-align: center; }
+    .dual-tip { font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; line-height: 1.25; }
+    .status-cols {
+      display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px;
+      height: 180px; align-items: end;
+    }
+    .status-col {
+      height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0;
+    }
+    .status-col .count { font-size: 13px; font-weight: 750; color: var(--ink); }
+    .status-col .stem {
+      width: 100%; max-width: 40px; border-radius: 8px 8px 4px 4px; min-height: 4px;
+      transition: height .28s ease;
+    }
+    .status-col .name {
+      font-size: 10px; font-weight: 650; color: var(--muted); text-align: center;
+      line-height: 1.2; min-height: 2.4em;
+    }
+    .stack-block { display: grid; gap: 14px; }
+    .stack-bar {
+      display: flex; height: 36px; border-radius: 10px; overflow: hidden; background: #e8ebed;
+    }
+    .stack-seg {
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; color: #fff; min-width: 0; padding: 0 6px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .stack-meta { display: grid; gap: 8px; }
+    .stack-row {
+      display: grid; grid-template-columns: 14px 1fr auto; gap: 10px; align-items: center;
+      font-size: 13px;
+    }
+    .stack-row .val { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .donut-wrap {
+      display: flex; gap: 20px; align-items: center; flex-wrap: wrap; min-height: 180px;
+    }
+    .donut {
+      position: relative; width: 148px; height: 148px; flex-shrink: 0;
+    }
+    .donut svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+    .donut-center {
+      position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
+      pointer-events: none;
+    }
+    .donut-center strong { display: block; font-size: 22px; font-weight: 750; letter-spacing: -0.02em; }
+    .donut-center span { display: block; font-size: 11px; color: var(--muted); font-weight: 650; margin-top: 2px; }
+    .donut-stats { display: grid; gap: 10px; flex: 1; min-width: 140px; }
+    .donut-stat {
+      background: #f3f5f6; border-radius: 10px; padding: 10px 12px;
+    }
+    .donut-stat .lab { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    .donut-stat .num { margin-top: 4px; font-size: 16px; font-weight: 750; }
+    .period-toggle { display: flex; gap: 4px; background: #e8ebed; padding: 4px; border-radius: 12px; flex-wrap: wrap; }
+    .period-toggle button {
+      border: 0; outline: none; background: transparent; padding: 8px 12px; border-radius: 8px;
+      font-weight: 650; font-size: 12px; color: var(--muted);
+    }
+    .period-toggle button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .col.drag-over { background: rgba(56, 62, 66, 0.10) !important; }
+    .col-body.drag-over { background: rgba(255,255,255,0.35); border-radius: 10px; }
+    .card { touch-action: manipulation; }
+    .card.dragging { opacity: 0.45; transform: scale(0.98); }
+    .card .drag-hint { font-size: 10px; color: var(--muted); margin-top: 6px; opacity: 0.7; }
+    .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+    .quick-actions button {
+      border: 0; outline: none; border-radius: 999px; padding: 8px 12px;
+      font-size: 12px; font-weight: 650; background: #eef1f3; color: var(--ink);
+    }
+    .quick-actions button.active { background: var(--brand); color: #fff; }
+    .quick-actions button.ok { background: rgba(27, 122, 74, 0.14); color: var(--ok); }
+    .quick-actions button.warn { background: rgba(154, 103, 0, 0.14); color: var(--warn); }
+    .remind-list { display: grid; gap: 8px; }
+    .remind-item {
+      display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
+      background: #f3f5f6; border-radius: 12px; padding: 12px 14px; cursor: pointer; text-align: left;
+    }
+    .remind-item:hover { background: #e9ecef; }
+    .remind-item .title { font-weight: 700; font-size: 13px; }
+    .remind-item .desc { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.35; }
+    .remind-item .tag {
+      font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 999px; background: #fff; color: var(--muted);
+    }
+    .remind-item .tag.debt { color: var(--warn); background: rgba(154, 103, 0, 0.12); }
+    .remind-item .tag.stuck { color: var(--st-work-fg); background: var(--st-work-chip); }
+    .remind-item .tag.ship { color: var(--st-ship-fg); background: var(--st-ship-chip); }
+    @media (max-width: 900px) {
+      .charts-grid { grid-template-columns: 1fr; }
+      .status-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); height: auto; min-height: 200px; }
+    }
+    .col.st-new { background: var(--st-new-bg); }
+    .col.st-new h3 { color: var(--st-new-fg); }
+    .col.st-work { background: var(--st-work-bg); }
+    .col.st-work h3 { color: var(--st-work-fg); }
+    .col.st-ready { background: var(--st-ready-bg); }
+    .col.st-ready h3 { color: var(--st-ready-fg); }
+    .col.st-ship { background: var(--st-ship-bg); }
+    .col.st-ship h3 { color: var(--st-ship-fg); }
+    .col.st-done { background: var(--st-done-bg); }
+    .col.st-done h3 { color: var(--st-done-fg); }
+    .col.st-cancel { background: var(--st-cancel-bg); }
+    .col.st-cancel h3 { color: var(--st-cancel-fg); }
     .card {
-      background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+      background: var(--panel); border: 0; border-radius: 12px;
       padding: 12px; box-shadow: var(--shadow); cursor: pointer; text-align: left;
       transition: transform .18s ease, box-shadow .18s ease;
     }
@@ -115,24 +282,25 @@
     .list { display: grid; gap: 8px; }
     .row-card {
       display: grid; grid-template-columns: 1.1fr 1.2fr 0.8fr 0.7fr 0.7fr 0.7fr auto;
-      gap: 10px; align-items: center; background: var(--panel); border: 1px solid var(--line);
+      gap: 10px; align-items: center; background: var(--panel); border: 0;
       border-radius: 12px; padding: 12px 14px; cursor: pointer;
     }
-    .row-card:hover { border-color: #b7bfc6; }
+    .row-card:hover { background: #f7f8f9; }
     .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
     .kpi {
-      background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+      background: var(--panel); border: 0; border-radius: var(--radius);
       padding: 16px; box-shadow: var(--shadow);
     }
     .kpi .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
     .kpi .value { margin-top: 8px; font-size: 24px; font-weight: 750; letter-spacing: -0.02em; }
     .panel {
-      background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+      background: var(--panel); border: 0; border-radius: var(--radius);
       padding: 16px; box-shadow: var(--shadow); margin-bottom: 16px;
     }
     .panel h2 { margin: 0 0 12px; font-size: 16px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th, td { text-align: left; padding: 10px 8px; border: 0; vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(28,33,36,0.03); }
     th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
     .drawer-backdrop {
       position: fixed; inset: 0; background: rgba(28,33,36,0.35); z-index: 40;
@@ -141,7 +309,7 @@
     .drawer {
       width: min(560px, 100%); height: 100%; background: #fff; overflow: auto;
       padding: 20px; box-shadow: -20px 0 50px rgba(0,0,0,0.15);
-      animation: slideIn .22s ease;
+      animation: slideIn .22s ease; border: 0;
     }
     @keyframes slideIn { from { transform: translateX(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
     .drawer header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 16px; }
@@ -149,14 +317,18 @@
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .badge {
       display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px;
-      font-size: 11px; font-weight: 700; background: #eef1f3; color: var(--muted);
+      font-size: 11px; font-weight: 700; background: #eef1f3; color: var(--muted); border: 0;
     }
-    .badge.ok { background: #e6f6ed; color: var(--ok); }
-    .badge.warn { background: #fff6db; color: var(--warn); }
+    .badge.st-new { background: var(--st-new-chip); color: var(--st-new-fg); }
+    .badge.st-work { background: var(--st-work-chip); color: var(--st-work-fg); }
+    .badge.st-ready { background: var(--st-ready-chip); color: var(--st-ready-fg); }
+    .badge.st-ship { background: var(--st-ship-chip); color: var(--st-ship-fg); }
+    .badge.st-done { background: var(--st-done-chip); color: var(--st-done-fg); }
+    .badge.st-cancel { background: var(--st-cancel-chip); color: var(--st-cancel-fg); }
     .section-title { margin: 18px 0 10px; font-size: 13px; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
     .empty { color: var(--muted); font-size: 14px; padding: 24px; text-align: center; }
-    .status-Нове { background: #fff6db; color: #856404; }
-    .status-В\ роботі, .chip-work { background: #e8f1ff; color: #1d4f91; }
+    .alias { color: var(--muted); font-size: 12px; }
+    .phone-key { font-variant-numeric: tabular-nums; font-weight: 650; }
     @media (max-width: 1100px) {
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .row-card { grid-template-columns: 1fr 1fr; }
@@ -172,8 +344,16 @@
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useRef } = React;
     const STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
+    const STATUS_CLASS = {
+      "Нове": "st-new",
+      "В роботі": "st-work",
+      "Готове": "st-ready",
+      "Відправлено": "st-ship",
+      "Завершено": "st-done",
+      "Скасовано": "st-cancel",
+    };
     const EXPENSE_CATS = ["Реклама / маркетинг","Доставка","Пакування / матеріали","Підряд / зарплати","Інше"];
     const TOKEN_KEY = "avalon_admin_token";
 
@@ -184,6 +364,272 @@
     function pct(v) {
       if (v == null || v === "") return "—";
       return Number(v).toLocaleString("uk-UA", { maximumFractionDigits: 1 }) + "%";
+    }
+    /** Парсить дати з таблиці: dd.MM.yyyy[ HH:mm] */
+    function parseUaDateTime(v) {
+      if (v == null || v === "") return null;
+      if (v instanceof Date && !isNaN(v.getTime())) return v;
+      const s = String(v).trim();
+      const ua = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+      if (ua) {
+        return new Date(
+          Number(ua[3]),
+          Number(ua[2]) - 1,
+          Number(ua[1]),
+          Number(ua[4] || 0),
+          Number(ua[5] || 0),
+          Number(ua[6] || 0)
+        );
+      }
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) return d;
+      }
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    /** Коротка дата для таблиць: 23.06.2026 09:04 */
+    function formatDateShort(v) {
+      if (v == null || v === "") return "—";
+      const d = parseUaDateTime(v);
+      if (!d) {
+        const s = String(v).trim();
+        return s.length > 22 ? s.slice(0, 22) + "…" : s;
+      }
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const yyyy = d.getFullYear();
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mi = String(d.getMinutes()).padStart(2, "0");
+      const hasTime = !(d.getHours() === 0 && d.getMinutes() === 0 && String(v).indexOf(":") < 0);
+      return hasTime ? `${dd}.${mm}.${yyyy} ${hh}:${mi}` : `${dd}.${mm}.${yyyy}`;
+    }
+    function statusClass(status) {
+      return STATUS_CLASS[status] || "";
+    }
+    /** Дата замовлення: created_at (UA/ISO) або номер ORD-DDMMYY-NNN */
+    function orderDate(g) {
+      if (!g) return null;
+      const fromCreated = parseUaDateTime(g.created_at);
+      if (fromCreated) return fromCreated;
+      const m = String(g.order_number || "").match(/^ORD-(\d{2})(\d{2})(\d{2})-/);
+      if (m) {
+        const d = new Date(2000 + Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+        if (!isNaN(d.getTime())) return d;
+      }
+      return null;
+    }
+    function startOfDay(d) {
+      const x = new Date(d);
+      x.setHours(0, 0, 0, 0);
+      return x;
+    }
+    function periodRange(period) {
+      const now = new Date();
+      const end = new Date(now);
+      end.setHours(23, 59, 59, 999);
+      if (period === "all") return null;
+      if (period === "7d") {
+        const start = startOfDay(now);
+        start.setDate(start.getDate() - 6);
+        return { start, end };
+      }
+      if (period === "30d") {
+        const start = startOfDay(now);
+        start.setDate(start.getDate() - 29);
+        return { start, end };
+      }
+      if (period === "month") {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        return { start, end };
+      }
+      return null;
+    }
+    function inPeriod(g, period) {
+      const range = periodRange(period);
+      if (!range) return true;
+      const d = orderDate(g);
+      if (!d) return false;
+      return d >= range.start && d <= range.end;
+    }
+    function monthKeyFromDate(d) {
+      if (!d || isNaN(d.getTime())) return "";
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      return mm + "." + d.getFullYear();
+    }
+    function compareMonthKeyDesc(a, b) {
+      const [am, ay] = String(a).split(".").map(Number);
+      const [bm, by] = String(b).split(".").map(Number);
+      return (by - ay) || (bm - am);
+    }
+    /** Одне нагадування на замовлення; пріоритет: борг маржі → в роботі → без дати. */
+    function buildReminders(groups) {
+      const active = ["Нове", "В роботі", "Готове", "Відправлено"];
+      const byOrder = {};
+      (groups || []).forEach(g => {
+        if (g.status === "Скасовано") return;
+        const profit = Number(g.profit) || 0;
+        const reasons = [];
+        let priority = 99;
+        let tag = "";
+        let tagClass = "";
+        if (g.client_paid && !g.margin_paid && profit > 0) {
+          reasons.push("Маржа до отримання: " + money(profit));
+          priority = Math.min(priority, 1);
+          tag = "Борг маржі";
+          tagClass = "debt";
+        }
+        if (g.status === "В роботі") {
+          reasons.push("Статус «В роботі» · " + money(g.revenue));
+          if (priority > 2) { priority = 2; tag = "В роботі"; tagClass = "stuck"; }
+        }
+        if (active.indexOf(g.status) >= 0 && !String(g.delivery_date || "").trim()) {
+          reasons.push("Немає дати доставки");
+          if (priority > 3) { priority = 3; tag = "Дата"; tagClass = "ship"; }
+        }
+        if (!reasons.length) return;
+        byOrder[g.order_number] = {
+          key: "rem-" + g.order_number,
+          order_number: g.order_number,
+          title: g.order_number + " · " + (g.client || "Клієнт"),
+          desc: reasons.join(" · "),
+          tag: tag || "Увага",
+          tagClass: tagClass || "",
+          priority,
+        };
+      });
+      return Object.keys(byOrder)
+        .map(k => byOrder[k])
+        .sort((a, b) => a.priority - b.priority || String(b.order_number).localeCompare(String(a.order_number)))
+        .slice(0, 12);
+    }
+    function totalsFromGroups(groups, expensesTotal) {
+      const by_status = {};
+      STATUSES.forEach(s => { by_status[s] = 0; });
+      let revenue = 0, cost = 0, profit = 0, commission = 0;
+      let margin_ready = 0, margin_received = 0, margin_debt = 0;
+      (groups || []).forEach(g => {
+        const st = g.status || "";
+        if (by_status[st] != null) by_status[st] += 1;
+        if (st === "Скасовано") return;
+        const rev = Number(g.revenue) || 0;
+        const cst = Number(g.cost_total) || 0;
+        const pr = Number(g.profit) || 0;
+        const com = Number(g.commission) || 0;
+        revenue += rev;
+        cost += cst;
+        profit += pr;
+        commission += com;
+        if (g.client_paid) margin_ready += pr;
+        if (g.margin_paid) margin_received += pr;
+        if (g.client_paid && !g.margin_paid) margin_debt += pr;
+      });
+      const expenses = Number(expensesTotal) || 0;
+      return {
+        revenue, cost, profit, commission, expenses,
+        margin_ready, margin_received, margin_debt,
+        margin_pct: revenue ? Math.round((profit / revenue) * 1000) / 10 : 0,
+        net_fact: margin_received - commission - expenses,
+        by_status,
+      };
+    }
+    function monthlyFromGroups(groups, expenses) {
+      const map = {};
+      (groups || []).forEach(g => {
+        if (g.status === "Скасовано") return;
+        const d = orderDate(g);
+        const key = monthKeyFromDate(d);
+        if (!key) return;
+        if (!map[key]) {
+          map[key] = { month: key, revenue: 0, cost: 0, profit: 0, commission: 0, margin_received: 0, margin_debt: 0, expenses: 0 };
+        }
+        const m = map[key];
+        m.revenue += Number(g.revenue) || 0;
+        m.cost += Number(g.cost_total) || 0;
+        m.profit += Number(g.profit) || 0;
+        m.commission += Number(g.commission) || 0;
+        if (g.margin_paid) m.margin_received += Number(g.profit) || 0;
+        if (g.client_paid && !g.margin_paid) m.margin_debt += Number(g.profit) || 0;
+      });
+      (expenses || []).forEach(ex => {
+        const d = parseUaDateTime(ex.date) || (ex.date ? new Date(ex.date) : null);
+        const key = monthKeyFromDate(d);
+        if (!key) return;
+        if (!map[key]) {
+          map[key] = { month: key, revenue: 0, cost: 0, profit: 0, commission: 0, margin_received: 0, margin_debt: 0, expenses: 0 };
+        }
+        map[key].expenses += Number(ex.amount) || 0;
+      });
+      return Object.keys(map).map(k => {
+        const row = map[k];
+        row.margin_pct = row.revenue ? Math.round((row.profit / row.revenue) * 1000) / 10 : 0;
+        row.net_fact = row.margin_received - row.commission - row.expenses;
+        return row;
+      }).sort((a, b) => compareMonthKeyDesc(a.month, b.month)).slice(0, 6);
+    }
+    /** Нормалізація телефону: ключ для довідника клієнтів. */
+    function normalizePhone(phone) {
+      let d = String(phone || "").replace(/\D/g, "");
+      if (!d) return "";
+      if (d.indexOf("380") === 0 && d.length >= 12) return d.slice(0, 12);
+      if (d.length === 10 && d.charAt(0) === "0") return "38" + d;
+      if (d.length === 9) return "380" + d;
+      if (d.length > 12) return d.slice(-12);
+      return d;
+    }
+    function formatPhoneDisplay(key, raw) {
+      if (raw && String(raw).trim()) return String(raw).trim();
+      if (!key) return "—";
+      if (key.length === 12 && key.indexOf("380") === 0) {
+        return "+" + key.slice(0, 3) + " " + key.slice(3, 5) + " " + key.slice(5, 8) + " " + key.slice(8);
+      }
+      return key;
+    }
+    /** Збирає довідник: 1 телефон → основне імʼя (з найранішого замовлення) + інші варіанти. */
+    function buildClientsDirectory(groups) {
+      const byPhone = {};
+      (groups || []).forEach((g) => {
+        const key = normalizePhone(g.phone);
+        if (!key) return;
+        if (!byPhone[key]) {
+          byPhone[key] = {
+            phone_key: key,
+            phone_display: formatPhoneDisplay(key, g.phone),
+            names: [],
+            name_set: {},
+            orders: [],
+            revenue: 0,
+            profit: 0,
+          };
+        }
+        const c = byPhone[key];
+        const name = String(g.client || "").trim();
+        if (name) {
+          const nk = name.toLowerCase();
+          if (!c.name_set[nk]) {
+            c.name_set[nk] = true;
+            c.names.push({ name, first_seen: g.created_at || "", order_number: g.order_number });
+          }
+        }
+        c.orders.push(g);
+        c.revenue += Number(g.revenue) || 0;
+        c.profit += Number(g.profit) || 0;
+        if (g.phone && String(g.phone).trim().length > String(c.phone_display || "").length) {
+          c.phone_display = String(g.phone).trim();
+        }
+      });
+      return Object.keys(byPhone).map((key) => {
+        const c = byPhone[key];
+        c.names.sort((a, b) => String(a.first_seen).localeCompare(String(b.first_seen)));
+        c.primary_name = c.names.length ? c.names[0].name : "Без імені";
+        c.aliases = c.names.slice(1).map((n) => n.name);
+        c.orders_count = c.orders.length;
+        c.orders.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+        c.last_order_at = c.orders.length ? c.orders[0].created_at : "";
+        c.cities = Array.from(new Set(c.orders.map((o) => o.city).filter(Boolean)));
+        delete c.name_set;
+        return c;
+      }).sort((a, b) => b.orders_count - a.orders_count || String(a.primary_name).localeCompare(String(b.primary_name), "uk"));
     }
 
     async function api(path, { method = "GET", body, token } = {}) {
@@ -241,15 +687,7 @@
     }
 
     function StatusChip({ status }) {
-      const map = {
-        "Нове": "warn",
-        "В роботі": "",
-        "Готове": "ok",
-        "Відправлено": "ok",
-        "Завершено": "ok",
-        "Скасовано": "",
-      };
-      return <span className={"badge " + (map[status] || "")}>{status}</span>;
+      return <span className={"badge " + statusClass(status)}>{status}</span>;
     }
 
     function OrderDrawer({ token, orderNumber, onClose, onChanged }) {
@@ -338,15 +776,57 @@
               <button className="btn ghost" onClick={onClose}>Закрити</button>
             </header>
 
+            <div className="section-title" style={{ marginTop: 0 }}>Швидкі дії</div>
+            <div className="quick-actions">
+              {STATUSES.filter(s => s !== "Скасовано").map(s => (
+                <button
+                  key={s}
+                  type="button"
+                  className={form.status === s ? "active" : ""}
+                  disabled={busy}
+                  onClick={() => { setForm({ ...form, status: s }); save({ status: s }); }}
+                >{s}</button>
+              ))}
+            </div>
+            <div className="quick-actions">
+              <button
+                type="button"
+                className={form.client_paid ? "ok" : ""}
+                disabled={busy}
+                onClick={() => { const v = !form.client_paid; setForm({ ...form, client_paid: v }); save({ client_paid: v }); }}
+              >{form.client_paid ? "✓ Клієнт заплатив" : "Клієнт заплатив"}</button>
+              <button
+                type="button"
+                className={form.margin_paid ? "ok" : ""}
+                disabled={busy}
+                onClick={() => { const v = !form.margin_paid; setForm({ ...form, margin_paid: v }); save({ margin_paid: v }); }}
+              >{form.margin_paid ? "✓ Маржу отримано" : "Маржу отримано"}</button>
+              <button
+                type="button"
+                className="warn"
+                disabled={busy || form.status === "Скасовано"}
+                onClick={() => { setForm({ ...form, status: "Скасовано" }); save({ status: "Скасовано" }); }}
+              >Скасувати</button>
+            </div>
+
             <div className="field">
               <label>Статус</label>
-              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+              <select value={form.status} onChange={e => {
+                const s = e.target.value;
+                setForm({ ...form, status: s });
+                save({ status: s });
+              }}>
                 {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-            <button className="btn secondary" disabled={busy} onClick={() => save({ status: form.status })}>Зберегти статус</button>
 
-            <div className="section-title">Фінанси</div>
+            <div className="section-title">Фінанси{items.length > 1 ? " (позиція 1 з " + items.length + ")" : ""}</div>
+            {items.length > 1 && (
+              <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
+                У замовленні кілька позицій. Поля нижче — лише перша позиція.
+                Разом по замовленню: {money(order.revenue)} · маржа {money(order.profit)}.
+              </p>
+            )}
             <div className="grid2">
               <div className="field"><label>Собівартість</label>
                 <input type="number" value={form.cost_total} onChange={e => setForm({ ...form, cost_total: e.target.value })} /></div>
@@ -424,6 +904,10 @@
       const [selected, setSelected] = useState(null);
       const [error, setError] = useState("");
       const [loading, setLoading] = useState(true);
+      const [dragOver, setDragOver] = useState("");
+      const [moving, setMoving] = useState("");
+      const dragOrderRef = useRef("");
+      const skipClickRef = useRef(false);
 
       async function load() {
         setLoading(true); setError("");
@@ -442,14 +926,47 @@
 
       useEffect(() => { load(); }, [token]);
 
+      async function moveToStatus(orderNumber, newStatus) {
+        const current = groups.find(g => g.order_number === orderNumber);
+        if (!current || current.status === newStatus) return;
+        const prev = groups;
+        setMoving(orderNumber);
+        setGroups(list => list.map(g => g.order_number === orderNumber ? { ...g, status: newStatus } : g));
+        try {
+          await api("/api/admin/order", {
+            method: "PATCH",
+            token,
+            body: { order_number: orderNumber, patch: { status: newStatus } },
+          });
+        } catch (e) {
+          setGroups(prev);
+          setError(e.message || "Не вдалося змінити статус");
+        } finally {
+          setMoving("");
+        }
+      }
+
       const byStatus = useMemo(() => {
         const map = {};
-        STATUSES.forEach(s => { map[s] = []; });
+        STATUSES.forEach(s => { map[s] = { items: [], revenue: 0, profit: 0 }; });
         groups.forEach(g => {
-          if (!map[g.status]) map[g.status] = [];
-          map[g.status].push(g);
+          if (!map[g.status]) map[g.status] = { items: [], revenue: 0, profit: 0 };
+          map[g.status].items.push(g);
+          map[g.status].revenue += Number(g.revenue) || 0;
+          map[g.status].profit += Number(g.profit) || 0;
         });
         return map;
+      }, [groups]);
+
+      const grand = useMemo(() => {
+        let revenue = 0, profit = 0, count = 0;
+        groups.forEach(g => {
+          if (g.status === "Скасовано") return;
+          count += 1;
+          revenue += Number(g.revenue) || 0;
+          profit += Number(g.profit) || 0;
+        });
+        return { revenue, profit, count };
       }, [groups]);
 
       return (
@@ -460,7 +977,7 @@
               <option value="">Усі статуси</option>
               {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
-            <button className="btn secondary" onClick={load}>Оновити</button>
+            <button className="btn secondary" onClick={load} disabled={!!moving}>Оновити</button>
             <div className="view-toggle" style={{ marginLeft: "auto" }}>
               <button className={view === "kanban" ? "active" : ""} onClick={() => setView("kanban")}>Воронка</button>
               <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}>Список</button>
@@ -470,17 +987,78 @@
           {loading && <div className="empty">Завантаження замовлень…</div>}
           {!loading && !groups.length && <div className="empty">Замовлень не знайдено</div>}
 
+          {!loading && groups.length > 0 && (
+            <div className="orders-totals">
+              <div className="ot-item">
+                <div className="ot-label">Замовлень (без скасованих)</div>
+                <div className="ot-value">{grand.count}</div>
+              </div>
+              <div className="ot-item">
+                <div className="ot-label">Загальна сума замовлень</div>
+                <div className="ot-value">{money(grand.revenue)}</div>
+                <div className="ot-sub">Маржа: {money(grand.profit)}</div>
+              </div>
+              {view === "kanban" && (
+                <div className="ot-item">
+                  <div className="ot-label">Підказка</div>
+                  <div className="ot-sub">Перетягніть картку в інший стовпчик, щоб змінити статус</div>
+                </div>
+              )}
+            </div>
+          )}
+
           {!loading && view === "kanban" && (
             <div className="kanban">
               {STATUSES.map(s => (
-                <div className="col" key={s}>
-                  <h3><span>{s}</span><span>{byStatus[s].length}</span></h3>
-                  <div className="col-body">
-                    {byStatus[s].map(g => (
-                      <button key={g.order_number} className="card" onClick={() => setSelected(g.order_number)}>
+                <div
+                  className={"col " + statusClass(s) + (dragOver === s ? " drag-over" : "")}
+                  key={s}
+                  onDragOver={e => { e.preventDefault(); setDragOver(s); }}
+                  onDragLeave={() => setDragOver(cur => cur === s ? "" : cur)}
+                  onDrop={e => {
+                    e.preventDefault();
+                    setDragOver("");
+                    const num = e.dataTransfer.getData("text/order") || dragOrderRef.current;
+                    if (num) moveToStatus(num, s);
+                  }}
+                >
+                  <h3>
+                    <div className="col-title">
+                      <span>{s}</span>
+                      <span>{byStatus[s].items.length}</span>
+                    </div>
+                    <div className="col-sum">{money(byStatus[s].revenue)}</div>
+                    <div className="col-margin">Маржа: {money(byStatus[s].profit)}</div>
+                  </h3>
+                  <div className={"col-body" + (dragOver === s ? " drag-over" : "")}>
+                    {byStatus[s].items.map(g => (
+                      <button
+                        key={g.order_number}
+                        type="button"
+                        draggable
+                        className={"card " + statusClass(g.status) + (moving === g.order_number ? " dragging" : "")}
+                        onDragStart={e => {
+                          dragOrderRef.current = g.order_number;
+                          e.dataTransfer.setData("text/order", g.order_number);
+                          e.dataTransfer.effectAllowed = "move";
+                          skipClickRef.current = false;
+                        }}
+                        onDragEnd={() => {
+                          dragOrderRef.current = "";
+                          setDragOver("");
+                          skipClickRef.current = true;
+                          setTimeout(() => { skipClickRef.current = false; }, 120);
+                        }}
+                        onClick={() => {
+                          if (skipClickRef.current || moving) return;
+                          setSelected(g.order_number);
+                        }}
+                      >
                         <div className="num">{g.order_number}</div>
                         <div className="meta">{g.client}<br />{g.phone}<br />{g.city || "—"}</div>
                         <div className="money">{money(g.revenue)}</div>
+                        <div className="meta">Маржа: {money(g.profit)}</div>
+                        <div className="drag-hint">↗ перетягнути</div>
                       </button>
                     ))}
                   </div>
@@ -493,7 +1071,7 @@
             <div className="list">
               {groups.map(g => (
                 <div key={g.order_number} className="row-card" onClick={() => setSelected(g.order_number)}>
-                  <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{g.created_at}</div></div>
+                  <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
                   <div>{g.client}<div style={{ color: "var(--muted)", fontSize: 12 }}>{g.phone}</div></div>
                   <div><StatusChip status={g.status} /></div>
                   <div>{money(g.revenue)}</div>
@@ -517,21 +1095,300 @@
       );
     }
 
+    function shortMoney(v) {
+      const n = Number(v) || 0;
+      if (Math.abs(n) >= 1000) {
+        const k = n / 1000;
+        return (Math.abs(k) >= 10 ? Math.round(k) : Math.round(k * 10) / 10) + " тис.";
+      }
+      return money(n);
+    }
+
+    const STATUS_CHART_COLORS = {
+      "Нове": "#c9a227",
+      "В роботі": "#3b82f6",
+      "Готове": "#14b8a6",
+      "Відправлено": "#a855f7",
+      "Завершено": "#22c55e",
+      "Скасовано": "#9ca3af",
+    };
+
+    function MonthlyBarsChart({ monthly }) {
+      const rows = (monthly || []).slice().reverse();
+      const max = Math.max(1, ...rows.map(m => Math.max(Number(m.revenue) || 0, Number(m.profit) || 0)));
+      if (!rows.length) return <div className="empty">Немає помісячних даних</div>;
+      return (
+        <div className="chart-wrap">
+          <div className="dual-bars">
+            {rows.map(m => {
+              const rev = Number(m.revenue) || 0;
+              const mar = Number(m.profit) || 0;
+              const hRev = Math.max(3, Math.round((rev / max) * 130));
+              const hMar = Math.max(3, Math.round((mar / max) * 130));
+              return (
+                <div className="dual-col" key={m.month} title={"Виручка " + money(rev) + " · Маржа " + money(mar)}>
+                  <div className="dual-tip">{shortMoney(rev)}</div>
+                  <div className="dual-pair">
+                    <div className="dual-stem rev" style={{ height: hRev }} />
+                    <div className="dual-stem mar" style={{ height: hMar }} />
+                  </div>
+                  <div className="dual-lbl">{m.month}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="chart-legend">
+            <span><span className="chart-swatch" style={{ background: "#526058" }} />Виручка</span>
+            <span><span className="chart-swatch" style={{ background: "#1b7a4a" }} />Маржа</span>
+          </div>
+        </div>
+      );
+    }
+
+    function StatusBarsChart({ byStatus }) {
+      const max = Math.max(1, ...STATUSES.map(s => (byStatus && byStatus[s]) || 0));
+      const total = STATUSES.reduce((s, name) => s + ((byStatus && byStatus[name]) || 0), 0);
+      return (
+        <div className="chart-wrap">
+          <div className="status-cols">
+            {STATUSES.map(s => {
+              const n = (byStatus && byStatus[s]) || 0;
+              const h = n ? Math.max(8, Math.round((n / max) * 120)) : 4;
+              return (
+                <div className="status-col" key={s}>
+                  <div className="count">{n}</div>
+                  <div className="stem" style={{
+                    height: h,
+                    background: n ? STATUS_CHART_COLORS[s] : "#e5e8eb",
+                    opacity: n ? 1 : 0.55,
+                  }} />
+                  <div className="name">{s}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="chart-legend">
+            <span>Усього карток: <strong style={{ color: "var(--ink)" }}>{total}</strong></span>
+          </div>
+        </div>
+      );
+    }
+
+    function FinanceBarsChart({ revenue, cost, profit, commission, expenses }) {
+      const rev = Number(revenue) || 0;
+      const cst = Number(cost) || 0;
+      const mar = Number(profit) || 0;
+      const com = Number(commission) || 0;
+      const exp = Number(expenses) || 0;
+      const base = rev > 0 ? rev : Math.max(cst + mar, 1);
+      const costPct = Math.min(100, Math.round((cst / base) * 1000) / 10);
+      const marPct = Math.min(100 - costPct, Math.round((mar / base) * 1000) / 10);
+      return (
+        <div className="chart-wrap stack-block">
+          <div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, fontWeight: 650 }}>
+              Склад виручки
+            </div>
+            <div className="stack-bar" title={"Виручка " + money(rev)}>
+              {cst > 0 && (
+                <div className="stack-seg" style={{ width: costPct + "%", background: "#6b7280" }}>
+                  {costPct >= 18 ? "Собівартість" : ""}
+                </div>
+              )}
+              {mar > 0 && (
+                <div className="stack-seg" style={{ width: marPct + "%", background: "#1b7a4a" }}>
+                  {marPct >= 14 ? "Маржа" : ""}
+                </div>
+              )}
+              {rev <= 0 && <div className="stack-seg" style={{ width: "100%", background: "#d1d5db", color: "var(--muted)" }}>Немає даних</div>}
+            </div>
+          </div>
+          <div className="stack-meta">
+            <div className="stack-row">
+              <span className="chart-swatch" style={{ background: "#526058" }} />
+              <span>Виручка</span>
+              <span className="val">{money(rev)}</span>
+            </div>
+            <div className="stack-row">
+              <span className="chart-swatch" style={{ background: "#6b7280" }} />
+              <span>Собівартість ({costPct}%)</span>
+              <span className="val">{money(cst)}</span>
+            </div>
+            <div className="stack-row">
+              <span className="chart-swatch" style={{ background: "#1b7a4a" }} />
+              <span>Маржа ({marPct}%)</span>
+              <span className="val">{money(mar)}</span>
+            </div>
+            <div className="stack-row">
+              <span className="chart-swatch" style={{ background: "#8f7340" }} />
+              <span>Комісії</span>
+              <span className="val">{money(com)}</span>
+            </div>
+            <div className="stack-row">
+              <span className="chart-swatch" style={{ background: "#b42318" }} />
+              <span>Витрати</span>
+              <span className="val">{money(exp)}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function MarginSplitChart({ received, debt }) {
+      const a = Math.max(0, Number(received) || 0);
+      const b = Math.max(0, Number(debt) || 0);
+      const total = a + b;
+      const pctReceived = total ? Math.round((a / total) * 100) : 0;
+      const r = 54;
+      const c = 2 * Math.PI * r;
+      const aLen = total ? (a / total) * c : 0;
+      const bLen = total ? (b / total) * c : 0;
+      return (
+        <div className="chart-wrap donut-wrap">
+          <div className="donut">
+            <svg viewBox="0 0 140 140" aria-hidden="true">
+              <circle cx="70" cy="70" r={r} fill="none" stroke="#e8ebed" strokeWidth="16" />
+              {total > 0 && a > 0 && (
+                <circle
+                  cx="70" cy="70" r={r} fill="none" stroke="#1b7a4a" strokeWidth="16"
+                  strokeDasharray={`${aLen} ${c - aLen}`}
+                  strokeDashoffset="0"
+                  strokeLinecap="butt"
+                />
+              )}
+              {total > 0 && b > 0 && (
+                <circle
+                  cx="70" cy="70" r={r} fill="none" stroke="#9a6700" strokeWidth="16"
+                  strokeDasharray={`${bLen} ${c - bLen}`}
+                  strokeDashoffset={-aLen}
+                  strokeLinecap="butt"
+                />
+              )}
+            </svg>
+            <div className="donut-center">
+              <strong>{total ? pctReceived + "%" : "—"}</strong>
+              <span>отримано</span>
+            </div>
+          </div>
+          <div className="donut-stats">
+            <div className="donut-stat">
+              <div className="lab" style={{ color: "#1b7a4a" }}>Отримано</div>
+              <div className="num">{money(a)}</div>
+            </div>
+            <div className="donut-stat">
+              <div className="lab" style={{ color: "#9a6700" }}>До отримання</div>
+              <div className="num">{money(b)}</div>
+            </div>
+            <div className="donut-stat">
+              <div className="lab">Разом</div>
+              <div className="num">{money(total)}</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     function DashboardView({ token }) {
-      const [data, setData] = useState(null);
+      const [dash, setDash] = useState(null);
+      const [groups, setGroups] = useState([]);
+      const [expenses, setExpenses] = useState([]);
+      const [period, setPeriod] = useState("all");
       const [error, setError] = useState("");
-      useEffect(() => {
-        api("/api/admin/dashboard", { token })
-          .then(setData)
-          .catch(e => setError(e.message));
-      }, [token]);
+      const [loading, setLoading] = useState(true);
+      const [selected, setSelected] = useState(null);
+
+      async function load() {
+        setLoading(true); setError("");
+        try {
+          const [d, o, e] = await Promise.all([
+            api("/api/admin/dashboard", { token }),
+            api("/api/admin/orders", { token }),
+            api("/api/admin/expenses", { token }),
+          ]);
+          setDash(d);
+          setGroups(o.groups || []);
+          setExpenses(e.expenses || []);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      useEffect(() => { load(); }, [token]);
+
+      const filteredGroups = useMemo(
+        () => (groups || []).filter(g => inPeriod(g, period)),
+        [groups, period]
+      );
+      const filteredExpenses = useMemo(() => {
+        if (period === "all") return expenses || [];
+        const range = periodRange(period);
+        return (expenses || []).filter(ex => {
+          const d = parseUaDateTime(ex.date);
+          if (!d) return false;
+          return d >= range.start && d <= range.end;
+        });
+      }, [expenses, period]);
+
+      const t = useMemo(() => {
+        const expSum = filteredExpenses.reduce((s, ex) => s + (Number(ex.amount) || 0), 0);
+        return totalsFromGroups(filteredGroups, expSum);
+      }, [filteredGroups, filteredExpenses]);
+
+      const monthly = useMemo(
+        () => monthlyFromGroups(filteredGroups, filteredExpenses),
+        [filteredGroups, filteredExpenses]
+      );
+
+      const reminders = useMemo(() => buildReminders(groups), [groups]);
+
       if (error) return <div className="error">{error}</div>;
-      if (!data) return <div className="empty">Завантаження зведення…</div>;
-      const t = data.totals || {};
+      if (loading || !dash) return <div className="empty">Завантаження зведення…</div>;
+
+      const periodLabels = [
+        { id: "all", label: "Увесь час" },
+        { id: "month", label: "Цей місяць" },
+        { id: "30d", label: "30 днів" },
+        { id: "7d", label: "7 днів" },
+      ];
+
       return (
         <div>
+          <div className="toolbar" style={{ marginBottom: 14 }}>
+            <div className="period-toggle">
+              {periodLabels.map(p => (
+                <button key={p.id} type="button" className={period === p.id ? "active" : ""} onClick={() => setPeriod(p.id)}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <button className="btn secondary" onClick={load}>Оновити</button>
+          </div>
+
+          {reminders.length > 0 && (
+            <div className="panel">
+              <h2>Що зробити сьогодні</h2>
+              <div className="remind-list">
+                {reminders.map(r => (
+                  <button key={r.key} type="button" className="remind-item" onClick={() => setSelected(r.order_number)}>
+                    <div>
+                      <div className="title">{r.title}</div>
+                      <div className="desc">{r.desc}</div>
+                    </div>
+                    <span className={"tag " + r.tagClass}>{r.tag}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="kpi-grid">
-            <div className="kpi"><div className="label">Виручка</div><div className="value">{money(t.revenue)}</div></div>
+            <div className="kpi">
+              <div className="label">Виручка</div>
+              <div className="value">{money(t.revenue)}</div>
+              <div className="sub">Маржа: {money(t.profit)}</div>
+            </div>
             <div className="kpi"><div className="label">Собівартість</div><div className="value">{money(t.cost)}</div></div>
             <div className="kpi"><div className="label">Валовий прибуток</div><div className="value">{money(t.profit)}</div></div>
             <div className="kpi"><div className="label">Маржа %</div><div className="value">{pct(t.margin_pct)}</div></div>
@@ -540,14 +1397,32 @@
             <div className="kpi"><div className="label">Комісії + витрати</div><div className="value">{money((t.commission || 0) + (t.expenses || 0))}</div></div>
             <div className="kpi"><div className="label">Чистий факт</div><div className="value">{money(t.net_fact)}</div></div>
           </div>
-          <div className="panel">
-            <h2>По статусах</h2>
-            <div className="toolbar">
-              {STATUSES.map(s => (
-                <span key={s} className="badge">{s}: {(t.by_status && t.by_status[s]) || 0}</span>
-              ))}
+
+          <div className="charts-grid">
+            <div className="panel">
+              <h2>Виручка і маржа по місяцях</h2>
+              <MonthlyBarsChart monthly={monthly} />
+            </div>
+            <div className="panel">
+              <h2>Замовлення по статусах</h2>
+              <StatusBarsChart byStatus={t.by_status} />
+            </div>
+            <div className="panel">
+              <h2>Структура фінансів</h2>
+              <FinanceBarsChart
+                revenue={t.revenue}
+                cost={t.cost}
+                profit={t.profit}
+                commission={t.commission}
+                expenses={t.expenses}
+              />
+            </div>
+            <div className="panel">
+              <h2>Маржа: отримано / борг</h2>
+              <MarginSplitChart received={t.margin_received} debt={t.margin_debt} />
             </div>
           </div>
+
           <div className="panel">
             <h2>Помісячно</h2>
             <table>
@@ -558,7 +1433,7 @@
                 </tr>
               </thead>
               <tbody>
-                {(data.monthly || []).map(m => (
+                {(monthly || []).map(m => (
                   <tr key={m.month}>
                     <td>{m.month}</td>
                     <td>{money(m.revenue)}</td>
@@ -575,6 +1450,15 @@
               </tbody>
             </table>
           </div>
+
+          {selected && (
+            <OrderDrawer
+              token={token}
+              orderNumber={selected}
+              onClose={() => setSelected(null)}
+              onChanged={load}
+            />
+          )}
         </div>
       );
     }
@@ -652,7 +1536,7 @@
               <thead><tr><th>Дата</th><th>КОД</th><th>Назва</th><th>Сума</th><th>Спосіб</th><th>Примітка</th></tr></thead>
               <tbody>
                 {payouts.slice(0, 30).map(p => (
-                  <tr key={p.row}><td>{p.date}</td><td>{p.code}</td><td>{p.name}</td><td>{money(p.amount)}</td><td>{p.method}</td><td>{p.note}</td></tr>
+                  <tr key={p.row}><td>{formatDateShort(p.date)}</td><td>{p.code}</td><td>{p.name}</td><td>{money(p.amount)}</td><td>{p.method}</td><td>{p.note}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -704,10 +1588,121 @@
             <thead><tr><th>Дата</th><th>Категорія</th><th>Опис</th><th>Сума</th><th>Примітка</th></tr></thead>
             <tbody>
               {expenses.map(ex => (
-                <tr key={ex.row}><td>{ex.date}</td><td>{ex.category}</td><td>{ex.description}</td><td>{money(ex.amount)}</td><td>{ex.note}</td></tr>
+                <tr key={ex.row}><td>{formatDateShort(ex.date)}</td><td>{ex.category}</td><td>{ex.description}</td><td>{money(ex.amount)}</td><td>{ex.note}</td></tr>
               ))}
             </tbody>
           </table>
+        </div>
+      );
+    }
+
+
+    function ClientsView({ token }) {
+      const [groups, setGroups] = useState([]);
+      const [q, setQ] = useState("");
+      const [error, setError] = useState("");
+      const [loading, setLoading] = useState(true);
+      const [selected, setSelected] = useState(null);
+
+      async function load() {
+        setLoading(true); setError("");
+        try {
+          const data = await api("/api/admin/orders", { token });
+          setGroups(data.groups || []);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+        }
+      }
+      useEffect(() => { load(); }, [token]);
+
+      const clients = useMemo(() => buildClientsDirectory(groups), [groups]);
+      const filtered = useMemo(() => {
+        const needle = q.trim().toLowerCase();
+        if (!needle) return clients;
+        return clients.filter((c) => {
+          const hay = (
+            c.phone_key + " " + c.phone_display + " " + c.primary_name + " " +
+            (c.aliases || []).join(" ") + " " + (c.cities || []).join(" ")
+          ).toLowerCase();
+          return hay.indexOf(needle) >= 0;
+        });
+      }, [clients, q]);
+
+      return (
+        <div>
+          <div className="panel" style={{ marginBottom: 16 }}>
+            <h2>Довідник клієнтів за телефоном</h2>
+            <p style={{ margin: "0 0 12px", color: "var(--muted)", fontSize: 14, lineHeight: 1.45 }}>
+              Один номер = один клієнт. Основне імʼя береться з найранішого замовлення;
+              інші написання імені показуються як другорядні (через « / »), щоб ловити дублі на кшталт «Іван» і «Іван Петренко».
+            </p>
+            <div className="toolbar" style={{ marginBottom: 0 }}>
+              <input type="search" placeholder="Пошук: телефон або імʼя…" value={q} onChange={e => setQ(e.target.value)} />
+              <button className="btn secondary" onClick={load}>Оновити</button>
+              <span style={{ color: "var(--muted)", fontSize: 13 }}>{filtered.length} клієнтів</span>
+            </div>
+          </div>
+          {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
+          {loading && <div className="empty">Завантаження довідника…</div>}
+          {!loading && !filtered.length && <div className="empty">Клієнтів не знайдено</div>}
+          {!loading && !!filtered.length && (
+            <div className="panel">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Телефон</th>
+                    <th>Імʼя (основне / інші)</th>
+                    <th>Замовлень</th>
+                    <th>Виручка</th>
+                    <th>Міста</th>
+                    <th>Останнє</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((c) => (
+                    <tr key={c.phone_key} style={{ cursor: "pointer" }} onClick={() => setSelected(selected === c.phone_key ? null : c.phone_key)}>
+                      <td className="phone-key">{c.phone_display}</td>
+                      <td>
+                        <strong>{c.primary_name}</strong>
+                        {!!c.aliases.length && (
+                          <div className="alias"> / {c.aliases.join(" / ")}</div>
+                        )}
+                      </td>
+                      <td>{c.orders_count}</td>
+                      <td>{money(c.revenue)}</td>
+                      <td>{(c.cities || []).join(", ") || "—"}</td>
+                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(c.last_order_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {selected && (() => {
+            const c = clients.find((x) => x.phone_key === selected);
+            if (!c) return null;
+            return (
+              <div className="panel">
+                <h2>Замовлення · {c.phone_display}</h2>
+                <p style={{ marginTop: 0, color: "var(--muted)", fontSize: 13 }}>
+                  Основне: <strong style={{ color: "var(--ink)" }}>{c.primary_name}</strong>
+                  {!!c.aliases.length && <> · також: {c.aliases.join(" / ")}</>}
+                </p>
+                <div className="list">
+                  {c.orders.map((g) => (
+                    <div key={g.order_number} className="row-card" style={{ gridTemplateColumns: "1.1fr 1fr 0.8fr 0.7fr" }}>
+                      <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
+                      <div>{g.client || "—"}</div>
+                      <div><StatusChip status={g.status} /></div>
+                      <div>{money(g.revenue)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       );
     }
@@ -733,12 +1728,13 @@
             <div className="brand">
               <img src="/images/avalon-logo-7016.svg" alt="Avalon" />
               <div>
-                <strong>AVALON CRM</strong>
+                <strong>CRM</strong>
                 <span>внутрішній кабінет</span>
               </div>
             </div>
             <nav className="nav">
               <button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}>Замовлення</button>
+              <button className={tab === "clients" ? "active" : ""} onClick={() => setTab("clients")}>Клієнти</button>
               <button className={tab === "dash" ? "active" : ""} onClick={() => setTab("dash")}>Зведення</button>
               <button className={tab === "partners" ? "active" : ""} onClick={() => setTab("partners")}>Партнери</button>
               <button className={tab === "expenses" ? "active" : ""} onClick={() => setTab("expenses")}>Витрати</button>
@@ -750,6 +1746,7 @@
           </div>
           <main className="main">
             {tab === "orders" && <OrdersView token={token} />}
+            {tab === "clients" && <ClientsView token={token} />}
             {tab === "dash" && <DashboardView token={token} />}
             {tab === "partners" && <PartnersView token={token} />}
             {tab === "expenses" && <ExpensesView token={token} />}

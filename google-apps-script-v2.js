@@ -1774,11 +1774,16 @@ function adminDashboard_() {
 
   if (last >= 2) {
     var values = sh.getRange(2, 1, last, ADMIN_ORDER_COLS).getValues();
+    var seenOrders = {};
     for (var i = 0; i < values.length; i++) {
       var num = String(values[i][0] || "");
       if (!/^ORD-\d{6}-\d{3}$/.test(num)) continue;
       var status = String(values[i][2] || "");
-      if (totals.by_status[status] != null) totals.by_status[status] += 1;
+      // Рахуємо замовлення (картки), а не рядки-позиції.
+      if (!seenOrders[num]) {
+        seenOrders[num] = true;
+        if (totals.by_status[status] != null) totals.by_status[status] += 1;
+      }
       if (status === "Скасовано") continue;
       var cost = Number(values[i][19]) || 0;
       var revenue = Number(values[i][21]) || 0;
@@ -1843,7 +1848,13 @@ function adminDashboard_() {
     row.margin_pct = row.revenue ? Math.round((row.profit / row.revenue) * 1000) / 10 : 0;
     row.net_fact = row.margin_received - row.commission - row.expenses;
     return row;
-  }).sort(function (a, b) { return String(b.month).localeCompare(String(a.month)); }).slice(0, 6);
+  }).sort(function (a, b) {
+    var ap = String(a.month).split(".");
+    var bp = String(b.month).split(".");
+    var ay = Number(ap[1]) || 0, by = Number(bp[1]) || 0;
+    var am = Number(ap[0]) || 0, bm = Number(bp[0]) || 0;
+    return (by - ay) || (bm - am);
+  }).slice(0, 6);
 
   return { status: "ok", totals: totals, monthly: monthly };
 }
