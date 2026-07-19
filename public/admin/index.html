@@ -34,10 +34,13 @@
       --st-done-bg: rgba(34, 197, 94, 0.12); --st-done-fg: #1b7a4a;
       --st-cancel-bg: rgba(156, 163, 175, 0.16); --st-cancel-fg: #6b7280;
     }
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+      font-family: var(--font) !important;
+    }
     html, body { margin: 0; min-height: 100%; }
     body {
-      font-family: var(--font);
+      font-family: var(--font) !important;
       color: var(--ink);
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
@@ -46,6 +49,9 @@
         radial-gradient(1200px 500px at 10% -10%, rgba(143, 115, 64, 0.12), transparent 60%),
         radial-gradient(900px 400px at 100% 0%, rgba(56, 62, 66, 0.10), transparent 55%),
         var(--bg);
+    }
+    button, input, select, textarea, th, td, h1, h2, h3, strong, label, a, span, p, div {
+      font-family: var(--font) !important;
     }
     button, input, select, textarea { font: inherit; }
     button { cursor: pointer; }
@@ -224,6 +230,27 @@
     function pct(v) {
       if (v == null || v === "") return "—";
       return Number(v).toLocaleString("uk-UA", { maximumFractionDigits: 1 }) + "%";
+    }
+    /** Коротка дата для таблиць: 23.06.2026 09:04 */
+    function formatDateShort(v) {
+      if (v == null || v === "") return "—";
+      const d = v instanceof Date ? v : new Date(v);
+      if (isNaN(d.getTime())) {
+        const s = String(v).trim();
+        // уже ISO yyyy-mm-dd
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+          const [y, m, day] = s.slice(0, 10).split("-");
+          const time = s.length >= 16 ? s.slice(11, 16) : "";
+          return time ? `${day}.${m}.${y} ${time}` : `${day}.${m}.${y}`;
+        }
+        return s.length > 22 ? s.slice(0, 22) + "…" : s;
+      }
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const yyyy = d.getFullYear();
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mi = String(d.getMinutes()).padStart(2, "0");
+      return `${dd}.${mm}.${yyyy} ${hh}:${mi}`;
     }
     function statusClass(status) {
       return STATUS_CLASS[status] || "";
@@ -599,7 +626,7 @@
             <div className="list">
               {groups.map(g => (
                 <div key={g.order_number} className="row-card" onClick={() => setSelected(g.order_number)}>
-                  <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{g.created_at}</div></div>
+                  <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
                   <div>{g.client}<div style={{ color: "var(--muted)", fontSize: 12 }}>{g.phone}</div></div>
                   <div><StatusChip status={g.status} /></div>
                   <div>{money(g.revenue)}</div>
@@ -895,7 +922,7 @@
                       <td>{c.orders_count}</td>
                       <td>{money(c.revenue)}</td>
                       <td>{(c.cities || []).join(", ") || "—"}</td>
-                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{c.last_order_at || "—"}</td>
+                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(c.last_order_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -915,7 +942,7 @@
                 <div className="list">
                   {c.orders.map((g) => (
                     <div key={g.order_number} className="row-card" style={{ gridTemplateColumns: "1.1fr 1fr 0.8fr 0.7fr" }}>
-                      <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{g.created_at}</div></div>
+                      <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
                       <div>{g.client || "—"}</div>
                       <div><StatusChip status={g.status} /></div>
                       <div>{money(g.revenue)}</div>
