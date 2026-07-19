@@ -365,18 +365,35 @@
       if (v == null || v === "") return "—";
       return Number(v).toLocaleString("uk-UA", { maximumFractionDigits: 1 }) + "%";
     }
+    /** Парсить дати з таблиці: dd.MM.yyyy[ HH:mm] */
+    function parseUaDateTime(v) {
+      if (v == null || v === "") return null;
+      if (v instanceof Date && !isNaN(v.getTime())) return v;
+      const s = String(v).trim();
+      const ua = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+      if (ua) {
+        return new Date(
+          Number(ua[3]),
+          Number(ua[2]) - 1,
+          Number(ua[1]),
+          Number(ua[4] || 0),
+          Number(ua[5] || 0),
+          Number(ua[6] || 0)
+        );
+      }
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) return d;
+      }
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    }
     /** Коротка дата для таблиць: 23.06.2026 09:04 */
     function formatDateShort(v) {
       if (v == null || v === "") return "—";
-      const d = v instanceof Date ? v : new Date(v);
-      if (isNaN(d.getTime())) {
+      const d = parseUaDateTime(v);
+      if (!d) {
         const s = String(v).trim();
-        // уже ISO yyyy-mm-dd
-        if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
-          const [y, m, day] = s.slice(0, 10).split("-");
-          const time = s.length >= 16 ? s.slice(11, 16) : "";
-          return time ? `${day}.${m}.${y} ${time}` : `${day}.${m}.${y}`;
-        }
         return s.length > 22 ? s.slice(0, 22) + "…" : s;
       }
       const dd = String(d.getDate()).padStart(2, "0");
@@ -384,18 +401,17 @@
       const yyyy = d.getFullYear();
       const hh = String(d.getHours()).padStart(2, "0");
       const mi = String(d.getMinutes()).padStart(2, "0");
-      return `${dd}.${mm}.${yyyy} ${hh}:${mi}`;
+      const hasTime = !(d.getHours() === 0 && d.getMinutes() === 0 && String(v).indexOf(":") < 0);
+      return hasTime ? `${dd}.${mm}.${yyyy} ${hh}:${mi}` : `${dd}.${mm}.${yyyy}`;
     }
     function statusClass(status) {
       return STATUS_CLASS[status] || "";
     }
-    /** Дата замовлення з created_at або з номера ORD-DDMMYY-NNN */
+    /** Дата замовлення: created_at (UA/ISO) або номер ORD-DDMMYY-NNN */
     function orderDate(g) {
       if (!g) return null;
-      if (g.created_at) {
-        const d = new Date(g.created_at);
-        if (!isNaN(d.getTime())) return d;
-      }
+      const fromCreated = parseUaDateTime(g.created_at);
+      if (fromCreated) return fromCreated;
       const m = String(g.order_number || "").match(/^ORD-(\d{2})(\d{2})(\d{2})-/);
       if (m) {
         const d = new Date(2000 + Number(m[3]), Number(m[2]) - 1, Number(m[1]));
@@ -441,44 +457,51 @@
       const mm = String(d.getMonth() + 1).padStart(2, "0");
       return mm + "." + d.getFullYear();
     }
+    function compareMonthKeyDesc(a, b) {
+      const [am, ay] = String(a).split(".").map(Number);
+      const [bm, by] = String(b).split(".").map(Number);
+      return (by - ay) || (bm - am);
+    }
+    /** Одне нагадування на замовлення; пріоритет: борг маржі → в роботі → без дати. */
     function buildReminders(groups) {
       const active = ["Нове", "В роботі", "Готове", "Відправлено"];
-      const items = [];
+      const byOrder = {};
       (groups || []).forEach(g => {
         if (g.status === "Скасовано") return;
         const profit = Number(g.profit) || 0;
+        const reasons = [];
+        let priority = 99;
+        let tag = "";
+        let tagClass = "";
         if (g.client_paid && !g.margin_paid && profit > 0) {
-          items.push({
-            key: "debt-" + g.order_number,
-            order_number: g.order_number,
-            title: g.order_number + " · " + (g.client || "Клієнт"),
-            desc: "Маржа до отримання: " + money(profit),
-            tag: "Борг маржі",
-            tagClass: "debt",
-          });
+          reasons.push("Маржа до отримання: " + money(profit));
+          priority = Math.min(priority, 1);
+          tag = "Борг маржі";
+          tagClass = "debt";
         }
         if (g.status === "В роботі") {
-          items.push({
-            key: "work-" + g.order_number,
-            order_number: g.order_number,
-            title: g.order_number + " · " + (g.client || "Клієнт"),
-            desc: "У роботі · " + money(g.revenue),
-            tag: "В роботі",
-            tagClass: "stuck",
-          });
+          reasons.push("Статус «В роботі» · " + money(g.revenue));
+          if (priority > 2) { priority = 2; tag = "В роботі"; tagClass = "stuck"; }
         }
         if (active.indexOf(g.status) >= 0 && !String(g.delivery_date || "").trim()) {
-          items.push({
-            key: "date-" + g.order_number,
-            order_number: g.order_number,
-            title: g.order_number + " · " + (g.client || "Клієнт"),
-            desc: "Немає дати доставки · статус «" + g.status + "»",
-            tag: "Дата",
-            tagClass: "ship",
-          });
+          reasons.push("Немає дати доставки");
+          if (priority > 3) { priority = 3; tag = "Дата"; tagClass = "ship"; }
         }
+        if (!reasons.length) return;
+        byOrder[g.order_number] = {
+          key: "rem-" + g.order_number,
+          order_number: g.order_number,
+          title: g.order_number + " · " + (g.client || "Клієнт"),
+          desc: reasons.join(" · "),
+          tag: tag || "Увага",
+          tagClass: tagClass || "",
+          priority,
+        };
       });
-      return items.slice(0, 12);
+      return Object.keys(byOrder)
+        .map(k => byOrder[k])
+        .sort((a, b) => a.priority - b.priority || String(b.order_number).localeCompare(String(a.order_number)))
+        .slice(0, 12);
     }
     function totalsFromGroups(groups, expensesTotal) {
       const by_status = {};
@@ -529,7 +552,7 @@
         if (g.client_paid && !g.margin_paid) m.margin_debt += Number(g.profit) || 0;
       });
       (expenses || []).forEach(ex => {
-        const d = ex.date ? new Date(ex.date) : null;
+        const d = parseUaDateTime(ex.date) || (ex.date ? new Date(ex.date) : null);
         const key = monthKeyFromDate(d);
         if (!key) return;
         if (!map[key]) {
@@ -542,7 +565,7 @@
         row.margin_pct = row.revenue ? Math.round((row.profit / row.revenue) * 1000) / 10 : 0;
         row.net_fact = row.margin_received - row.commission - row.expenses;
         return row;
-      }).sort((a, b) => String(b.month).localeCompare(String(a.month))).slice(0, 6);
+      }).sort((a, b) => compareMonthKeyDesc(a.month, b.month)).slice(0, 6);
     }
     /** Нормалізація телефону: ключ для довідника клієнтів. */
     function normalizePhone(phone) {
@@ -797,7 +820,13 @@
               </select>
             </div>
 
-            <div className="section-title">Фінанси</div>
+            <div className="section-title">Фінанси{items.length > 1 ? " (позиція 1 з " + items.length + ")" : ""}</div>
+            {items.length > 1 && (
+              <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
+                У замовленні кілька позицій. Поля нижче — лише перша позиція.
+                Разом по замовленню: {money(order.revenue)} · маржа {money(order.profit)}.
+              </p>
+            )}
             <div className="grid2">
               <div className="field"><label>Собівартість</label>
                 <input type="number" value={form.cost_total} onChange={e => setForm({ ...form, cost_total: e.target.value })} /></div>
@@ -930,12 +959,14 @@
       }, [groups]);
 
       const grand = useMemo(() => {
-        let revenue = 0, profit = 0;
+        let revenue = 0, profit = 0, count = 0;
         groups.forEach(g => {
+          if (g.status === "Скасовано") return;
+          count += 1;
           revenue += Number(g.revenue) || 0;
           profit += Number(g.profit) || 0;
         });
-        return { revenue, profit, count: groups.length };
+        return { revenue, profit, count };
       }, [groups]);
 
       return (
@@ -959,7 +990,7 @@
           {!loading && groups.length > 0 && (
             <div className="orders-totals">
               <div className="ot-item">
-                <div className="ot-label">Замовлень</div>
+                <div className="ot-label">Замовлень (без скасованих)</div>
                 <div className="ot-value">{grand.count}</div>
               </div>
               <div className="ot-item">
@@ -1294,23 +1325,21 @@
         if (period === "all") return expenses || [];
         const range = periodRange(period);
         return (expenses || []).filter(ex => {
-          if (!ex.date) return false;
-          const d = new Date(ex.date);
-          if (isNaN(d.getTime())) return false;
+          const d = parseUaDateTime(ex.date);
+          if (!d) return false;
           return d >= range.start && d <= range.end;
         });
       }, [expenses, period]);
 
       const t = useMemo(() => {
-        if (period === "all" && dash && dash.totals) return dash.totals;
         const expSum = filteredExpenses.reduce((s, ex) => s + (Number(ex.amount) || 0), 0);
         return totalsFromGroups(filteredGroups, expSum);
-      }, [period, dash, filteredGroups, filteredExpenses]);
+      }, [filteredGroups, filteredExpenses]);
 
-      const monthly = useMemo(() => {
-        if (period === "all" && dash && dash.monthly) return dash.monthly;
-        return monthlyFromGroups(filteredGroups, filteredExpenses);
-      }, [period, dash, filteredGroups, filteredExpenses]);
+      const monthly = useMemo(
+        () => monthlyFromGroups(filteredGroups, filteredExpenses),
+        [filteredGroups, filteredExpenses]
+      );
 
       const reminders = useMemo(() => buildReminders(groups), [groups]);
 
