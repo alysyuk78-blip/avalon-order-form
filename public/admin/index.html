@@ -221,6 +221,39 @@
     }
     .donut-stat .lab { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
     .donut-stat .num { margin-top: 4px; font-size: 16px; font-weight: 750; }
+    .period-toggle { display: flex; gap: 4px; background: #e8ebed; padding: 4px; border-radius: 12px; flex-wrap: wrap; }
+    .period-toggle button {
+      border: 0; outline: none; background: transparent; padding: 8px 12px; border-radius: 8px;
+      font-weight: 650; font-size: 12px; color: var(--muted);
+    }
+    .period-toggle button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .col.drag-over { background: rgba(56, 62, 66, 0.10) !important; }
+    .col-body.drag-over { background: rgba(255,255,255,0.35); border-radius: 10px; }
+    .card { touch-action: manipulation; }
+    .card.dragging { opacity: 0.45; transform: scale(0.98); }
+    .card .drag-hint { font-size: 10px; color: var(--muted); margin-top: 6px; opacity: 0.7; }
+    .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+    .quick-actions button {
+      border: 0; outline: none; border-radius: 999px; padding: 8px 12px;
+      font-size: 12px; font-weight: 650; background: #eef1f3; color: var(--ink);
+    }
+    .quick-actions button.active { background: var(--brand); color: #fff; }
+    .quick-actions button.ok { background: rgba(27, 122, 74, 0.14); color: var(--ok); }
+    .quick-actions button.warn { background: rgba(154, 103, 0, 0.14); color: var(--warn); }
+    .remind-list { display: grid; gap: 8px; }
+    .remind-item {
+      display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
+      background: #f3f5f6; border-radius: 12px; padding: 12px 14px; cursor: pointer; text-align: left;
+    }
+    .remind-item:hover { background: #e9ecef; }
+    .remind-item .title { font-weight: 700; font-size: 13px; }
+    .remind-item .desc { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.35; }
+    .remind-item .tag {
+      font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 999px; background: #fff; color: var(--muted);
+    }
+    .remind-item .tag.debt { color: var(--warn); background: rgba(154, 103, 0, 0.12); }
+    .remind-item .tag.stuck { color: var(--st-work-fg); background: var(--st-work-chip); }
+    .remind-item .tag.ship { color: var(--st-ship-fg); background: var(--st-ship-chip); }
     @media (max-width: 900px) {
       .charts-grid { grid-template-columns: 1fr; }
       .status-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); height: auto; min-height: 200px; }
@@ -311,7 +344,7 @@
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useRef } = React;
     const STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
     const STATUS_CLASS = {
       "Нове": "st-new",
@@ -355,6 +388,161 @@
     }
     function statusClass(status) {
       return STATUS_CLASS[status] || "";
+    }
+    /** Дата замовлення з created_at або з номера ORD-DDMMYY-NNN */
+    function orderDate(g) {
+      if (!g) return null;
+      if (g.created_at) {
+        const d = new Date(g.created_at);
+        if (!isNaN(d.getTime())) return d;
+      }
+      const m = String(g.order_number || "").match(/^ORD-(\d{2})(\d{2})(\d{2})-/);
+      if (m) {
+        const d = new Date(2000 + Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+        if (!isNaN(d.getTime())) return d;
+      }
+      return null;
+    }
+    function startOfDay(d) {
+      const x = new Date(d);
+      x.setHours(0, 0, 0, 0);
+      return x;
+    }
+    function periodRange(period) {
+      const now = new Date();
+      const end = new Date(now);
+      end.setHours(23, 59, 59, 999);
+      if (period === "all") return null;
+      if (period === "7d") {
+        const start = startOfDay(now);
+        start.setDate(start.getDate() - 6);
+        return { start, end };
+      }
+      if (period === "30d") {
+        const start = startOfDay(now);
+        start.setDate(start.getDate() - 29);
+        return { start, end };
+      }
+      if (period === "month") {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        return { start, end };
+      }
+      return null;
+    }
+    function inPeriod(g, period) {
+      const range = periodRange(period);
+      if (!range) return true;
+      const d = orderDate(g);
+      if (!d) return false;
+      return d >= range.start && d <= range.end;
+    }
+    function monthKeyFromDate(d) {
+      if (!d || isNaN(d.getTime())) return "";
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      return mm + "." + d.getFullYear();
+    }
+    function buildReminders(groups) {
+      const active = ["Нове", "В роботі", "Готове", "Відправлено"];
+      const items = [];
+      (groups || []).forEach(g => {
+        if (g.status === "Скасовано") return;
+        const profit = Number(g.profit) || 0;
+        if (g.client_paid && !g.margin_paid && profit > 0) {
+          items.push({
+            key: "debt-" + g.order_number,
+            order_number: g.order_number,
+            title: g.order_number + " · " + (g.client || "Клієнт"),
+            desc: "Маржа до отримання: " + money(profit),
+            tag: "Борг маржі",
+            tagClass: "debt",
+          });
+        }
+        if (g.status === "В роботі") {
+          items.push({
+            key: "work-" + g.order_number,
+            order_number: g.order_number,
+            title: g.order_number + " · " + (g.client || "Клієнт"),
+            desc: "У роботі · " + money(g.revenue),
+            tag: "В роботі",
+            tagClass: "stuck",
+          });
+        }
+        if (active.indexOf(g.status) >= 0 && !String(g.delivery_date || "").trim()) {
+          items.push({
+            key: "date-" + g.order_number,
+            order_number: g.order_number,
+            title: g.order_number + " · " + (g.client || "Клієнт"),
+            desc: "Немає дати доставки · статус «" + g.status + "»",
+            tag: "Дата",
+            tagClass: "ship",
+          });
+        }
+      });
+      return items.slice(0, 12);
+    }
+    function totalsFromGroups(groups, expensesTotal) {
+      const by_status = {};
+      STATUSES.forEach(s => { by_status[s] = 0; });
+      let revenue = 0, cost = 0, profit = 0, commission = 0;
+      let margin_ready = 0, margin_received = 0, margin_debt = 0;
+      (groups || []).forEach(g => {
+        const st = g.status || "";
+        if (by_status[st] != null) by_status[st] += 1;
+        if (st === "Скасовано") return;
+        const rev = Number(g.revenue) || 0;
+        const cst = Number(g.cost_total) || 0;
+        const pr = Number(g.profit) || 0;
+        const com = Number(g.commission) || 0;
+        revenue += rev;
+        cost += cst;
+        profit += pr;
+        commission += com;
+        if (g.client_paid) margin_ready += pr;
+        if (g.margin_paid) margin_received += pr;
+        if (g.client_paid && !g.margin_paid) margin_debt += pr;
+      });
+      const expenses = Number(expensesTotal) || 0;
+      return {
+        revenue, cost, profit, commission, expenses,
+        margin_ready, margin_received, margin_debt,
+        margin_pct: revenue ? Math.round((profit / revenue) * 1000) / 10 : 0,
+        net_fact: margin_received - commission - expenses,
+        by_status,
+      };
+    }
+    function monthlyFromGroups(groups, expenses) {
+      const map = {};
+      (groups || []).forEach(g => {
+        if (g.status === "Скасовано") return;
+        const d = orderDate(g);
+        const key = monthKeyFromDate(d);
+        if (!key) return;
+        if (!map[key]) {
+          map[key] = { month: key, revenue: 0, cost: 0, profit: 0, commission: 0, margin_received: 0, margin_debt: 0, expenses: 0 };
+        }
+        const m = map[key];
+        m.revenue += Number(g.revenue) || 0;
+        m.cost += Number(g.cost_total) || 0;
+        m.profit += Number(g.profit) || 0;
+        m.commission += Number(g.commission) || 0;
+        if (g.margin_paid) m.margin_received += Number(g.profit) || 0;
+        if (g.client_paid && !g.margin_paid) m.margin_debt += Number(g.profit) || 0;
+      });
+      (expenses || []).forEach(ex => {
+        const d = ex.date ? new Date(ex.date) : null;
+        const key = monthKeyFromDate(d);
+        if (!key) return;
+        if (!map[key]) {
+          map[key] = { month: key, revenue: 0, cost: 0, profit: 0, commission: 0, margin_received: 0, margin_debt: 0, expenses: 0 };
+        }
+        map[key].expenses += Number(ex.amount) || 0;
+      });
+      return Object.keys(map).map(k => {
+        const row = map[k];
+        row.margin_pct = row.revenue ? Math.round((row.profit / row.revenue) * 1000) / 10 : 0;
+        row.net_fact = row.margin_received - row.commission - row.expenses;
+        return row;
+      }).sort((a, b) => String(b.month).localeCompare(String(a.month))).slice(0, 6);
     }
     /** Нормалізація телефону: ключ для довідника клієнтів. */
     function normalizePhone(phone) {
@@ -565,13 +753,49 @@
               <button className="btn ghost" onClick={onClose}>Закрити</button>
             </header>
 
+            <div className="section-title" style={{ marginTop: 0 }}>Швидкі дії</div>
+            <div className="quick-actions">
+              {STATUSES.filter(s => s !== "Скасовано").map(s => (
+                <button
+                  key={s}
+                  type="button"
+                  className={form.status === s ? "active" : ""}
+                  disabled={busy}
+                  onClick={() => { setForm({ ...form, status: s }); save({ status: s }); }}
+                >{s}</button>
+              ))}
+            </div>
+            <div className="quick-actions">
+              <button
+                type="button"
+                className={form.client_paid ? "ok" : ""}
+                disabled={busy}
+                onClick={() => { const v = !form.client_paid; setForm({ ...form, client_paid: v }); save({ client_paid: v }); }}
+              >{form.client_paid ? "✓ Клієнт заплатив" : "Клієнт заплатив"}</button>
+              <button
+                type="button"
+                className={form.margin_paid ? "ok" : ""}
+                disabled={busy}
+                onClick={() => { const v = !form.margin_paid; setForm({ ...form, margin_paid: v }); save({ margin_paid: v }); }}
+              >{form.margin_paid ? "✓ Маржу отримано" : "Маржу отримано"}</button>
+              <button
+                type="button"
+                className="warn"
+                disabled={busy || form.status === "Скасовано"}
+                onClick={() => { setForm({ ...form, status: "Скасовано" }); save({ status: "Скасовано" }); }}
+              >Скасувати</button>
+            </div>
+
             <div className="field">
               <label>Статус</label>
-              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+              <select value={form.status} onChange={e => {
+                const s = e.target.value;
+                setForm({ ...form, status: s });
+                save({ status: s });
+              }}>
                 {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-            <button className="btn secondary" disabled={busy} onClick={() => save({ status: form.status })}>Зберегти статус</button>
 
             <div className="section-title">Фінанси</div>
             <div className="grid2">
@@ -651,6 +875,10 @@
       const [selected, setSelected] = useState(null);
       const [error, setError] = useState("");
       const [loading, setLoading] = useState(true);
+      const [dragOver, setDragOver] = useState("");
+      const [moving, setMoving] = useState("");
+      const dragOrderRef = React.useRef("");
+      const skipClickRef = React.useRef(false);
 
       async function load() {
         setLoading(true); setError("");
@@ -668,6 +896,26 @@
       }
 
       useEffect(() => { load(); }, [token]);
+
+      async function moveToStatus(orderNumber, newStatus) {
+        const current = groups.find(g => g.order_number === orderNumber);
+        if (!current || current.status === newStatus) return;
+        const prev = groups;
+        setMoving(orderNumber);
+        setGroups(list => list.map(g => g.order_number === orderNumber ? { ...g, status: newStatus } : g));
+        try {
+          await api("/api/admin/order", {
+            method: "PATCH",
+            token,
+            body: { order_number: orderNumber, patch: { status: newStatus } },
+          });
+        } catch (e) {
+          setGroups(prev);
+          setError(e.message || "Не вдалося змінити статус");
+        } finally {
+          setMoving("");
+        }
+      }
 
       const byStatus = useMemo(() => {
         const map = {};
@@ -698,7 +946,7 @@
               <option value="">Усі статуси</option>
               {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
-            <button className="btn secondary" onClick={load}>Оновити</button>
+            <button className="btn secondary" onClick={load} disabled={!!moving}>Оновити</button>
             <div className="view-toggle" style={{ marginLeft: "auto" }}>
               <button className={view === "kanban" ? "active" : ""} onClick={() => setView("kanban")}>Воронка</button>
               <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}>Список</button>
@@ -719,13 +967,30 @@
                 <div className="ot-value">{money(grand.revenue)}</div>
                 <div className="ot-sub">Маржа: {money(grand.profit)}</div>
               </div>
+              {view === "kanban" && (
+                <div className="ot-item">
+                  <div className="ot-label">Підказка</div>
+                  <div className="ot-sub">Перетягніть картку в інший стовпчик, щоб змінити статус</div>
+                </div>
+              )}
             </div>
           )}
 
           {!loading && view === "kanban" && (
             <div className="kanban">
               {STATUSES.map(s => (
-                <div className={"col " + statusClass(s)} key={s}>
+                <div
+                  className={"col " + statusClass(s) + (dragOver === s ? " drag-over" : "")}
+                  key={s}
+                  onDragOver={e => { e.preventDefault(); setDragOver(s); }}
+                  onDragLeave={() => setDragOver(cur => cur === s ? "" : cur)}
+                  onDrop={e => {
+                    e.preventDefault();
+                    setDragOver("");
+                    const num = e.dataTransfer.getData("text/order") || dragOrderRef.current;
+                    if (num) moveToStatus(num, s);
+                  }}
+                >
                   <h3>
                     <div className="col-title">
                       <span>{s}</span>
@@ -734,13 +999,35 @@
                     <div className="col-sum">{money(byStatus[s].revenue)}</div>
                     <div className="col-margin">Маржа: {money(byStatus[s].profit)}</div>
                   </h3>
-                  <div className="col-body">
+                  <div className={"col-body" + (dragOver === s ? " drag-over" : "")}>
                     {byStatus[s].items.map(g => (
-                      <button key={g.order_number} className={"card " + statusClass(g.status)} onClick={() => setSelected(g.order_number)}>
+                      <button
+                        key={g.order_number}
+                        type="button"
+                        draggable
+                        className={"card " + statusClass(g.status) + (moving === g.order_number ? " dragging" : "")}
+                        onDragStart={e => {
+                          dragOrderRef.current = g.order_number;
+                          e.dataTransfer.setData("text/order", g.order_number);
+                          e.dataTransfer.effectAllowed = "move";
+                          skipClickRef.current = false;
+                        }}
+                        onDragEnd={() => {
+                          dragOrderRef.current = "";
+                          setDragOver("");
+                          skipClickRef.current = true;
+                          setTimeout(() => { skipClickRef.current = false; }, 120);
+                        }}
+                        onClick={() => {
+                          if (skipClickRef.current || moving) return;
+                          setSelected(g.order_number);
+                        }}
+                      >
                         <div className="num">{g.order_number}</div>
                         <div className="meta">{g.client}<br />{g.phone}<br />{g.city || "—"}</div>
                         <div className="money">{money(g.revenue)}</div>
                         <div className="meta">Маржа: {money(g.profit)}</div>
+                        <div className="drag-hint">↗ перетягнути</div>
                       </button>
                     ))}
                   </div>
@@ -971,18 +1258,102 @@
     }
 
     function DashboardView({ token }) {
-      const [data, setData] = useState(null);
+      const [dash, setDash] = useState(null);
+      const [groups, setGroups] = useState([]);
+      const [expenses, setExpenses] = useState([]);
+      const [period, setPeriod] = useState("all");
       const [error, setError] = useState("");
-      useEffect(() => {
-        api("/api/admin/dashboard", { token })
-          .then(setData)
-          .catch(e => setError(e.message));
-      }, [token]);
+      const [loading, setLoading] = useState(true);
+      const [selected, setSelected] = useState(null);
+
+      async function load() {
+        setLoading(true); setError("");
+        try {
+          const [d, o, e] = await Promise.all([
+            api("/api/admin/dashboard", { token }),
+            api("/api/admin/orders", { token }),
+            api("/api/admin/expenses", { token }),
+          ]);
+          setDash(d);
+          setGroups(o.groups || []);
+          setExpenses(e.expenses || []);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      useEffect(() => { load(); }, [token]);
+
+      const filteredGroups = useMemo(
+        () => (groups || []).filter(g => inPeriod(g, period)),
+        [groups, period]
+      );
+      const filteredExpenses = useMemo(() => {
+        if (period === "all") return expenses || [];
+        const range = periodRange(period);
+        return (expenses || []).filter(ex => {
+          if (!ex.date) return false;
+          const d = new Date(ex.date);
+          if (isNaN(d.getTime())) return false;
+          return d >= range.start && d <= range.end;
+        });
+      }, [expenses, period]);
+
+      const t = useMemo(() => {
+        if (period === "all" && dash && dash.totals) return dash.totals;
+        const expSum = filteredExpenses.reduce((s, ex) => s + (Number(ex.amount) || 0), 0);
+        return totalsFromGroups(filteredGroups, expSum);
+      }, [period, dash, filteredGroups, filteredExpenses]);
+
+      const monthly = useMemo(() => {
+        if (period === "all" && dash && dash.monthly) return dash.monthly;
+        return monthlyFromGroups(filteredGroups, filteredExpenses);
+      }, [period, dash, filteredGroups, filteredExpenses]);
+
+      const reminders = useMemo(() => buildReminders(groups), [groups]);
+
       if (error) return <div className="error">{error}</div>;
-      if (!data) return <div className="empty">Завантаження зведення…</div>;
-      const t = data.totals || {};
+      if (loading || !dash) return <div className="empty">Завантаження зведення…</div>;
+
+      const periodLabels = [
+        { id: "all", label: "Увесь час" },
+        { id: "month", label: "Цей місяць" },
+        { id: "30d", label: "30 днів" },
+        { id: "7d", label: "7 днів" },
+      ];
+
       return (
         <div>
+          <div className="toolbar" style={{ marginBottom: 14 }}>
+            <div className="period-toggle">
+              {periodLabels.map(p => (
+                <button key={p.id} type="button" className={period === p.id ? "active" : ""} onClick={() => setPeriod(p.id)}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <button className="btn secondary" onClick={load}>Оновити</button>
+          </div>
+
+          {reminders.length > 0 && (
+            <div className="panel">
+              <h2>Що зробити сьогодні</h2>
+              <div className="remind-list">
+                {reminders.map(r => (
+                  <button key={r.key} type="button" className="remind-item" onClick={() => setSelected(r.order_number)}>
+                    <div>
+                      <div className="title">{r.title}</div>
+                      <div className="desc">{r.desc}</div>
+                    </div>
+                    <span className={"tag " + r.tagClass}>{r.tag}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="kpi-grid">
             <div className="kpi">
               <div className="label">Виручка</div>
@@ -1001,7 +1372,7 @@
           <div className="charts-grid">
             <div className="panel">
               <h2>Виручка і маржа по місяцях</h2>
-              <MonthlyBarsChart monthly={data.monthly} />
+              <MonthlyBarsChart monthly={monthly} />
             </div>
             <div className="panel">
               <h2>Замовлення по статусах</h2>
@@ -1033,7 +1404,7 @@
                 </tr>
               </thead>
               <tbody>
-                {(data.monthly || []).map(m => (
+                {(monthly || []).map(m => (
                   <tr key={m.month}>
                     <td>{m.month}</td>
                     <td>{money(m.revenue)}</td>
@@ -1050,6 +1421,15 @@
               </tbody>
             </table>
           </div>
+
+          {selected && (
+            <OrderDrawer
+              token={token}
+              orderNumber={selected}
+              onClose={() => setSelected(null)}
+              onChanged={load}
+            />
+          )}
         </div>
       );
     }
