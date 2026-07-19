@@ -144,27 +144,86 @@
     .orders-totals .ot-sub { font-size: 13px; font-weight: 650; color: var(--brand-soft); }
     .kpi .sub { margin-top: 6px; font-size: 13px; font-weight: 650; color: var(--brand-soft); }
     .charts-grid {
-      display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; margin-bottom: 16px;
+      display: grid; grid-template-columns: 1.15fr 1fr; gap: 12px; margin-bottom: 16px;
     }
-    .chart-wrap { min-height: 220px; }
-    .chart-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+    .chart-wrap { min-height: 200px; }
+    .chart-legend {
+      display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 14px;
+      font-size: 12px; color: var(--muted);
+    }
     .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
-    .chart-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-    .bar-row { display: grid; grid-template-columns: 88px 1fr 64px; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 12px; }
-    .bar-track { height: 10px; background: #e8ebed; border-radius: 999px; overflow: hidden; }
-    .bar-fill { height: 100%; border-radius: 999px; }
-    .month-bars { display: flex; align-items: flex-end; gap: 10px; height: 160px; padding-top: 8px; }
-    .month-bar {
-      flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0; height: 100%;
+    .chart-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+    .dual-bars {
+      display: flex; align-items: flex-end; gap: 14px; height: 180px; padding: 4px 0 0;
     }
-    .month-bar .stem {
-      width: 100%; max-width: 36px; border-radius: 8px 8px 4px 4px; background: var(--brand-soft); min-height: 4px;
-      transition: height .25s ease;
+    .dual-col {
+      flex: 1; min-width: 0; height: 100%;
+      display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 8px;
     }
-    .month-bar .lbl { font-size: 10px; color: var(--muted); text-align: center; line-height: 1.2; }
-    .month-bar .amt { font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; }
+    .dual-pair {
+      display: flex; align-items: flex-end; justify-content: center; gap: 4px;
+      width: 100%; height: 140px;
+    }
+    .dual-stem {
+      width: 42%; max-width: 28px; border-radius: 6px 6px 3px 3px; min-height: 3px;
+    }
+    .dual-stem.rev { background: #526058; }
+    .dual-stem.mar { background: #1b7a4a; }
+    .dual-lbl { font-size: 11px; font-weight: 650; color: var(--muted); text-align: center; }
+    .dual-tip { font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; line-height: 1.25; }
+    .status-cols {
+      display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px;
+      height: 180px; align-items: end;
+    }
+    .status-col {
+      height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0;
+    }
+    .status-col .count { font-size: 13px; font-weight: 750; color: var(--ink); }
+    .status-col .stem {
+      width: 100%; max-width: 40px; border-radius: 8px 8px 4px 4px; min-height: 4px;
+      transition: height .28s ease;
+    }
+    .status-col .name {
+      font-size: 10px; font-weight: 650; color: var(--muted); text-align: center;
+      line-height: 1.2; min-height: 2.4em;
+    }
+    .stack-block { display: grid; gap: 14px; }
+    .stack-bar {
+      display: flex; height: 36px; border-radius: 10px; overflow: hidden; background: #e8ebed;
+    }
+    .stack-seg {
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; color: #fff; min-width: 0; padding: 0 6px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .stack-meta { display: grid; gap: 8px; }
+    .stack-row {
+      display: grid; grid-template-columns: 14px 1fr auto; gap: 10px; align-items: center;
+      font-size: 13px;
+    }
+    .stack-row .val { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .donut-wrap {
+      display: flex; gap: 20px; align-items: center; flex-wrap: wrap; min-height: 180px;
+    }
+    .donut {
+      position: relative; width: 148px; height: 148px; flex-shrink: 0;
+    }
+    .donut svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+    .donut-center {
+      position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
+      pointer-events: none;
+    }
+    .donut-center strong { display: block; font-size: 22px; font-weight: 750; letter-spacing: -0.02em; }
+    .donut-center span { display: block; font-size: 11px; color: var(--muted); font-weight: 650; margin-top: 2px; }
+    .donut-stats { display: grid; gap: 10px; flex: 1; min-width: 140px; }
+    .donut-stat {
+      background: #f3f5f6; border-radius: 10px; padding: 10px 12px;
+    }
+    .donut-stat .lab { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    .donut-stat .num { margin-top: 4px; font-size: 16px; font-weight: 750; }
     @media (max-width: 900px) {
       .charts-grid { grid-template-columns: 1fr; }
+      .status-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); height: auto; min-height: 200px; }
     }
     .col.st-new { background: var(--st-new-bg); }
     .col.st-new h3 { color: var(--st-new-fg); }
@@ -718,117 +777,195 @@
       );
     }
 
-    function StatusBarsChart({ byStatus }) {
-      const max = Math.max(1, ...STATUSES.map(s => (byStatus && byStatus[s]) || 0));
-      const colors = {
-        "Нове": "var(--st-new-fg)",
-        "В роботі": "var(--st-work-fg)",
-        "Готове": "var(--st-ready-fg)",
-        "Відправлено": "var(--st-ship-fg)",
-        "Завершено": "var(--st-done-fg)",
-        "Скасовано": "var(--st-cancel-fg)",
-      };
-      return (
-        <div className="chart-wrap">
-          {STATUSES.map(s => {
-            const n = (byStatus && byStatus[s]) || 0;
-            const w = Math.round((n / max) * 100);
-            return (
-              <div className="bar-row" key={s}>
-                <div>{s}</div>
-                <div className="bar-track"><div className="bar-fill" style={{ width: w + "%", background: colors[s] }} /></div>
-                <div style={{ textAlign: "right", fontWeight: 700 }}>{n}</div>
-              </div>
-            );
-          })}
-        </div>
-      );
+    function shortMoney(v) {
+      const n = Number(v) || 0;
+      if (Math.abs(n) >= 1000) {
+        const k = n / 1000;
+        return (Math.abs(k) >= 10 ? Math.round(k) : Math.round(k * 10) / 10) + " тис.";
+      }
+      return money(n);
     }
+
+    const STATUS_CHART_COLORS = {
+      "Нове": "#c9a227",
+      "В роботі": "#3b82f6",
+      "Готове": "#14b8a6",
+      "Відправлено": "#a855f7",
+      "Завершено": "#22c55e",
+      "Скасовано": "#9ca3af",
+    };
 
     function MonthlyBarsChart({ monthly }) {
       const rows = (monthly || []).slice().reverse();
-      const max = Math.max(1, ...rows.map(m => Number(m.revenue) || 0));
+      const max = Math.max(1, ...rows.map(m => Math.max(Number(m.revenue) || 0, Number(m.profit) || 0)));
       if (!rows.length) return <div className="empty">Немає помісячних даних</div>;
       return (
         <div className="chart-wrap">
-          <div className="month-bars">
+          <div className="dual-bars">
             {rows.map(m => {
               const rev = Number(m.revenue) || 0;
-              const h = Math.max(4, Math.round((rev / max) * 120));
+              const mar = Number(m.profit) || 0;
+              const hRev = Math.max(3, Math.round((rev / max) * 130));
+              const hMar = Math.max(3, Math.round((mar / max) * 130));
               return (
-                <div className="month-bar" key={m.month}>
-                  <div className="amt">{rev ? (Math.round(rev / 1000) + "к") : "0"}</div>
-                  <div className="stem" style={{ height: h }} title={money(rev)} />
-                  <div className="lbl">{m.month}</div>
+                <div className="dual-col" key={m.month} title={"Виручка " + money(rev) + " · Маржа " + money(mar)}>
+                  <div className="dual-tip">{shortMoney(rev)}</div>
+                  <div className="dual-pair">
+                    <div className="dual-stem rev" style={{ height: hRev }} />
+                    <div className="dual-stem mar" style={{ height: hMar }} />
+                  </div>
+                  <div className="dual-lbl">{m.month}</div>
                 </div>
               );
             })}
           </div>
-          <div className="chart-legend" style={{ marginTop: 12 }}>
-            <span><span className="chart-swatch" style={{ background: "var(--brand-soft)" }} />Виручка по місяцях (тис. ₴)</span>
+          <div className="chart-legend">
+            <span><span className="chart-swatch" style={{ background: "#526058" }} />Виручка</span>
+            <span><span className="chart-swatch" style={{ background: "#1b7a4a" }} />Маржа</span>
           </div>
         </div>
       );
     }
 
-    function MarginSplitChart({ received, debt, ready }) {
-      const a = Number(received) || 0;
-      const b = Number(debt) || 0;
-      const c = Math.max(0, (Number(ready) || 0) - a - b);
-      const total = a + b + (c > 0 ? c : 0) || 1;
-      const parts = [
-        { label: "Отримано", value: a, color: "#1b7a4a" },
-        { label: "До отримання", value: b, color: "#9a6700" },
-      ];
-      let angle = -90;
-      const slices = parts.filter(p => p.value > 0).map(p => {
-        const deg = (p.value / total) * 360;
-        const start = angle;
-        angle += deg;
-        return { ...p, start, deg };
-      });
-      const gradient = slices.length
-        ? slices.map(s => `${s.color} ${s.start}deg ${s.start + s.deg}deg`).join(", ")
-        : "#e8ebed 0deg 360deg";
+    function StatusBarsChart({ byStatus }) {
+      const max = Math.max(1, ...STATUSES.map(s => (byStatus && byStatus[s]) || 0));
+      const total = STATUSES.reduce((s, name) => s + ((byStatus && byStatus[name]) || 0), 0);
       return (
-        <div className="chart-wrap" style={{ display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{
-            width: 140, height: 140, borderRadius: "50%",
-            background: `conic-gradient(${gradient})`,
-            boxShadow: "inset 0 0 0 28px #fff",
-          }} />
-          <div className="chart-legend" style={{ flexDirection: "column", alignItems: "flex-start" }}>
-            {parts.map(p => (
-              <span key={p.label}>
-                <span className="chart-swatch" style={{ background: p.color }} />
-                {p.label}: <strong style={{ color: "var(--ink)" }}>{money(p.value)}</strong>
-              </span>
-            ))}
+        <div className="chart-wrap">
+          <div className="status-cols">
+            {STATUSES.map(s => {
+              const n = (byStatus && byStatus[s]) || 0;
+              const h = n ? Math.max(8, Math.round((n / max) * 120)) : 4;
+              return (
+                <div className="status-col" key={s}>
+                  <div className="count">{n}</div>
+                  <div className="stem" style={{
+                    height: h,
+                    background: n ? STATUS_CHART_COLORS[s] : "#e5e8eb",
+                    opacity: n ? 1 : 0.55,
+                  }} />
+                  <div className="name">{s}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="chart-legend">
+            <span>Усього карток: <strong style={{ color: "var(--ink)" }}>{total}</strong></span>
           </div>
         </div>
       );
     }
 
     function FinanceBarsChart({ revenue, cost, profit, commission, expenses }) {
-      const items = [
-        { label: "Виручка", value: Number(revenue) || 0, color: "var(--brand)" },
-        { label: "Собівартість", value: Number(cost) || 0, color: "#6b7280" },
-        { label: "Маржа", value: Number(profit) || 0, color: "#1b7a4a" },
-        { label: "Комісії", value: Number(commission) || 0, color: "#8f7340" },
-        { label: "Витрати", value: Number(expenses) || 0, color: "#b42318" },
-      ];
-      const max = Math.max(1, ...items.map(i => Math.abs(i.value)));
+      const rev = Number(revenue) || 0;
+      const cst = Number(cost) || 0;
+      const mar = Number(profit) || 0;
+      const com = Number(commission) || 0;
+      const exp = Number(expenses) || 0;
+      const base = rev > 0 ? rev : Math.max(cst + mar, 1);
+      const costPct = Math.min(100, Math.round((cst / base) * 1000) / 10);
+      const marPct = Math.min(100 - costPct, Math.round((mar / base) * 1000) / 10);
       return (
-        <div className="chart-wrap">
-          {items.map(i => (
-            <div className="bar-row" key={i.label}>
-              <div>{i.label}</div>
-              <div className="bar-track">
-                <div className="bar-fill" style={{ width: Math.round((Math.abs(i.value) / max) * 100) + "%", background: i.color }} />
-              </div>
-              <div style={{ textAlign: "right", fontWeight: 700, fontSize: 11 }}>{money(i.value)}</div>
+        <div className="chart-wrap stack-block">
+          <div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, fontWeight: 650 }}>
+              Склад виручки
             </div>
-          ))}
+            <div className="stack-bar" title={"Виручка " + money(rev)}>
+              {cst > 0 && (
+                <div className="stack-seg" style={{ width: costPct + "%", background: "#6b7280" }}>
+                  {costPct >= 18 ? "Собівартість" : ""}
+                </div>
+              )}
+              {mar > 0 && (
+                <div className="stack-seg" style={{ width: marPct + "%", background: "#1b7a4a" }}>
+                  {marPct >= 14 ? "Маржа" : ""}
+                </div>
+              )}
+              {rev <= 0 && <div className="stack-seg" style={{ width: "100%", background: "#d1d5db", color: "var(--muted)" }}>Немає даних</div>}
+            </div>
+          </div>
+          <div className="stack-meta">
+            <div className="stack-row">
+              <span className="chart-swatch" style={{ background: "#526058" }} />
+              <span>Виручка</span>
+              <span className="val">{money(rev)}</span>
+            </div>
+            <div className="stack-row">
+              <span className="chart-swatch" style={{ background: "#6b7280" }} />
+              <span>Собівартість ({costPct}%)</span>
+              <span className="val">{money(cst)}</span>
+            </div>
+            <div className="stack-row">
+              <span className="chart-swatch" style={{ background: "#1b7a4a" }} />
+              <span>Маржа ({marPct}%)</span>
+              <span className="val">{money(mar)}</span>
+            </div>
+            <div className="stack-row">
+              <span className="chart-swatch" style={{ background: "#8f7340" }} />
+              <span>Комісії</span>
+              <span className="val">{money(com)}</span>
+            </div>
+            <div className="stack-row">
+              <span className="chart-swatch" style={{ background: "#b42318" }} />
+              <span>Витрати</span>
+              <span className="val">{money(exp)}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function MarginSplitChart({ received, debt }) {
+      const a = Math.max(0, Number(received) || 0);
+      const b = Math.max(0, Number(debt) || 0);
+      const total = a + b;
+      const pctReceived = total ? Math.round((a / total) * 100) : 0;
+      const r = 54;
+      const c = 2 * Math.PI * r;
+      const aLen = total ? (a / total) * c : 0;
+      const bLen = total ? (b / total) * c : 0;
+      return (
+        <div className="chart-wrap donut-wrap">
+          <div className="donut">
+            <svg viewBox="0 0 140 140" aria-hidden="true">
+              <circle cx="70" cy="70" r={r} fill="none" stroke="#e8ebed" strokeWidth="16" />
+              {total > 0 && a > 0 && (
+                <circle
+                  cx="70" cy="70" r={r} fill="none" stroke="#1b7a4a" strokeWidth="16"
+                  strokeDasharray={`${aLen} ${c - aLen}`}
+                  strokeDashoffset="0"
+                  strokeLinecap="butt"
+                />
+              )}
+              {total > 0 && b > 0 && (
+                <circle
+                  cx="70" cy="70" r={r} fill="none" stroke="#9a6700" strokeWidth="16"
+                  strokeDasharray={`${bLen} ${c - bLen}`}
+                  strokeDashoffset={-aLen}
+                  strokeLinecap="butt"
+                />
+              )}
+            </svg>
+            <div className="donut-center">
+              <strong>{total ? pctReceived + "%" : "—"}</strong>
+              <span>отримано</span>
+            </div>
+          </div>
+          <div className="donut-stats">
+            <div className="donut-stat">
+              <div className="lab" style={{ color: "#1b7a4a" }}>Отримано</div>
+              <div className="num">{money(a)}</div>
+            </div>
+            <div className="donut-stat">
+              <div className="lab" style={{ color: "#9a6700" }}>До отримання</div>
+              <div className="num">{money(b)}</div>
+            </div>
+            <div className="donut-stat">
+              <div className="lab">Разом</div>
+              <div className="num">{money(total)}</div>
+            </div>
+          </div>
         </div>
       );
     }
@@ -863,7 +1000,7 @@
 
           <div className="charts-grid">
             <div className="panel">
-              <h2>Виручка по місяцях</h2>
+              <h2>Виручка і маржа по місяцях</h2>
               <MonthlyBarsChart monthly={data.monthly} />
             </div>
             <div className="panel">
@@ -882,18 +1019,10 @@
             </div>
             <div className="panel">
               <h2>Маржа: отримано / борг</h2>
-              <MarginSplitChart received={t.margin_received} debt={t.margin_debt} ready={t.margin_ready} />
+              <MarginSplitChart received={t.margin_received} debt={t.margin_debt} />
             </div>
           </div>
 
-          <div className="panel">
-            <h2>По статусах</h2>
-            <div className="toolbar">
-              {STATUSES.map(s => (
-                <span key={s} className={"badge " + statusClass(s)}>{s}: {(t.by_status && t.by_status[s]) || 0}</span>
-              ))}
-            </div>
-          </div>
           <div className="panel">
             <h2>Помісячно</h2>
             <table>
