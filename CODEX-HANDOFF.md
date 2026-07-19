@@ -1,14 +1,12 @@
 # CODEX HANDOFF — avalon-order-form
 
-## Production: PR #75 злито — 19.07.2026
+## Production: PR #75 + Apps Script v35 — 19.07.2026
 
-- PR [#75](https://github.com/alysyuk78-blip/avalon-order-form/pull/75) злито в `main`
-  (`9ca0c3a`).
-- Vercel Production: `https://avalon-order-form.vercel.app/admin` уже віддає новий UI
-  (суми/маржа, діаграми, drag-and-drop, фільтр періоду, нагадування, багфікси дат).
-- Apps Script фікси (`by_status` по унікальних замовленнях + сортування `monthly`)
-  у git на `main`, але **ще не запушені через clasp** — потрібен повторний Google login
-  (немає локального `~/.clasprc.json`).
+- PR [#75](https://github.com/alysyuk78-blip/avalon-order-form/pull/75) злито в `main`.
+- Vercel Production: `https://avalon-order-form.vercel.app/admin` з новим UI.
+- Apps Script: `clasp push` → version **35** → production `/exec` deployment оновлено
+  (`by_status` по унікальних замовленнях + хронологічне сортування `monthly`).
+- `clasp logout` виконано; локальний `~/.clasprc.json` видалено.
 
 ## Міні-CRM: воронка, кольори статусів, довідник клієнтів — 19.07.2026
 
