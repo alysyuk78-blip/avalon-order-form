@@ -24,13 +24,23 @@
       --danger: #b42318;
       --shadow: 0 10px 30px rgba(28, 33, 36, 0.08);
       --radius: 14px;
-      --font: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      /* Як на сайті Apple / системний стек macOS & iOS */
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+      --st-new-bg: #fff6db; --st-new-fg: #856404; --st-new-bar: #e6b800;
+      --st-work-bg: #e8f1ff; --st-work-fg: #1d4f91; --st-work-bar: #3b82f6;
+      --st-ready-bg: #e6faf5; --st-ready-fg: #0f6b5c; --st-ready-bar: #14b8a6;
+      --st-ship-bg: #f3e8ff; --st-ship-fg: #6b21a8; --st-ship-bar: #a855f7;
+      --st-done-bg: #e6f6ed; --st-done-fg: #1b7a4a; --st-done-bar: #22c55e;
+      --st-cancel-bg: #f3f4f6; --st-cancel-fg: #6b7280; --st-cancel-bar: #9ca3af;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; min-height: 100%; }
     body {
       font-family: var(--font);
       color: var(--ink);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
       background:
         radial-gradient(1200px 500px at 10% -10%, rgba(143, 115, 64, 0.12), transparent 60%),
         radial-gradient(900px 400px at 100% 0%, rgba(56, 62, 66, 0.10), transparent 55%),
@@ -96,19 +106,36 @@
     }
     .col {
       background: rgba(255,255,255,0.7); border: 1px solid var(--line); border-radius: var(--radius);
-      min-height: 280px; display: flex; flex-direction: column;
+      min-height: 280px; display: flex; flex-direction: column; overflow: hidden;
     }
     .col h3 {
-      margin: 0; padding: 12px 12px 8px; font-size: 12px; letter-spacing: 0.06em;
-      text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between;
+      margin: 0; padding: 12px; font-size: 12px; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--muted);
+      display: flex; flex-direction: column; gap: 4px;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
     }
-    .col-body { padding: 0 8px 8px; display: grid; gap: 8px; }
+    .col h3 .col-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .col h3 .col-sum { font-size: 12px; font-weight: 750; letter-spacing: 0; text-transform: none; opacity: 0.95; }
+    .col-body { padding: 8px; display: grid; gap: 8px; }
+    .col.st-new h3 { background: var(--st-new-bg); color: var(--st-new-fg); }
+    .col.st-work h3 { background: var(--st-work-bg); color: var(--st-work-fg); }
+    .col.st-ready h3 { background: var(--st-ready-bg); color: var(--st-ready-fg); }
+    .col.st-ship h3 { background: var(--st-ship-bg); color: var(--st-ship-fg); }
+    .col.st-done h3 { background: var(--st-done-bg); color: var(--st-done-fg); }
+    .col.st-cancel h3 { background: var(--st-cancel-bg); color: var(--st-cancel-fg); }
     .card {
       background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+      border-left: 4px solid var(--line);
       padding: 12px; box-shadow: var(--shadow); cursor: pointer; text-align: left;
       transition: transform .18s ease, box-shadow .18s ease;
     }
     .card:hover { transform: translateY(-2px); box-shadow: 0 14px 28px rgba(28,33,36,0.12); }
+    .card.st-new { border-left-color: var(--st-new-bar); }
+    .card.st-work { border-left-color: var(--st-work-bar); }
+    .card.st-ready { border-left-color: var(--st-ready-bar); }
+    .card.st-ship { border-left-color: var(--st-ship-bar); }
+    .card.st-done { border-left-color: var(--st-done-bar); }
+    .card.st-cancel { border-left-color: var(--st-cancel-bar); opacity: 0.85; }
     .card .num { font-weight: 750; font-size: 13px; }
     .card .meta { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.35; }
     .card .money { margin-top: 8px; font-weight: 700; font-size: 14px; color: var(--brand-soft); }
@@ -151,12 +178,16 @@
       display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px;
       font-size: 11px; font-weight: 700; background: #eef1f3; color: var(--muted);
     }
-    .badge.ok { background: #e6f6ed; color: var(--ok); }
-    .badge.warn { background: #fff6db; color: var(--warn); }
+    .badge.st-new { background: var(--st-new-bg); color: var(--st-new-fg); }
+    .badge.st-work { background: var(--st-work-bg); color: var(--st-work-fg); }
+    .badge.st-ready { background: var(--st-ready-bg); color: var(--st-ready-fg); }
+    .badge.st-ship { background: var(--st-ship-bg); color: var(--st-ship-fg); }
+    .badge.st-done { background: var(--st-done-bg); color: var(--st-done-fg); }
+    .badge.st-cancel { background: var(--st-cancel-bg); color: var(--st-cancel-fg); }
     .section-title { margin: 18px 0 10px; font-size: 13px; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
     .empty { color: var(--muted); font-size: 14px; padding: 24px; text-align: center; }
-    .status-Нове { background: #fff6db; color: #856404; }
-    .status-В\ роботі, .chip-work { background: #e8f1ff; color: #1d4f91; }
+    .alias { color: var(--muted); font-size: 12px; }
+    .phone-key { font-variant-numeric: tabular-nums; font-weight: 650; }
     @media (max-width: 1100px) {
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .row-card { grid-template-columns: 1fr 1fr; }
@@ -174,6 +205,14 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
     const STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
+    const STATUS_CLASS = {
+      "Нове": "st-new",
+      "В роботі": "st-work",
+      "Готове": "st-ready",
+      "Відправлено": "st-ship",
+      "Завершено": "st-done",
+      "Скасовано": "st-cancel",
+    };
     const EXPENSE_CATS = ["Реклама / маркетинг","Доставка","Пакування / матеріали","Підряд / зарплати","Інше"];
     const TOKEN_KEY = "avalon_admin_token";
 
@@ -184,6 +223,73 @@
     function pct(v) {
       if (v == null || v === "") return "—";
       return Number(v).toLocaleString("uk-UA", { maximumFractionDigits: 1 }) + "%";
+    }
+    function statusClass(status) {
+      return STATUS_CLASS[status] || "";
+    }
+    /** Нормалізація телефону: ключ для довідника клієнтів. */
+    function normalizePhone(phone) {
+      let d = String(phone || "").replace(/\D/g, "");
+      if (!d) return "";
+      if (d.indexOf("380") === 0 && d.length >= 12) return d.slice(0, 12);
+      if (d.length === 10 && d.charAt(0) === "0") return "38" + d;
+      if (d.length === 9) return "380" + d;
+      if (d.length > 12) return d.slice(-12);
+      return d;
+    }
+    function formatPhoneDisplay(key, raw) {
+      if (raw && String(raw).trim()) return String(raw).trim();
+      if (!key) return "—";
+      if (key.length === 12 && key.indexOf("380") === 0) {
+        return "+" + key.slice(0, 3) + " " + key.slice(3, 5) + " " + key.slice(5, 8) + " " + key.slice(8);
+      }
+      return key;
+    }
+    /** Збирає довідник: 1 телефон → основне імʼя (з найранішого замовлення) + інші варіанти. */
+    function buildClientsDirectory(groups) {
+      const byPhone = {};
+      (groups || []).forEach((g) => {
+        const key = normalizePhone(g.phone);
+        if (!key) return;
+        if (!byPhone[key]) {
+          byPhone[key] = {
+            phone_key: key,
+            phone_display: formatPhoneDisplay(key, g.phone),
+            names: [],
+            name_set: {},
+            orders: [],
+            revenue: 0,
+            profit: 0,
+          };
+        }
+        const c = byPhone[key];
+        const name = String(g.client || "").trim();
+        if (name) {
+          const nk = name.toLowerCase();
+          if (!c.name_set[nk]) {
+            c.name_set[nk] = true;
+            c.names.push({ name, first_seen: g.created_at || "", order_number: g.order_number });
+          }
+        }
+        c.orders.push(g);
+        c.revenue += Number(g.revenue) || 0;
+        c.profit += Number(g.profit) || 0;
+        if (g.phone && String(g.phone).trim().length > String(c.phone_display || "").length) {
+          c.phone_display = String(g.phone).trim();
+        }
+      });
+      return Object.keys(byPhone).map((key) => {
+        const c = byPhone[key];
+        c.names.sort((a, b) => String(a.first_seen).localeCompare(String(b.first_seen)));
+        c.primary_name = c.names.length ? c.names[0].name : "Без імені";
+        c.aliases = c.names.slice(1).map((n) => n.name);
+        c.orders_count = c.orders.length;
+        c.orders.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+        c.last_order_at = c.orders.length ? c.orders[0].created_at : "";
+        c.cities = Array.from(new Set(c.orders.map((o) => o.city).filter(Boolean)));
+        delete c.name_set;
+        return c;
+      }).sort((a, b) => b.orders_count - a.orders_count || String(a.primary_name).localeCompare(String(b.primary_name), "uk"));
     }
 
     async function api(path, { method = "GET", body, token } = {}) {
@@ -241,15 +347,7 @@
     }
 
     function StatusChip({ status }) {
-      const map = {
-        "Нове": "warn",
-        "В роботі": "",
-        "Готове": "ok",
-        "Відправлено": "ok",
-        "Завершено": "ok",
-        "Скасовано": "",
-      };
-      return <span className={"badge " + (map[status] || "")}>{status}</span>;
+      return <span className={"badge " + statusClass(status)}>{status}</span>;
     }
 
     function OrderDrawer({ token, orderNumber, onClose, onChanged }) {
@@ -444,10 +542,11 @@
 
       const byStatus = useMemo(() => {
         const map = {};
-        STATUSES.forEach(s => { map[s] = []; });
+        STATUSES.forEach(s => { map[s] = { items: [], revenue: 0 }; });
         groups.forEach(g => {
-          if (!map[g.status]) map[g.status] = [];
-          map[g.status].push(g);
+          if (!map[g.status]) map[g.status] = { items: [], revenue: 0 };
+          map[g.status].items.push(g);
+          map[g.status].revenue += Number(g.revenue) || 0;
         });
         return map;
       }, [groups]);
@@ -473,11 +572,17 @@
           {!loading && view === "kanban" && (
             <div className="kanban">
               {STATUSES.map(s => (
-                <div className="col" key={s}>
-                  <h3><span>{s}</span><span>{byStatus[s].length}</span></h3>
+                <div className={"col " + statusClass(s)} key={s}>
+                  <h3>
+                    <div className="col-title">
+                      <span>{s}</span>
+                      <span>{byStatus[s].items.length}</span>
+                    </div>
+                    <div className="col-sum">{money(byStatus[s].revenue)}</div>
+                  </h3>
                   <div className="col-body">
-                    {byStatus[s].map(g => (
-                      <button key={g.order_number} className="card" onClick={() => setSelected(g.order_number)}>
+                    {byStatus[s].items.map(g => (
+                      <button key={g.order_number} className={"card " + statusClass(g.status)} onClick={() => setSelected(g.order_number)}>
                         <div className="num">{g.order_number}</div>
                         <div className="meta">{g.client}<br />{g.phone}<br />{g.city || "—"}</div>
                         <div className="money">{money(g.revenue)}</div>
@@ -544,7 +649,7 @@
             <h2>По статусах</h2>
             <div className="toolbar">
               {STATUSES.map(s => (
-                <span key={s} className="badge">{s}: {(t.by_status && t.by_status[s]) || 0}</span>
+                <span key={s} className={"badge " + statusClass(s)}>{s}: {(t.by_status && t.by_status[s]) || 0}</span>
               ))}
             </div>
           </div>
@@ -712,6 +817,117 @@
       );
     }
 
+
+    function ClientsView({ token }) {
+      const [groups, setGroups] = useState([]);
+      const [q, setQ] = useState("");
+      const [error, setError] = useState("");
+      const [loading, setLoading] = useState(true);
+      const [selected, setSelected] = useState(null);
+
+      async function load() {
+        setLoading(true); setError("");
+        try {
+          const data = await api("/api/admin/orders", { token });
+          setGroups(data.groups || []);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+        }
+      }
+      useEffect(() => { load(); }, [token]);
+
+      const clients = useMemo(() => buildClientsDirectory(groups), [groups]);
+      const filtered = useMemo(() => {
+        const needle = q.trim().toLowerCase();
+        if (!needle) return clients;
+        return clients.filter((c) => {
+          const hay = (
+            c.phone_key + " " + c.phone_display + " " + c.primary_name + " " +
+            (c.aliases || []).join(" ") + " " + (c.cities || []).join(" ")
+          ).toLowerCase();
+          return hay.indexOf(needle) >= 0;
+        });
+      }, [clients, q]);
+
+      return (
+        <div>
+          <div className="panel" style={{ marginBottom: 16 }}>
+            <h2>Довідник клієнтів за телефоном</h2>
+            <p style={{ margin: "0 0 12px", color: "var(--muted)", fontSize: 14, lineHeight: 1.45 }}>
+              Один номер = один клієнт. Основне імʼя береться з найранішого замовлення;
+              інші написання імені показуються як другорядні (через « / »), щоб ловити дублі на кшталт «Іван» і «Іван Петренко».
+            </p>
+            <div className="toolbar" style={{ marginBottom: 0 }}>
+              <input type="search" placeholder="Пошук: телефон або імʼя…" value={q} onChange={e => setQ(e.target.value)} />
+              <button className="btn secondary" onClick={load}>Оновити</button>
+              <span style={{ color: "var(--muted)", fontSize: 13 }}>{filtered.length} клієнтів</span>
+            </div>
+          </div>
+          {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
+          {loading && <div className="empty">Завантаження довідника…</div>}
+          {!loading && !filtered.length && <div className="empty">Клієнтів не знайдено</div>}
+          {!loading && !!filtered.length && (
+            <div className="panel">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Телефон</th>
+                    <th>Імʼя (основне / інші)</th>
+                    <th>Замовлень</th>
+                    <th>Виручка</th>
+                    <th>Міста</th>
+                    <th>Останнє</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((c) => (
+                    <tr key={c.phone_key} style={{ cursor: "pointer" }} onClick={() => setSelected(selected === c.phone_key ? null : c.phone_key)}>
+                      <td className="phone-key">{c.phone_display}</td>
+                      <td>
+                        <strong>{c.primary_name}</strong>
+                        {!!c.aliases.length && (
+                          <div className="alias"> / {c.aliases.join(" / ")}</div>
+                        )}
+                      </td>
+                      <td>{c.orders_count}</td>
+                      <td>{money(c.revenue)}</td>
+                      <td>{(c.cities || []).join(", ") || "—"}</td>
+                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{c.last_order_at || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {selected && (() => {
+            const c = clients.find((x) => x.phone_key === selected);
+            if (!c) return null;
+            return (
+              <div className="panel">
+                <h2>Замовлення · {c.phone_display}</h2>
+                <p style={{ marginTop: 0, color: "var(--muted)", fontSize: 13 }}>
+                  Основне: <strong style={{ color: "var(--ink)" }}>{c.primary_name}</strong>
+                  {!!c.aliases.length && <> · також: {c.aliases.join(" / ")}</>}
+                </p>
+                <div className="list">
+                  {c.orders.map((g) => (
+                    <div key={g.order_number} className="row-card" style={{ gridTemplateColumns: "1.1fr 1fr 0.8fr 0.7fr" }}>
+                      <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{g.created_at}</div></div>
+                      <div>{g.client || "—"}</div>
+                      <div><StatusChip status={g.status} /></div>
+                      <div>{money(g.revenue)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      );
+    }
+
     function App() {
       const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) || "");
       const [tab, setTab] = useState("orders");
@@ -739,6 +955,7 @@
             </div>
             <nav className="nav">
               <button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}>Замовлення</button>
+              <button className={tab === "clients" ? "active" : ""} onClick={() => setTab("clients")}>Клієнти</button>
               <button className={tab === "dash" ? "active" : ""} onClick={() => setTab("dash")}>Зведення</button>
               <button className={tab === "partners" ? "active" : ""} onClick={() => setTab("partners")}>Партнери</button>
               <button className={tab === "expenses" ? "active" : ""} onClick={() => setTab("expenses")}>Витрати</button>
@@ -750,6 +967,7 @@
           </div>
           <main className="main">
             {tab === "orders" && <OrdersView token={token} />}
+            {tab === "clients" && <ClientsView token={token} />}
             {tab === "dash" && <DashboardView token={token} />}
             {tab === "partners" && <PartnersView token={token} />}
             {tab === "expenses" && <ExpensesView token={token} />}
