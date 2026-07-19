@@ -1996,6 +1996,14 @@ function adminAddPayout_(p) {
   return adminListPayouts_();
 }
 
+
+/** Установити ADMIN_API_SECRET (запуск з редактора або clasp run). */
+function installAdminApiSecret(secret) {
+  if (!secret) throw new Error("secret required");
+  PropertiesService.getScriptProperties().setProperty("ADMIN_API_SECRET", String(secret));
+  return { status: "ok", message: "ADMIN_API_SECRET set" };
+}
+
 function jsonOut(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }

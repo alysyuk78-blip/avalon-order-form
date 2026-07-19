@@ -1,5 +1,15 @@
 # CODEX HANDOFF — avalon-order-form
 
+## Міні-CRM увімкнено в production — 19.07.2026
+
+- Кабінет: `https://avalon-order-form.vercel.app/admin`
+- Vercel: `ADMIN_PASSWORD`, `ADMIN_API_SECRET` задані (Production/Preview)
+- Apps Script deployment version **34** з `admin_action` + колонки AI–AK
+- У Script Properties встановлено `ADMIN_API_SECRET` (той самий, що у Vercel)
+- У git додано хелпер `installAdminApiSecret()` та `executionApi` у `appsscript.json`
+- `clasp logout` виконано після deployment
+- Форму клієнта в цьому кроці не змінювали
+
 ## Міні-CRM веб-кабінет `/admin` — 18.07.2026
 
 Додано захищений кабінет поверх наявної Google Sheets облікової системи.
