@@ -25,20 +25,20 @@
       --radius: 14px;
       /* Як на сайті Apple / системний стек macOS & iOS */
       --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
-      /* Майже прозорі фони колонок воронки */
-      --st-new-bg: rgba(230, 184, 0, 0.03); --st-new-fg: #856404;
-      --st-work-bg: rgba(59, 130, 246, 0.03); --st-work-fg: #1d4f91;
-      --st-ready-bg: rgba(20, 184, 166, 0.03); --st-ready-fg: #0f6b5c;
-      --st-ship-bg: rgba(168, 85, 247, 0.03); --st-ship-fg: #6b21a8;
-      --st-done-bg: rgba(34, 197, 94, 0.03); --st-done-fg: #1b7a4a;
-      --st-cancel-bg: rgba(156, 163, 175, 0.04); --st-cancel-fg: #6b7280;
+      /* Середня прозорість колонок воронки (між блідим і насиченим) */
+      --st-new-bg: rgba(230, 184, 0, 0.08); --st-new-fg: #856404;
+      --st-work-bg: rgba(59, 130, 246, 0.08); --st-work-fg: #1d4f91;
+      --st-ready-bg: rgba(20, 184, 166, 0.08); --st-ready-fg: #0f6b5c;
+      --st-ship-bg: rgba(168, 85, 247, 0.08); --st-ship-fg: #6b21a8;
+      --st-done-bg: rgba(34, 197, 94, 0.08); --st-done-fg: #1b7a4a;
+      --st-cancel-bg: rgba(156, 163, 175, 0.10); --st-cancel-fg: #6b7280;
       /* Бейджі трохи насиченіші за колонки, щоб читались */
-      --st-new-chip: rgba(230, 184, 0, 0.16);
-      --st-work-chip: rgba(59, 130, 246, 0.14);
-      --st-ready-chip: rgba(20, 184, 166, 0.14);
-      --st-ship-chip: rgba(168, 85, 247, 0.14);
-      --st-done-chip: rgba(34, 197, 94, 0.14);
-      --st-cancel-chip: rgba(156, 163, 175, 0.18);
+      --st-new-chip: rgba(230, 184, 0, 0.20);
+      --st-work-chip: rgba(59, 130, 246, 0.18);
+      --st-ready-chip: rgba(20, 184, 166, 0.18);
+      --st-ship-chip: rgba(168, 85, 247, 0.18);
+      --st-done-chip: rgba(34, 197, 94, 0.18);
+      --st-cancel-chip: rgba(156, 163, 175, 0.22);
     }
     * {
       box-sizing: border-box;
@@ -131,7 +131,41 @@
     }
     .col h3 .col-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
     .col h3 .col-sum { font-size: 12px; font-weight: 750; letter-spacing: 0; text-transform: none; opacity: 0.95; }
+    .col h3 .col-margin { font-size: 11px; font-weight: 650; letter-spacing: 0; text-transform: none; opacity: 0.75; }
     .col-body { padding: 8px; display: grid; gap: 8px; }
+    .orders-totals {
+      display: flex; flex-wrap: wrap; gap: 16px 28px; margin-bottom: 14px;
+      background: var(--panel); border-radius: var(--radius); padding: 14px 16px;
+      box-shadow: var(--shadow);
+    }
+    .orders-totals .ot-item { display: grid; gap: 2px; }
+    .orders-totals .ot-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+    .orders-totals .ot-value { font-size: 18px; font-weight: 750; }
+    .orders-totals .ot-sub { font-size: 13px; font-weight: 650; color: var(--brand-soft); }
+    .kpi .sub { margin-top: 6px; font-size: 13px; font-weight: 650; color: var(--brand-soft); }
+    .charts-grid {
+      display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; margin-bottom: 16px;
+    }
+    .chart-wrap { min-height: 220px; }
+    .chart-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+    .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .chart-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+    .bar-row { display: grid; grid-template-columns: 88px 1fr 64px; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 12px; }
+    .bar-track { height: 10px; background: #e8ebed; border-radius: 999px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 999px; }
+    .month-bars { display: flex; align-items: flex-end; gap: 10px; height: 160px; padding-top: 8px; }
+    .month-bar {
+      flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0; height: 100%;
+    }
+    .month-bar .stem {
+      width: 100%; max-width: 36px; border-radius: 8px 8px 4px 4px; background: var(--brand-soft); min-height: 4px;
+      transition: height .25s ease;
+    }
+    .month-bar .lbl { font-size: 10px; color: var(--muted); text-align: center; line-height: 1.2; }
+    .month-bar .amt { font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; }
+    @media (max-width: 900px) {
+      .charts-grid { grid-template-columns: 1fr; }
+    }
     .col.st-new { background: var(--st-new-bg); }
     .col.st-new h3 { color: var(--st-new-fg); }
     .col.st-work { background: var(--st-work-bg); }
@@ -578,13 +612,23 @@
 
       const byStatus = useMemo(() => {
         const map = {};
-        STATUSES.forEach(s => { map[s] = { items: [], revenue: 0 }; });
+        STATUSES.forEach(s => { map[s] = { items: [], revenue: 0, profit: 0 }; });
         groups.forEach(g => {
-          if (!map[g.status]) map[g.status] = { items: [], revenue: 0 };
+          if (!map[g.status]) map[g.status] = { items: [], revenue: 0, profit: 0 };
           map[g.status].items.push(g);
           map[g.status].revenue += Number(g.revenue) || 0;
+          map[g.status].profit += Number(g.profit) || 0;
         });
         return map;
+      }, [groups]);
+
+      const grand = useMemo(() => {
+        let revenue = 0, profit = 0;
+        groups.forEach(g => {
+          revenue += Number(g.revenue) || 0;
+          profit += Number(g.profit) || 0;
+        });
+        return { revenue, profit, count: groups.length };
       }, [groups]);
 
       return (
@@ -605,6 +649,20 @@
           {loading && <div className="empty">Завантаження замовлень…</div>}
           {!loading && !groups.length && <div className="empty">Замовлень не знайдено</div>}
 
+          {!loading && groups.length > 0 && (
+            <div className="orders-totals">
+              <div className="ot-item">
+                <div className="ot-label">Замовлень</div>
+                <div className="ot-value">{grand.count}</div>
+              </div>
+              <div className="ot-item">
+                <div className="ot-label">Загальна сума замовлень</div>
+                <div className="ot-value">{money(grand.revenue)}</div>
+                <div className="ot-sub">Маржа: {money(grand.profit)}</div>
+              </div>
+            </div>
+          )}
+
           {!loading && view === "kanban" && (
             <div className="kanban">
               {STATUSES.map(s => (
@@ -615,6 +673,7 @@
                       <span>{byStatus[s].items.length}</span>
                     </div>
                     <div className="col-sum">{money(byStatus[s].revenue)}</div>
+                    <div className="col-margin">Маржа: {money(byStatus[s].profit)}</div>
                   </h3>
                   <div className="col-body">
                     {byStatus[s].items.map(g => (
@@ -622,6 +681,7 @@
                         <div className="num">{g.order_number}</div>
                         <div className="meta">{g.client}<br />{g.phone}<br />{g.city || "—"}</div>
                         <div className="money">{money(g.revenue)}</div>
+                        <div className="meta">Маржа: {money(g.profit)}</div>
                       </button>
                     ))}
                   </div>
@@ -658,6 +718,121 @@
       );
     }
 
+    function StatusBarsChart({ byStatus }) {
+      const max = Math.max(1, ...STATUSES.map(s => (byStatus && byStatus[s]) || 0));
+      const colors = {
+        "Нове": "var(--st-new-fg)",
+        "В роботі": "var(--st-work-fg)",
+        "Готове": "var(--st-ready-fg)",
+        "Відправлено": "var(--st-ship-fg)",
+        "Завершено": "var(--st-done-fg)",
+        "Скасовано": "var(--st-cancel-fg)",
+      };
+      return (
+        <div className="chart-wrap">
+          {STATUSES.map(s => {
+            const n = (byStatus && byStatus[s]) || 0;
+            const w = Math.round((n / max) * 100);
+            return (
+              <div className="bar-row" key={s}>
+                <div>{s}</div>
+                <div className="bar-track"><div className="bar-fill" style={{ width: w + "%", background: colors[s] }} /></div>
+                <div style={{ textAlign: "right", fontWeight: 700 }}>{n}</div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function MonthlyBarsChart({ monthly }) {
+      const rows = (monthly || []).slice().reverse();
+      const max = Math.max(1, ...rows.map(m => Number(m.revenue) || 0));
+      if (!rows.length) return <div className="empty">Немає помісячних даних</div>;
+      return (
+        <div className="chart-wrap">
+          <div className="month-bars">
+            {rows.map(m => {
+              const rev = Number(m.revenue) || 0;
+              const h = Math.max(4, Math.round((rev / max) * 120));
+              return (
+                <div className="month-bar" key={m.month}>
+                  <div className="amt">{rev ? (Math.round(rev / 1000) + "к") : "0"}</div>
+                  <div className="stem" style={{ height: h }} title={money(rev)} />
+                  <div className="lbl">{m.month}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="chart-legend" style={{ marginTop: 12 }}>
+            <span><span className="chart-swatch" style={{ background: "var(--brand-soft)" }} />Виручка по місяцях (тис. ₴)</span>
+          </div>
+        </div>
+      );
+    }
+
+    function MarginSplitChart({ received, debt, ready }) {
+      const a = Number(received) || 0;
+      const b = Number(debt) || 0;
+      const c = Math.max(0, (Number(ready) || 0) - a - b);
+      const total = a + b + (c > 0 ? c : 0) || 1;
+      const parts = [
+        { label: "Отримано", value: a, color: "#1b7a4a" },
+        { label: "До отримання", value: b, color: "#9a6700" },
+      ];
+      let angle = -90;
+      const slices = parts.filter(p => p.value > 0).map(p => {
+        const deg = (p.value / total) * 360;
+        const start = angle;
+        angle += deg;
+        return { ...p, start, deg };
+      });
+      const gradient = slices.length
+        ? slices.map(s => `${s.color} ${s.start}deg ${s.start + s.deg}deg`).join(", ")
+        : "#e8ebed 0deg 360deg";
+      return (
+        <div className="chart-wrap" style={{ display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{
+            width: 140, height: 140, borderRadius: "50%",
+            background: `conic-gradient(${gradient})`,
+            boxShadow: "inset 0 0 0 28px #fff",
+          }} />
+          <div className="chart-legend" style={{ flexDirection: "column", alignItems: "flex-start" }}>
+            {parts.map(p => (
+              <span key={p.label}>
+                <span className="chart-swatch" style={{ background: p.color }} />
+                {p.label}: <strong style={{ color: "var(--ink)" }}>{money(p.value)}</strong>
+              </span>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function FinanceBarsChart({ revenue, cost, profit, commission, expenses }) {
+      const items = [
+        { label: "Виручка", value: Number(revenue) || 0, color: "var(--brand)" },
+        { label: "Собівартість", value: Number(cost) || 0, color: "#6b7280" },
+        { label: "Маржа", value: Number(profit) || 0, color: "#1b7a4a" },
+        { label: "Комісії", value: Number(commission) || 0, color: "#8f7340" },
+        { label: "Витрати", value: Number(expenses) || 0, color: "#b42318" },
+      ];
+      const max = Math.max(1, ...items.map(i => Math.abs(i.value)));
+      return (
+        <div className="chart-wrap">
+          {items.map(i => (
+            <div className="bar-row" key={i.label}>
+              <div>{i.label}</div>
+              <div className="bar-track">
+                <div className="bar-fill" style={{ width: Math.round((Math.abs(i.value) / max) * 100) + "%", background: i.color }} />
+              </div>
+              <div style={{ textAlign: "right", fontWeight: 700, fontSize: 11 }}>{money(i.value)}</div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
     function DashboardView({ token }) {
       const [data, setData] = useState(null);
       const [error, setError] = useState("");
@@ -672,7 +847,11 @@
       return (
         <div>
           <div className="kpi-grid">
-            <div className="kpi"><div className="label">Виручка</div><div className="value">{money(t.revenue)}</div></div>
+            <div className="kpi">
+              <div className="label">Виручка</div>
+              <div className="value">{money(t.revenue)}</div>
+              <div className="sub">Маржа: {money(t.profit)}</div>
+            </div>
             <div className="kpi"><div className="label">Собівартість</div><div className="value">{money(t.cost)}</div></div>
             <div className="kpi"><div className="label">Валовий прибуток</div><div className="value">{money(t.profit)}</div></div>
             <div className="kpi"><div className="label">Маржа %</div><div className="value">{pct(t.margin_pct)}</div></div>
@@ -681,6 +860,32 @@
             <div className="kpi"><div className="label">Комісії + витрати</div><div className="value">{money((t.commission || 0) + (t.expenses || 0))}</div></div>
             <div className="kpi"><div className="label">Чистий факт</div><div className="value">{money(t.net_fact)}</div></div>
           </div>
+
+          <div className="charts-grid">
+            <div className="panel">
+              <h2>Виручка по місяцях</h2>
+              <MonthlyBarsChart monthly={data.monthly} />
+            </div>
+            <div className="panel">
+              <h2>Замовлення по статусах</h2>
+              <StatusBarsChart byStatus={t.by_status} />
+            </div>
+            <div className="panel">
+              <h2>Структура фінансів</h2>
+              <FinanceBarsChart
+                revenue={t.revenue}
+                cost={t.cost}
+                profit={t.profit}
+                commission={t.commission}
+                expenses={t.expenses}
+              />
+            </div>
+            <div className="panel">
+              <h2>Маржа: отримано / борг</h2>
+              <MarginSplitChart received={t.margin_received} debt={t.margin_debt} ready={t.margin_ready} />
+            </div>
+          </div>
+
           <div className="panel">
             <h2>По статусах</h2>
             <div className="toolbar">
