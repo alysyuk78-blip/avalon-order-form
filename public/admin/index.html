@@ -26,12 +26,13 @@
       --radius: 14px;
       /* Як на сайті Apple / системний стек macOS & iOS */
       --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
-      --st-new-bg: #fff6db; --st-new-fg: #856404; --st-new-bar: #e6b800;
-      --st-work-bg: #e8f1ff; --st-work-fg: #1d4f91; --st-work-bar: #3b82f6;
-      --st-ready-bg: #e6faf5; --st-ready-fg: #0f6b5c; --st-ready-bar: #14b8a6;
-      --st-ship-bg: #f3e8ff; --st-ship-fg: #6b21a8; --st-ship-bar: #a855f7;
-      --st-done-bg: #e6f6ed; --st-done-fg: #1b7a4a; --st-done-bar: #22c55e;
-      --st-cancel-bg: #f3f4f6; --st-cancel-fg: #6b7280; --st-cancel-bar: #9ca3af;
+      /* Бліді / напівпрозорі фони колонок воронки */
+      --st-new-bg: rgba(230, 184, 0, 0.14); --st-new-fg: #856404;
+      --st-work-bg: rgba(59, 130, 246, 0.12); --st-work-fg: #1d4f91;
+      --st-ready-bg: rgba(20, 184, 166, 0.12); --st-ready-fg: #0f6b5c;
+      --st-ship-bg: rgba(168, 85, 247, 0.12); --st-ship-fg: #6b21a8;
+      --st-done-bg: rgba(34, 197, 94, 0.12); --st-done-fg: #1b7a4a;
+      --st-cancel-bg: rgba(156, 163, 175, 0.16); --st-cancel-fg: #6b7280;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; min-height: 100%; }
@@ -105,37 +106,37 @@
       overflow-x: auto; padding-bottom: 8px;
     }
     .col {
-      background: rgba(255,255,255,0.7); border: 1px solid var(--line); border-radius: var(--radius);
+      background: rgba(255,255,255,0.55); border: 1px solid var(--line); border-radius: var(--radius);
       min-height: 280px; display: flex; flex-direction: column; overflow: hidden;
     }
     .col h3 {
       margin: 0; padding: 12px; font-size: 12px; letter-spacing: 0.06em;
       text-transform: uppercase; color: var(--muted);
       display: flex; flex-direction: column; gap: 4px;
+      background: transparent;
       border-bottom: 1px solid rgba(0,0,0,0.06);
     }
     .col h3 .col-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
     .col h3 .col-sum { font-size: 12px; font-weight: 750; letter-spacing: 0; text-transform: none; opacity: 0.95; }
     .col-body { padding: 8px; display: grid; gap: 8px; }
-    .col.st-new h3 { background: var(--st-new-bg); color: var(--st-new-fg); }
-    .col.st-work h3 { background: var(--st-work-bg); color: var(--st-work-fg); }
-    .col.st-ready h3 { background: var(--st-ready-bg); color: var(--st-ready-fg); }
-    .col.st-ship h3 { background: var(--st-ship-bg); color: var(--st-ship-fg); }
-    .col.st-done h3 { background: var(--st-done-bg); color: var(--st-done-fg); }
-    .col.st-cancel h3 { background: var(--st-cancel-bg); color: var(--st-cancel-fg); }
+    .col.st-new { background: var(--st-new-bg); border-color: rgba(230, 184, 0, 0.28); }
+    .col.st-new h3 { color: var(--st-new-fg); }
+    .col.st-work { background: var(--st-work-bg); border-color: rgba(59, 130, 246, 0.28); }
+    .col.st-work h3 { color: var(--st-work-fg); }
+    .col.st-ready { background: var(--st-ready-bg); border-color: rgba(20, 184, 166, 0.28); }
+    .col.st-ready h3 { color: var(--st-ready-fg); }
+    .col.st-ship { background: var(--st-ship-bg); border-color: rgba(168, 85, 247, 0.28); }
+    .col.st-ship h3 { color: var(--st-ship-fg); }
+    .col.st-done { background: var(--st-done-bg); border-color: rgba(34, 197, 94, 0.28); }
+    .col.st-done h3 { color: var(--st-done-fg); }
+    .col.st-cancel { background: var(--st-cancel-bg); border-color: rgba(156, 163, 175, 0.35); }
+    .col.st-cancel h3 { color: var(--st-cancel-fg); }
     .card {
       background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-      border-left: 4px solid var(--line);
       padding: 12px; box-shadow: var(--shadow); cursor: pointer; text-align: left;
       transition: transform .18s ease, box-shadow .18s ease;
     }
     .card:hover { transform: translateY(-2px); box-shadow: 0 14px 28px rgba(28,33,36,0.12); }
-    .card.st-new { border-left-color: var(--st-new-bar); }
-    .card.st-work { border-left-color: var(--st-work-bar); }
-    .card.st-ready { border-left-color: var(--st-ready-bar); }
-    .card.st-ship { border-left-color: var(--st-ship-bar); }
-    .card.st-done { border-left-color: var(--st-done-bar); }
-    .card.st-cancel { border-left-color: var(--st-cancel-bar); opacity: 0.85; }
     .card .num { font-weight: 750; font-size: 13px; }
     .card .meta { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.35; }
     .card .money { margin-top: 8px; font-weight: 700; font-size: 14px; color: var(--brand-soft); }
