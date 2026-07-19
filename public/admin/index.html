@@ -785,7 +785,7 @@
               <thead><tr><th>Дата</th><th>КОД</th><th>Назва</th><th>Сума</th><th>Спосіб</th><th>Примітка</th></tr></thead>
               <tbody>
                 {payouts.slice(0, 30).map(p => (
-                  <tr key={p.row}><td>{p.date}</td><td>{p.code}</td><td>{p.name}</td><td>{money(p.amount)}</td><td>{p.method}</td><td>{p.note}</td></tr>
+                  <tr key={p.row}><td>{formatDateShort(p.date)}</td><td>{p.code}</td><td>{p.name}</td><td>{money(p.amount)}</td><td>{p.method}</td><td>{p.note}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -837,7 +837,7 @@
             <thead><tr><th>Дата</th><th>Категорія</th><th>Опис</th><th>Сума</th><th>Примітка</th></tr></thead>
             <tbody>
               {expenses.map(ex => (
-                <tr key={ex.row}><td>{ex.date}</td><td>{ex.category}</td><td>{ex.description}</td><td>{money(ex.amount)}</td><td>{ex.note}</td></tr>
+                <tr key={ex.row}><td>{formatDateShort(ex.date)}</td><td>{ex.category}</td><td>{ex.description}</td><td>{money(ex.amount)}</td><td>{ex.note}</td></tr>
               ))}
             </tbody>
           </table>
