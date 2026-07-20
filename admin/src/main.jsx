@@ -581,9 +581,6 @@ import { createRoot } from 'react-dom/client';
                   {order.client}
                   {order.city ? <> · {order.city}</> : null}
                 </div>
-                <div style={{ marginTop: 6 }}>
-                  <ContactLinks order={order} stack />
-                </div>
               </div>
               <button className="btn ghost" onClick={onClose}>Закрити</button>
             </header>
