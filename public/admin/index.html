@@ -201,20 +201,41 @@
     .dual-tip { font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; line-height: 1.25; }
     .status-cols {
       display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px;
-      height: 180px; align-items: end;
+      height: 132px; align-items: end;
     }
     .status-col {
-      height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0;
+      height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; min-width: 0;
     }
     .status-col .count { font-size: 13px; font-weight: 750; color: var(--ink); }
     .status-col .stem {
-      width: 100%; max-width: 40px; border-radius: 8px 8px 4px 4px; min-height: 4px;
+      width: 100%; max-width: 36px; border-radius: 6px 6px 3px 3px; min-height: 3px;
       transition: height .28s ease;
     }
     .status-col .name {
       font-size: 10px; font-weight: 650; color: var(--muted); text-align: center;
-      line-height: 1.2; min-height: 2.4em;
+      line-height: 1.15; min-height: 2.2em;
     }
+    .status-list { display: none; gap: 8px; }
+    .status-row {
+      display: grid; grid-template-columns: minmax(72px, 0.9fr) 1fr auto;
+      gap: 10px; align-items: center; min-width: 0;
+    }
+    .status-row .name {
+      font-size: 12px; font-weight: 650; color: var(--ink); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .status-row .track {
+      height: 10px; border-radius: 999px; background: #e8ebed; overflow: hidden; min-width: 0;
+    }
+    .status-row .fill {
+      height: 100%; border-radius: 999px; min-width: 0; transition: width .28s ease;
+    }
+    .status-row .count {
+      font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums;
+      min-width: 1.5em; text-align: right;
+    }
+    .status-chart { min-height: 0; }
+    .status-chart .chart-legend { margin-top: 10px; }
     .stack-block { display: grid; gap: 14px; }
     .stack-bar {
       display: flex; height: 36px; border-radius: 10px; overflow: hidden; background: #e8ebed;
@@ -378,7 +399,8 @@
     }
     @media (max-width: 900px) {
       .charts-grid { grid-template-columns: 1fr; }
-      .status-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); height: auto; min-height: 200px; }
+      .status-cols { display: none; }
+      .status-list { display: grid; }
     }
     @media (max-width: 720px) {
       .desktop-only { display: none !important; }
@@ -481,8 +503,8 @@
       .quick-actions button { min-height: 40px; padding: 10px 14px; font-size: 13px; }
       .btn { min-height: 44px; padding: 12px 16px; }
       .field input, .field select, .field textarea { min-height: 44px; font-size: 16px; max-width: 100%; }
-      .status-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; min-height: 0; }
-      .status-col { min-height: 120px; }
+      .status-row { grid-template-columns: minmax(64px, 0.85fr) 1fr auto; gap: 8px; }
+      .status-row .track { height: 8px; }
       .donut-wrap {
         justify-content: center;
         flex-direction: column;
@@ -1349,11 +1371,11 @@
       const max = Math.max(1, ...STATUSES.map(s => (byStatus && byStatus[s]) || 0));
       const total = STATUSES.reduce((s, name) => s + ((byStatus && byStatus[name]) || 0), 0);
       return (
-        <div className="chart-wrap">
-          <div className="status-cols">
+        <div className="chart-wrap status-chart">
+          <div className="status-cols desktop-only">
             {STATUSES.map(s => {
               const n = (byStatus && byStatus[s]) || 0;
-              const h = n ? Math.max(8, Math.round((n / max) * 120)) : 4;
+              const h = n ? Math.max(8, Math.round((n / max) * 72)) : 3;
               return (
                 <div className="status-col" key={s}>
                   <div className="count">{n}</div>
@@ -1363,6 +1385,24 @@
                     opacity: n ? 1 : 0.55,
                   }} />
                   <div className="name">{s}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="status-list mobile-only">
+            {STATUSES.map(s => {
+              const n = (byStatus && byStatus[s]) || 0;
+              const pct = n ? Math.max(6, Math.round((n / max) * 100)) : 0;
+              return (
+                <div className="status-row" key={s}>
+                  <div className="name">{s}</div>
+                  <div className="track">
+                    <div className="fill" style={{
+                      width: pct + "%",
+                      background: n ? STATUS_CHART_COLORS[s] : "transparent",
+                    }} />
+                  </div>
+                  <div className="count">{n}</div>
                 </div>
               );
             })}
