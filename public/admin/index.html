@@ -376,6 +376,21 @@
     .empty { color: var(--muted); font-size: 14px; padding: 24px; text-align: center; }
     .alias { color: var(--muted); font-size: 12px; }
     .phone-key { font-variant-numeric: tabular-nums; font-weight: 650; }
+    .contact-links { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+    .contact-links--stack { display: grid; gap: 4px; justify-items: start; }
+    .contact-link {
+      color: var(--brand); font-weight: 650; text-decoration: none;
+      border-bottom: 1px solid rgba(56, 62, 66, 0.18);
+    }
+    .contact-link:hover { color: var(--ink); border-bottom-color: currentColor; }
+    .contact-muted { color: var(--muted); font-size: 12px; }
+    .quick-contact { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+    .quick-contact a {
+      display: inline-flex; align-items: center; gap: 6px;
+      border-radius: 10px; padding: 9px 12px; font-weight: 650; font-size: 13px;
+      background: #eef1f3; color: var(--ink); text-decoration: none;
+    }
+    .quick-contact a:hover { background: #e4e8ec; }
     .table-scroll {
       display: block;
       width: 100%;
@@ -772,6 +787,77 @@
       }
       return key;
     }
+    function telegramHandle(v) {
+      return String(v || "").trim().replace(/^https?:\/\/(?:www\.)?t\.me\//i, "").replace(/^@/, "").replace(/\?.*$/, "");
+    }
+    function telHref(phone) {
+      const d = normalizePhone(phone);
+      return d ? "tel:+" + d : "";
+    }
+    function resolveContactMethod(order) {
+      const allowed = ["phone", "telegram", "viber", "whatsapp", "email"];
+      const m = String(order?.contact_method || "").trim();
+      if (allowed.includes(m)) return m;
+      if (order?.contact_telegram) return "telegram";
+      if (order?.contact_email) return "email";
+      if (order?.phone) return "phone";
+      return "";
+    }
+    function buildContactActions(order) {
+      const method = resolveContactMethod(order);
+      const phone = String(order?.phone || "").trim();
+      const dial = telHref(phone);
+      const tg = telegramHandle(order?.contact_telegram);
+      const email = String(order?.contact_email || "").trim();
+      const actions = [];
+      const push = (href, label, external) => {
+        if (href && label) actions.push({ href, label, external: !!external });
+      };
+      if (method === "telegram" && tg) push("https://t.me/" + encodeURIComponent(tg), "@" + tg, true);
+      else if (method === "email" && email) push("mailto:" + email, email, false);
+      else if (method === "viber" && dial) push("viber://chat?number=%2B" + normalizePhone(phone), phone || "Viber", false);
+      else if (method === "whatsapp" && dial) push("https://wa.me/" + normalizePhone(phone), phone || "WhatsApp", true);
+      else if (dial) push(dial, phone || "Дзвінок", false);
+      if (dial && method && !["phone", "viber", "whatsapp"].includes(method)) {
+        push(dial, phone || "Телефон", false);
+      }
+      return actions;
+    }
+    function ContactLinks({ order, stack, onClickStop }) {
+      const actions = buildContactActions(order);
+      if (!actions.length) return <span className="contact-muted">—</span>;
+      const stop = onClickStop ? (e) => e.stopPropagation() : undefined;
+      const cls = "contact-links" + (stack ? " contact-links--stack" : "");
+      return (
+        <span className={cls} onClick={stop}>
+          {actions.map((a, i) => (
+            <a
+              key={a.href + i}
+              className="contact-link"
+              href={a.href}
+              target={a.external ? "_blank" : undefined}
+              rel={a.external ? "noopener noreferrer" : undefined}
+            >{a.label}</a>
+          ))}
+        </span>
+      );
+    }
+    function QuickContact({ order }) {
+      const actions = buildContactActions(order);
+      if (!actions.length) return null;
+      return (
+        <div className="quick-contact">
+          {actions.map((a, i) => (
+            <a
+              key={a.href + i}
+              href={a.href}
+              target={a.external ? "_blank" : undefined}
+              rel={a.external ? "noopener noreferrer" : undefined}
+            >{a.label}</a>
+          ))}
+        </div>
+      );
+    }
     /** Збирає довідник: 1 телефон → основне імʼя (з найранішого замовлення) + інші варіанти. */
     function buildClientsDirectory(groups) {
       const byPhone = {};
@@ -810,9 +896,16 @@
         c.names.sort((a, b) => String(a.first_seen).localeCompare(String(b.first_seen)));
         c.primary_name = c.names.length ? c.names[0].name : "Без імені";
         c.aliases = c.names.slice(1).map((n) => n.name);
+        c.phone = c.phone_display;
         c.orders_count = c.orders.length;
         c.orders.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
         c.last_order_at = c.orders.length ? c.orders[0].created_at : "";
+        const latest = c.orders[0];
+        if (latest) {
+          c.contact_method = latest.contact_method;
+          c.contact_telegram = latest.contact_telegram;
+          c.contact_email = latest.contact_email;
+        }
         c.cities = Array.from(new Set(c.orders.map((o) => o.city).filter(Boolean)));
         delete c.name_set;
         return c;
@@ -957,11 +1050,17 @@
               <div>
                 <h2>{orderNumber}</h2>
                 <div className="meta" style={{ color: "var(--muted)", marginTop: 4 }}>
-                  {order.client} · {order.phone} · {order.city || "—"}
+                  {order.client}
+                  {order.city ? <> · {order.city}</> : null}
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  <ContactLinks order={order} stack />
                 </div>
               </div>
               <button className="btn ghost" onClick={onClose}>Закрити</button>
             </header>
+
+            <QuickContact order={order} />
 
             <div className="section-title" style={{ marginTop: 0 }}>Швидкі дії</div>
             <div className="quick-actions">
@@ -1263,7 +1362,7 @@
                         }}
                       >
                         <div className="num">{g.order_number}</div>
-                        <div className="meta">{g.client}<br />{g.phone}<br />{g.city || "—"}</div>
+                        <div className="meta">{g.client}<br /><ContactLinks order={g} onClickStop /><br />{g.city || "—"}</div>
                         <div className="money">{money(g.revenue)}</div>
                         <div className="meta">Маржа: {money(g.profit)}</div>
                         <div className="drag-hint desktop-only">↗ перетягнути</div>
@@ -1294,7 +1393,7 @@
               {groups.map(g => (
                 <div key={g.order_number} className="row-card" onClick={() => setSelected(g.order_number)}>
                   <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
-                  <div>{g.client}<div style={{ color: "var(--muted)", fontSize: 12 }}>{g.phone}</div></div>
+                  <div>{g.client}<div style={{ marginTop: 4 }}><ContactLinks order={g} onClickStop /></div></div>
                   <div><StatusChip status={g.status} /></div>
                   <div>{money(g.revenue)}</div>
                   <div>{money(g.profit)}</div>
@@ -1372,7 +1471,7 @@
       const total = STATUSES.reduce((s, name) => s + ((byStatus && byStatus[name]) || 0), 0);
       return (
         <div className="chart-wrap status-chart">
-          <div className="status-cols desktop-only">
+          <div className="status-cols">
             {STATUSES.map(s => {
               const n = (byStatus && byStatus[s]) || 0;
               const h = n ? Math.max(8, Math.round((n / max) * 72)) : 3;
@@ -1389,7 +1488,7 @@
               );
             })}
           </div>
-          <div className="status-list mobile-only">
+          <div className="status-list">
             {STATUSES.map(s => {
               const n = (byStatus && byStatus[s]) || 0;
               const pct = n ? Math.max(6, Math.round((n / max) * 100)) : 0;
@@ -1912,7 +2011,9 @@
                 <tbody>
                   {filtered.map((c) => (
                     <tr key={c.phone_key} style={{ cursor: "pointer" }} onClick={() => setSelected(selected === c.phone_key ? null : c.phone_key)}>
-                      <td className="phone-key">{c.phone_display}</td>
+                      <td className="phone-key" onClick={(e) => e.stopPropagation()}>
+                        <ContactLinks order={c} />
+                      </td>
                       <td>
                         <strong>{c.primary_name}</strong>
                         {!!c.aliases.length && (
@@ -1935,9 +2036,9 @@
             if (!c) return null;
             return (
               <div className="panel">
-                <h2>Замовлення · {c.phone_display}</h2>
+                <h2>Замовлення · {c.primary_name}</h2>
                 <p style={{ marginTop: 0, color: "var(--muted)", fontSize: 13 }}>
-                  Основне: <strong style={{ color: "var(--ink)" }}>{c.primary_name}</strong>
+                  Контакт: <ContactLinks order={c} />
                   {!!c.aliases.length && <> · також: {c.aliases.join(" / ")}</>}
                 </p>
                 <div className="list">
