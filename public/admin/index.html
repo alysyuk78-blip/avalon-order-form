@@ -151,74 +151,65 @@
     .orders-totals .ot-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
     .orders-totals .ot-value { font-size: 18px; font-weight: 750; }
     .orders-totals .ot-sub { font-size: 13px; font-weight: 650; color: var(--brand-soft); }
-    .ot-info {
-      position: absolute; top: 10px; right: 10px;
+    .ot-info, .info-btn {
       width: 28px; height: 28px; border-radius: 999px; border: 0; outline: none;
       background: #eef1f3; color: var(--muted); font-size: 13px; font-weight: 750;
       display: grid; place-items: center; cursor: pointer; line-height: 1;
+      flex-shrink: 0;
     }
-    .ot-info[aria-expanded="true"] { background: var(--brand); color: #fff; }
-    .ot-tip {
-      position: absolute; top: 42px; right: 10px; z-index: 5;
-      width: min(260px, calc(100% - 20px));
+    .info-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+    .ot-info[aria-expanded="true"], .info-btn[aria-expanded="true"] { background: var(--brand); color: #fff; }
+    .ot-tip, .info-tip {
+      position: absolute; top: calc(100% + 8px); right: 0; z-index: 5;
+      width: min(280px, 70vw);
       background: #1c2124; color: #fff; border-radius: 10px;
       padding: 10px 12px; font-size: 12px; font-weight: 550; line-height: 1.4;
       box-shadow: 0 8px 24px rgba(0,0,0,0.18);
     }
-    .ot-tip::before {
+    .ot-tip::before, .info-tip::before {
       content: ""; position: absolute; top: -5px; right: 10px;
       width: 10px; height: 10px; background: #1c2124; transform: rotate(45deg);
     }
+    .panel-head {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+      margin-bottom: 12px; position: relative;
+    }
+    .panel-head h2 { margin: 0; font-size: 16px; overflow-wrap: anywhere; flex: 1; min-width: 0; }
     .kpi .sub { margin-top: 6px; font-size: 13px; font-weight: 650; color: var(--brand-soft); }
     .charts-grid {
       display: grid; grid-template-columns: 1.15fr 1fr; gap: 12px; margin-bottom: 16px;
       max-width: 100%; min-width: 0;
     }
-    .chart-wrap { min-height: 200px; max-width: 100%; min-width: 0; }
+    .chart-wrap { min-height: 0; max-width: 100%; min-width: 0; }
     .chart-legend {
-      display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 14px;
+      display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px;
       font-size: 12px; color: var(--muted);
     }
     .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
     .chart-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
     .dual-bars {
-      display: flex; align-items: flex-end; gap: 14px; height: 180px; padding: 4px 0 0;
+      display: flex; align-items: flex-end; gap: 10px; height: 140px; padding: 0;
+      width: 100%;
     }
     .dual-col {
-      flex: 1; min-width: 0; height: 100%;
-      display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 8px;
+      flex: 1 1 0; min-width: 48px; height: 100%;
+      display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px;
     }
     .dual-pair {
-      display: flex; align-items: flex-end; justify-content: center; gap: 4px;
-      width: 100%; height: 140px;
+      display: flex; align-items: flex-end; justify-content: center; gap: 5px;
+      width: 100%; height: 108px;
     }
     .dual-stem {
-      width: 42%; max-width: 28px; border-radius: 6px 6px 3px 3px; min-height: 3px;
+      width: 42%; max-width: 40px; border-radius: 6px 6px 3px 3px; min-height: 3px;
     }
     .dual-stem.rev { background: #526058; }
     .dual-stem.mar { background: #1b7a4a; }
     .dual-lbl { font-size: 11px; font-weight: 650; color: var(--muted); text-align: center; }
-    .dual-tip { font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; line-height: 1.25; }
-    .status-cols {
-      display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px;
-      height: 132px; align-items: end;
-    }
-    .status-col {
-      height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; min-width: 0;
-    }
-    .status-col .count { font-size: 13px; font-weight: 750; color: var(--ink); }
-    .status-col .stem {
-      width: 100%; max-width: 36px; border-radius: 6px 6px 3px 3px; min-height: 3px;
-      transition: height .28s ease;
-    }
-    .status-col .name {
-      font-size: 10px; font-weight: 650; color: var(--muted); text-align: center;
-      line-height: 1.15; min-height: 2.2em;
-    }
-    .status-list { display: none; gap: 8px; }
+    .dual-tip { font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; line-height: 1.2; }
+    .status-list { display: grid; gap: 7px; width: 100%; }
     .status-row {
-      display: grid; grid-template-columns: minmax(72px, 0.9fr) 1fr auto;
-      gap: 10px; align-items: center; min-width: 0;
+      display: grid; grid-template-columns: minmax(84px, 110px) 1fr auto;
+      gap: 10px; align-items: center; min-width: 0; width: 100%;
     }
     .status-row .name {
       font-size: 12px; font-weight: 650; color: var(--ink); white-space: nowrap;
@@ -234,29 +225,29 @@
       font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums;
       min-width: 1.5em; text-align: right;
     }
-    .status-chart { min-height: 0; }
-    .status-chart .chart-legend { margin-top: 10px; }
-    .stack-block { display: grid; gap: 14px; }
+    .status-chart { min-height: 0; width: 100%; }
+    .status-chart .chart-legend { margin-top: 8px; }
+    .stack-block { display: grid; gap: 12px; }
     .stack-bar {
-      display: flex; height: 36px; border-radius: 10px; overflow: hidden; background: #e8ebed;
+      display: flex; height: 28px; border-radius: 8px; overflow: hidden; background: #e8ebed;
     }
     .stack-seg {
       display: flex; align-items: center; justify-content: center;
       font-size: 11px; font-weight: 700; color: #fff; min-width: 0; padding: 0 6px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .stack-meta { display: grid; gap: 8px; }
+    .stack-meta { display: grid; gap: 6px; }
     .stack-row {
       display: grid; grid-template-columns: 14px 1fr auto; gap: 10px; align-items: center;
       font-size: 13px;
     }
     .stack-row .val { font-weight: 700; font-variant-numeric: tabular-nums; }
     .donut-wrap {
-      display: flex; gap: 20px; align-items: center; flex-wrap: wrap; min-height: 180px;
+      display: flex; gap: 16px; align-items: center; flex-wrap: wrap; min-height: 0;
       max-width: 100%; min-width: 0;
     }
     .donut {
-      position: relative; width: 148px; height: 148px; flex-shrink: 0;
+      position: relative; width: 120px; height: 120px; flex-shrink: 0;
     }
     .donut svg { width: 100%; height: 100%; transform: rotate(-90deg); }
     .donut-center {
@@ -342,7 +333,7 @@
     .panel {
       background: var(--panel); border: 0; border-radius: var(--radius);
       padding: 16px; box-shadow: var(--shadow); margin-bottom: 16px;
-      max-width: 100%; min-width: 0; overflow: hidden;
+      max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: visible;
     }
     .panel h2 { margin: 0 0 12px; font-size: 16px; overflow-wrap: anywhere; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -414,8 +405,6 @@
     }
     @media (max-width: 900px) {
       .charts-grid { grid-template-columns: 1fr; }
-      .status-cols { display: none; }
-      .status-list { display: grid; }
     }
     @media (max-width: 720px) {
       .desktop-only { display: none !important; }
@@ -966,6 +955,32 @@
       );
     }
 
+    function InfoTip({ text, desktopText, mobileText }) {
+      const [open, setOpen] = useState(false);
+      return (
+        <span className="info-wrap">
+          <button
+            type="button"
+            className="info-btn"
+            aria-label="Підказка"
+            aria-expanded={open}
+            title="Підказка"
+            onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
+          >i</button>
+          {open && (
+            <div className="info-tip" role="note" onClick={e => e.stopPropagation()}>
+              {text ? text : (
+                <>
+                  {desktopText && <span className="desktop-only">{desktopText}</span>}
+                  {mobileText && <span className="mobile-only">{mobileText}</span>}
+                </>
+              )}
+            </div>
+          )}
+        </span>
+      );
+    }
+
     function StatusChip({ status }) {
       return <span className={"badge " + statusClass(status)}>{status}</span>;
     }
@@ -1192,7 +1207,6 @@
       const [loading, setLoading] = useState(true);
       const [dragOver, setDragOver] = useState("");
       const [moving, setMoving] = useState("");
-      const [showHint, setShowHint] = useState(false);
       const dragOrderRef = useRef("");
       const skipClickRef = useRef(false);
 
@@ -1212,7 +1226,6 @@
       }
 
       useEffect(() => { load(); }, [token]);
-      useEffect(() => { setShowHint(false); }, [view]);
 
       async function moveToStatus(orderNumber, newStatus) {
         const current = groups.find(g => g.order_number === orderNumber);
@@ -1287,22 +1300,12 @@
                 <div className="ot-sub">Маржа: {money(grand.profit)}</div>
               </div>
               {view === "kanban" && (
-                <>
-                  <button
-                    type="button"
-                    className="ot-info"
-                    aria-label="Підказка"
-                    aria-expanded={showHint}
-                    title="Підказка"
-                    onClick={() => setShowHint(v => !v)}
-                  >i</button>
-                  {showHint && (
-                    <div className="ot-tip" role="note">
-                      <span className="desktop-only">Перетягніть картку в інший стовпчик, щоб змінити статус.</span>
-                      <span className="mobile-only">Гортайте стовпчики вбік. Статус змінюйте списком на картці.</span>
-                    </div>
-                  )}
-                </>
+                <div style={{ marginLeft: "auto", alignSelf: "flex-start" }}>
+                  <InfoTip
+                    desktopText="Перетягніть картку в інший стовпчик, щоб змінити статус."
+                    mobileText="Гортайте стовпчики вбік. Статус змінюйте списком на картці."
+                  />
+                </div>
               )}
             </div>
           )}
@@ -1365,7 +1368,6 @@
                         <div className="meta">{g.client}<br /><ContactLinks order={g} onClickStop /><br />{g.city || "—"}</div>
                         <div className="money">{money(g.revenue)}</div>
                         <div className="meta">Маржа: {money(g.profit)}</div>
-                        <div className="drag-hint desktop-only">↗ перетягнути</div>
                         <select
                           className="card-status mobile-only"
                           value={g.status}
@@ -1440,12 +1442,12 @@
       if (!rows.length) return <div className="empty">Немає помісячних даних</div>;
       return (
         <div className="chart-wrap">
-          <div className="dual-bars">
+          <div className="dual-bars" data-count={rows.length}>
             {rows.map(m => {
               const rev = Number(m.revenue) || 0;
               const mar = Number(m.profit) || 0;
-              const hRev = Math.max(3, Math.round((rev / max) * 130));
-              const hMar = Math.max(3, Math.round((mar / max) * 130));
+              const hRev = Math.max(3, Math.round((rev / max) * 100));
+              const hMar = Math.max(3, Math.round((mar / max) * 100));
               return (
                 <div className="dual-col" key={m.month} title={"Виручка " + money(rev) + " · Маржа " + money(mar)}>
                   <div className="dual-tip">{shortMoney(rev)}</div>
@@ -1471,23 +1473,6 @@
       const total = STATUSES.reduce((s, name) => s + ((byStatus && byStatus[name]) || 0), 0);
       return (
         <div className="chart-wrap status-chart">
-          <div className="status-cols">
-            {STATUSES.map(s => {
-              const n = (byStatus && byStatus[s]) || 0;
-              const h = n ? Math.max(8, Math.round((n / max) * 72)) : 3;
-              return (
-                <div className="status-col" key={s}>
-                  <div className="count">{n}</div>
-                  <div className="stem" style={{
-                    height: h,
-                    background: n ? STATUS_CHART_COLORS[s] : "#e5e8eb",
-                    opacity: n ? 1 : 0.55,
-                  }} />
-                  <div className="name">{s}</div>
-                </div>
-              );
-            })}
-          </div>
           <div className="status-list">
             {STATUSES.map(s => {
               const n = (byStatus && byStatus[s]) || 0;
@@ -1524,11 +1509,7 @@
       const marPct = Math.min(100 - costPct, Math.round((mar / base) * 1000) / 10);
       return (
         <div className="chart-wrap stack-block">
-          <div>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, fontWeight: 650 }}>
-              Склад виручки
-            </div>
-            <div className="stack-bar" title={"Виручка " + money(rev)}>
+          <div className="stack-bar" title={"Виручка " + money(rev)}>
               {cst > 0 && (
                 <div className="stack-seg" style={{ width: costPct + "%", background: "#6b7280" }}>
                   {costPct >= 18 ? "Собівартість" : ""}
@@ -1540,7 +1521,6 @@
                 </div>
               )}
               {rev <= 0 && <div className="stack-seg" style={{ width: "100%", background: "#d1d5db", color: "var(--muted)" }}>Немає даних</div>}
-            </div>
           </div>
           <div className="stack-meta">
             <div className="stack-row">
@@ -1739,15 +1719,24 @@
 
           <div className="charts-grid">
             <div className="panel">
-              <h2>Виручка і маржа по місяцях</h2>
+              <div className="panel-head">
+                <h2>Виручка і маржа по місяцях</h2>
+                <InfoTip text="Сірий стовпчик — виручка, зелений — маржа за місяць." />
+              </div>
               <MonthlyBarsChart monthly={monthly} />
             </div>
             <div className="panel">
-              <h2>Замовлення по статусах</h2>
+              <div className="panel-head">
+                <h2>Замовлення по статусах</h2>
+                <InfoTip text="Скільки замовлень у кожному статусі. Довша смужка — більше замовлень." />
+              </div>
               <StatusBarsChart byStatus={t.by_status} />
             </div>
             <div className="panel">
-              <h2>Структура фінансів</h2>
+              <div className="panel-head">
+                <h2>Структура фінансів</h2>
+                <InfoTip text="Як виручка ділиться на собівартість і маржу, плюс комісії та витрати." />
+              </div>
               <FinanceBarsChart
                 revenue={t.revenue}
                 cost={t.cost}
@@ -1757,7 +1746,10 @@
               />
             </div>
             <div className="panel">
-              <h2>Маржа: отримано / борг</h2>
+              <div className="panel-head">
+                <h2>Маржа: отримано / борг</h2>
+                <InfoTip text="Скільки маржі вже отримано і скільки ще має надійти від підрядника." />
+              </div>
               <MarginSplitChart received={t.margin_received} debt={t.margin_debt} />
             </div>
           </div>
@@ -1980,11 +1972,10 @@
       return (
         <div>
           <div className="panel" style={{ marginBottom: 16 }}>
-            <h2>Довідник клієнтів за телефоном</h2>
-            <p style={{ margin: "0 0 12px", color: "var(--muted)", fontSize: 14, lineHeight: 1.45 }}>
-              Один номер = один клієнт. Основне імʼя береться з найранішого замовлення;
-              інші написання імені показуються як другорядні (через « / »), щоб ловити дублі на кшталт «Іван» і «Іван Петренко».
-            </p>
+            <div className="panel-head">
+              <h2>Довідник клієнтів за телефоном</h2>
+              <InfoTip text="Один номер = один клієнт. Основне імʼя — з найранішого замовлення; інші написання — через « / », щоб ловити дублі." />
+            </div>
             <div className="toolbar" style={{ marginBottom: 0 }}>
               <input type="search" placeholder="Пошук: телефон або імʼя…" value={q} onChange={e => setQ(e.target.value)} />
               <button className="btn secondary" onClick={load}>Оновити</button>
