@@ -2,7 +2,7 @@
 <html lang="uk">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="robots" content="noindex, nofollow" />
   <title>Avalon CRM — кабінет</title>
   <link rel="icon" href="/images/logo-shield-outline.png" />
@@ -46,7 +46,12 @@
       border-style: none;
       outline: none;
     }
-    html, body { margin: 0; min-height: 100%; }
+    html, body {
+      margin: 0; min-height: 100%;
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+    #root { max-width: 100%; overflow-x: hidden; }
     body {
       font-family: var(--font) !important;
       color: var(--ink);
@@ -63,25 +68,26 @@
     }
     button, input, select, textarea { font: inherit; outline: none; border: 0; }
     button { cursor: pointer; }
-    .app { min-height: 100vh; display: flex; flex-direction: column; }
+    .app { min-height: 100vh; display: flex; flex-direction: column; max-width: 100%; overflow-x: hidden; }
     .top {
       position: sticky; top: 0; z-index: 20;
       display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
       padding: 14px 20px;
       background: rgba(255,255,255,0.92);
       backdrop-filter: blur(12px);
+      max-width: 100%;
     }
-    .brand { display: flex; align-items: center; gap: 10px; min-width: 180px; }
+    .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
     .brand img { height: 36px; width: auto; display: block; }
     .brand strong { display: block; font-size: 14px; letter-spacing: 0.04em; }
     .brand span { display: block; font-size: 11px; color: var(--muted); }
-    .nav { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+    .nav { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
     .nav button {
       border: 0; outline: none; background: transparent; color: var(--muted);
       padding: 8px 12px; border-radius: 999px; font-weight: 600; font-size: 13px;
     }
     .nav button.active { background: var(--brand); color: #fff; }
-    .top-actions { display: flex; gap: 8px; align-items: center; }
+    .top-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
     .btn {
       border: 0; outline: none; border-radius: 10px; padding: 10px 14px; font-weight: 650; font-size: 13px;
       background: var(--brand); color: #fff;
@@ -89,7 +95,10 @@
     .btn.secondary { background: #e8ebed; color: var(--ink); }
     .btn.ghost { background: #eef1f3; color: var(--muted); }
     .btn:disabled { opacity: 0.55; cursor: wait; }
-    .main { padding: 20px; flex: 1; width: min(1400px, 100%); margin: 0 auto; }
+    .main {
+      padding: 20px; flex: 1; width: 100%; max-width: 1400px; margin: 0 auto;
+      min-width: 0; box-sizing: border-box;
+    }
     .login-wrap {
       min-height: 100vh; display: grid; place-items: center; padding: 24px;
     }
@@ -117,7 +126,7 @@
     .view-toggle button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
     .kanban {
       display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 12px;
-      overflow-x: auto; padding-bottom: 8px;
+      overflow-x: auto; padding-bottom: 8px; max-width: 100%;
     }
     .col {
       background: rgba(255,255,255,0.45); border: 0; border-radius: var(--radius);
@@ -136,77 +145,109 @@
     .orders-totals {
       display: flex; flex-wrap: wrap; gap: 16px 28px; margin-bottom: 14px;
       background: var(--panel); border-radius: var(--radius); padding: 14px 16px;
-      box-shadow: var(--shadow);
+      box-shadow: var(--shadow); position: relative;
     }
     .orders-totals .ot-item { display: grid; gap: 2px; }
     .orders-totals .ot-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
     .orders-totals .ot-value { font-size: 18px; font-weight: 750; }
     .orders-totals .ot-sub { font-size: 13px; font-weight: 650; color: var(--brand-soft); }
+    .ot-info, .info-btn {
+      width: 28px; height: 28px; border-radius: 999px; border: 0; outline: none;
+      background: #eef1f3; color: var(--muted); font-size: 13px; font-weight: 750;
+      display: grid; place-items: center; cursor: pointer; line-height: 1;
+      flex-shrink: 0;
+    }
+    .info-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+    .ot-info[aria-expanded="true"], .info-btn[aria-expanded="true"] { background: var(--brand); color: #fff; }
+    .ot-tip, .info-tip {
+      position: absolute; top: calc(100% + 8px); right: 0; z-index: 5;
+      width: min(280px, 70vw);
+      background: #1c2124; color: #fff; border-radius: 10px;
+      padding: 10px 12px; font-size: 12px; font-weight: 550; line-height: 1.4;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    }
+    .ot-tip::before, .info-tip::before {
+      content: ""; position: absolute; top: -5px; right: 10px;
+      width: 10px; height: 10px; background: #1c2124; transform: rotate(45deg);
+    }
+    .panel-head {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+      margin-bottom: 12px; position: relative;
+    }
+    .panel-head h2 { margin: 0; font-size: 16px; overflow-wrap: anywhere; flex: 1; min-width: 0; }
     .kpi .sub { margin-top: 6px; font-size: 13px; font-weight: 650; color: var(--brand-soft); }
     .charts-grid {
       display: grid; grid-template-columns: 1.15fr 1fr; gap: 12px; margin-bottom: 16px;
+      max-width: 100%; min-width: 0;
     }
-    .chart-wrap { min-height: 200px; }
+    .chart-wrap { min-height: 0; max-width: 100%; min-width: 0; }
     .chart-legend {
-      display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 14px;
+      display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px;
       font-size: 12px; color: var(--muted);
     }
     .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
     .chart-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
     .dual-bars {
-      display: flex; align-items: flex-end; gap: 14px; height: 180px; padding: 4px 0 0;
+      display: flex; align-items: flex-end; gap: 10px; height: 140px; padding: 0;
+      width: 100%;
     }
     .dual-col {
-      flex: 1; min-width: 0; height: 100%;
-      display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 8px;
+      flex: 1 1 0; min-width: 48px; height: 100%;
+      display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px;
     }
     .dual-pair {
-      display: flex; align-items: flex-end; justify-content: center; gap: 4px;
-      width: 100%; height: 140px;
+      display: flex; align-items: flex-end; justify-content: center; gap: 5px;
+      width: 100%; height: 108px;
     }
     .dual-stem {
-      width: 42%; max-width: 28px; border-radius: 6px 6px 3px 3px; min-height: 3px;
+      width: 42%; max-width: 40px; border-radius: 6px 6px 3px 3px; min-height: 3px;
     }
     .dual-stem.rev { background: #526058; }
     .dual-stem.mar { background: #1b7a4a; }
     .dual-lbl { font-size: 11px; font-weight: 650; color: var(--muted); text-align: center; }
-    .dual-tip { font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; line-height: 1.25; }
-    .status-cols {
-      display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px;
-      height: 180px; align-items: end;
+    .dual-tip { font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; line-height: 1.2; }
+    .status-list { display: grid; gap: 7px; width: 100%; }
+    .status-row {
+      display: grid; grid-template-columns: minmax(84px, 110px) 1fr auto;
+      gap: 10px; align-items: center; min-width: 0; width: 100%;
     }
-    .status-col {
-      height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0;
+    .status-row .name {
+      font-size: 12px; font-weight: 650; color: var(--ink); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
     }
-    .status-col .count { font-size: 13px; font-weight: 750; color: var(--ink); }
-    .status-col .stem {
-      width: 100%; max-width: 40px; border-radius: 8px 8px 4px 4px; min-height: 4px;
-      transition: height .28s ease;
+    .status-row .track {
+      height: 10px; border-radius: 999px; background: #e8ebed; overflow: hidden; min-width: 0;
     }
-    .status-col .name {
-      font-size: 10px; font-weight: 650; color: var(--muted); text-align: center;
-      line-height: 1.2; min-height: 2.4em;
+    .status-row .fill {
+      height: 100%; border-radius: 999px; min-width: 0; transition: width .28s ease;
     }
-    .stack-block { display: grid; gap: 14px; }
+    .status-row .count {
+      font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums;
+      min-width: 1.5em; text-align: right;
+    }
+    .status-chart { min-height: 0; width: 100%; }
+    .status-chart .chart-legend { margin-top: 8px; }
+    .stack-block { display: grid; gap: 12px; }
     .stack-bar {
-      display: flex; height: 36px; border-radius: 10px; overflow: hidden; background: #e8ebed;
+      display: flex; height: 28px; border-radius: 8px; overflow: hidden; background: #e8ebed;
     }
     .stack-seg {
       display: flex; align-items: center; justify-content: center;
       font-size: 11px; font-weight: 700; color: #fff; min-width: 0; padding: 0 6px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .stack-meta { display: grid; gap: 8px; }
+    .stack-meta { display: grid; gap: 6px; }
     .stack-row {
       display: grid; grid-template-columns: 14px 1fr auto; gap: 10px; align-items: center;
       font-size: 13px;
     }
     .stack-row .val { font-weight: 700; font-variant-numeric: tabular-nums; }
     .donut-wrap {
-      display: flex; gap: 20px; align-items: center; flex-wrap: wrap; min-height: 180px;
+      display: flex; gap: 16px; align-items: center; flex-wrap: wrap; min-height: 0;
+      max-width: 100%; min-width: 0;
     }
     .donut {
-      position: relative; width: 148px; height: 148px; flex-shrink: 0;
+      position: relative; width: 120px; height: 120px; flex-shrink: 0;
     }
     .donut svg { width: 100%; height: 100%; transform: rotate(-90deg); }
     .donut-center {
@@ -215,12 +256,12 @@
     }
     .donut-center strong { display: block; font-size: 22px; font-weight: 750; letter-spacing: -0.02em; }
     .donut-center span { display: block; font-size: 11px; color: var(--muted); font-weight: 650; margin-top: 2px; }
-    .donut-stats { display: grid; gap: 10px; flex: 1; min-width: 140px; }
+    .donut-stats { display: grid; gap: 10px; flex: 1; min-width: 0; }
     .donut-stat {
-      background: #f3f5f6; border-radius: 10px; padding: 10px 12px;
+      background: #f3f5f6; border-radius: 10px; padding: 10px 12px; min-width: 0;
     }
     .donut-stat .lab { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-    .donut-stat .num { margin-top: 4px; font-size: 16px; font-weight: 750; }
+    .donut-stat .num { margin-top: 4px; font-size: 16px; font-weight: 750; overflow-wrap: anywhere; }
     .period-toggle { display: flex; gap: 4px; background: #e8ebed; padding: 4px; border-radius: 12px; flex-wrap: wrap; }
     .period-toggle button {
       border: 0; outline: none; background: transparent; padding: 8px 12px; border-radius: 8px;
@@ -254,10 +295,6 @@
     .remind-item .tag.debt { color: var(--warn); background: rgba(154, 103, 0, 0.12); }
     .remind-item .tag.stuck { color: var(--st-work-fg); background: var(--st-work-chip); }
     .remind-item .tag.ship { color: var(--st-ship-fg); background: var(--st-ship-chip); }
-    @media (max-width: 900px) {
-      .charts-grid { grid-template-columns: 1fr; }
-      .status-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); height: auto; min-height: 200px; }
-    }
     .col.st-new { background: var(--st-new-bg); }
     .col.st-new h3 { color: var(--st-new-fg); }
     .col.st-work { background: var(--st-work-bg); }
@@ -286,18 +323,19 @@
       border-radius: 12px; padding: 12px 14px; cursor: pointer;
     }
     .row-card:hover { background: #f7f8f9; }
-    .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; max-width: 100%; }
     .kpi {
       background: var(--panel); border: 0; border-radius: var(--radius);
-      padding: 16px; box-shadow: var(--shadow);
+      padding: 16px; box-shadow: var(--shadow); min-width: 0;
     }
     .kpi .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
-    .kpi .value { margin-top: 8px; font-size: 24px; font-weight: 750; letter-spacing: -0.02em; }
+    .kpi .value { margin-top: 8px; font-size: 24px; font-weight: 750; letter-spacing: -0.02em; overflow-wrap: anywhere; }
     .panel {
       background: var(--panel); border: 0; border-radius: var(--radius);
       padding: 16px; box-shadow: var(--shadow); margin-bottom: 16px;
+      max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: visible;
     }
-    .panel h2 { margin: 0 0 12px; font-size: 16px; }
+    .panel h2 { margin: 0 0 12px; font-size: 16px; overflow-wrap: anywhere; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { text-align: left; padding: 10px 8px; border: 0; vertical-align: top; }
     tr:nth-child(even) td { background: rgba(28,33,36,0.03); }
@@ -329,15 +367,168 @@
     .empty { color: var(--muted); font-size: 14px; padding: 24px; text-align: center; }
     .alias { color: var(--muted); font-size: 12px; }
     .phone-key { font-variant-numeric: tabular-nums; font-weight: 650; }
+    .contact-links { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+    .contact-links--stack { display: grid; gap: 4px; justify-items: start; }
+    .contact-link {
+      color: var(--brand); font-weight: 650; text-decoration: none;
+      border-bottom: 1px solid rgba(56, 62, 66, 0.18);
+    }
+    .contact-link:hover { color: var(--ink); border-bottom-color: currentColor; }
+    .contact-muted { color: var(--muted); font-size: 12px; }
+    .quick-contact { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+    .quick-contact a {
+      display: inline-flex; align-items: center; gap: 6px;
+      border-radius: 10px; padding: 9px 12px; font-weight: 650; font-size: 13px;
+      background: #eef1f3; color: var(--ink); text-decoration: none;
+    }
+    .quick-contact a:hover { background: #e4e8ec; }
+    .table-scroll {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: contain;
+    }
+    .table-scroll table { min-width: 560px; }
+    .card-status {
+      margin-top: 8px; width: 100%; border: 0; outline: none; border-radius: 8px;
+      padding: 8px 10px; background: #eef1f3; color: var(--ink); font-size: 12px; font-weight: 650;
+      min-height: 40px;
+    }
+    .desktop-only { display: initial; }
+    .mobile-only { display: none; }
     @media (max-width: 1100px) {
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .row-card { grid-template-columns: 1fr 1fr; }
       .kanban { grid-template-columns: repeat(3, minmax(200px, 1fr)); }
     }
+    @media (max-width: 900px) {
+      .charts-grid { grid-template-columns: 1fr; }
+    }
     @media (max-width: 720px) {
+      .desktop-only { display: none !important; }
+      .mobile-only { display: block !important; }
+      body { padding-bottom: env(safe-area-inset-bottom, 0); }
+      .top {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+          "brand actions"
+          "nav nav";
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        padding-top: max(10px, env(safe-area-inset-top, 0px));
+      }
+      .brand { grid-area: brand; min-width: 0; }
+      .brand img { height: 30px; }
+      .brand strong { font-size: 13px; }
+      .brand span { font-size: 10px; }
+      .top-actions { grid-area: actions; gap: 6px; }
+      .top-actions .btn { padding: 9px 11px; font-size: 12px; white-space: nowrap; }
+      .nav {
+        grid-area: nav;
+        order: unset;
+        flex: none;
+        width: 100%;
+        max-width: 100%;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        gap: 6px;
+        padding-bottom: 2px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+      .nav::-webkit-scrollbar { display: none; }
+      .nav button {
+        flex: 0 0 auto; padding: 10px 14px; font-size: 13px;
+        background: #eef1f3; color: var(--ink);
+      }
+      .nav button.active { background: var(--brand); color: #fff; }
+      .main {
+        padding: 12px;
+        padding-bottom: 28px;
+        width: 100%;
+        max-width: 100%;
+      }
+      .toolbar { gap: 8px; align-items: stretch; max-width: 100%; }
+      .toolbar input[type="search"], .toolbar select {
+        min-width: 0; width: 100%; flex: 1 1 100%;
+        min-height: 44px; font-size: 16px;
+      }
+      .view-toggle, .period-toggle { width: 100%; max-width: 100%; }
+      .view-toggle button, .period-toggle button {
+        flex: 1; min-height: 40px; padding: 10px 8px;
+      }
+      .orders-totals { gap: 12px 16px; padding: 12px; max-width: 100%; }
+      .orders-totals .ot-value { font-size: 16px; overflow-wrap: anywhere; }
+      .kanban {
+        display: flex; gap: 10px;
+        overflow-x: auto; scroll-snap-type: x mandatory;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 12px;
+        margin: 0;
+        max-width: 100%;
+      }
+      .kanban .col {
+        flex: 0 0 min(82vw, 300px);
+        width: min(82vw, 300px);
+        min-height: 240px; max-height: none;
+        scroll-snap-align: start;
+      }
+      .col-body { max-height: 58vh; overflow-y: auto; }
+      .card { padding: 14px; max-width: 100%; }
+      .card:hover { transform: none; }
+      .card .drag-hint { display: none; }
+      .list { gap: 10px; max-width: 100%; }
+      .row-card {
+        grid-template-columns: 1fr;
+        gap: 6px; padding: 14px;
+        max-width: 100%;
+      }
       .grid2 { grid-template-columns: 1fr; }
-      .kpi-grid { grid-template-columns: 1fr; }
-      .main { padding: 14px; }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .kpi { padding: 12px; }
+      .kpi .value { font-size: 18px; margin-top: 6px; }
+      .kpi .label { font-size: 10px; }
+      .panel { padding: 14px; margin-bottom: 12px; }
+      .panel h2 { font-size: 15px; }
+      .drawer-backdrop { align-items: stretch; }
+      .drawer {
+        width: 100%; max-width: 100%;
+        padding: 16px;
+        padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
+        border-radius: 0; animation: slideUp .22s ease;
+        box-shadow: none;
+      }
+      @keyframes slideUp { from { transform: translateY(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+      .drawer header { position: sticky; top: 0; background: #fff; padding-bottom: 10px; z-index: 2; }
+      .quick-actions button { min-height: 40px; padding: 10px 14px; font-size: 13px; }
+      .btn { min-height: 44px; padding: 12px 16px; }
+      .field input, .field select, .field textarea { min-height: 44px; font-size: 16px; max-width: 100%; }
+      .status-row { grid-template-columns: minmax(64px, 0.85fr) 1fr auto; gap: 8px; }
+      .status-row .track { height: 8px; }
+      .donut-wrap {
+        justify-content: center;
+        flex-direction: column;
+        align-items: stretch;
+        max-width: 100%;
+      }
+      .donut { width: min(148px, 42vw); height: min(148px, 42vw); margin: 0 auto; }
+      .donut-stats { width: 100%; }
+      .remind-item { grid-template-columns: 1fr; gap: 8px; max-width: 100%; }
+      table { min-width: 0; }
+      .login-card { padding: 22px 18px; border-radius: 16px; max-width: 100%; }
+      .login-card h1 { font-size: 22px; }
+      .table-scroll table { min-width: 520px; }
+      th, td { padding: 8px 6px; }
+    }
+    @media (max-width: 420px) {
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .kanban .col { flex-basis: 86vw; width: 86vw; }
+      .brand span { display: none; }
+      .top-actions .btn.ghost { display: none; }
     }
   </style>
 </head>
@@ -585,6 +776,77 @@
       }
       return key;
     }
+    function telegramHandle(v) {
+      return String(v || "").trim().replace(/^https?:\/\/(?:www\.)?t\.me\//i, "").replace(/^@/, "").replace(/\?.*$/, "");
+    }
+    function telHref(phone) {
+      const d = normalizePhone(phone);
+      return d ? "tel:+" + d : "";
+    }
+    function resolveContactMethod(order) {
+      const allowed = ["phone", "telegram", "viber", "whatsapp", "email"];
+      const m = String(order?.contact_method || "").trim();
+      if (allowed.includes(m)) return m;
+      if (order?.contact_telegram) return "telegram";
+      if (order?.contact_email) return "email";
+      if (order?.phone) return "phone";
+      return "";
+    }
+    function buildContactActions(order) {
+      const method = resolveContactMethod(order);
+      const phone = String(order?.phone || "").trim();
+      const dial = telHref(phone);
+      const tg = telegramHandle(order?.contact_telegram);
+      const email = String(order?.contact_email || "").trim();
+      const actions = [];
+      const push = (href, label, external) => {
+        if (href && label) actions.push({ href, label, external: !!external });
+      };
+      if (method === "telegram" && tg) push("https://t.me/" + encodeURIComponent(tg), "@" + tg, true);
+      else if (method === "email" && email) push("mailto:" + email, email, false);
+      else if (method === "viber" && dial) push("viber://chat?number=%2B" + normalizePhone(phone), phone || "Viber", false);
+      else if (method === "whatsapp" && dial) push("https://wa.me/" + normalizePhone(phone), phone || "WhatsApp", true);
+      else if (dial) push(dial, phone || "Дзвінок", false);
+      if (dial && method && !["phone", "viber", "whatsapp"].includes(method)) {
+        push(dial, phone || "Телефон", false);
+      }
+      return actions;
+    }
+    function ContactLinks({ order, stack, onClickStop }) {
+      const actions = buildContactActions(order);
+      if (!actions.length) return <span className="contact-muted">—</span>;
+      const stop = onClickStop ? (e) => e.stopPropagation() : undefined;
+      const cls = "contact-links" + (stack ? " contact-links--stack" : "");
+      return (
+        <span className={cls} onClick={stop}>
+          {actions.map((a, i) => (
+            <a
+              key={a.href + i}
+              className="contact-link"
+              href={a.href}
+              target={a.external ? "_blank" : undefined}
+              rel={a.external ? "noopener noreferrer" : undefined}
+            >{a.label}</a>
+          ))}
+        </span>
+      );
+    }
+    function QuickContact({ order }) {
+      const actions = buildContactActions(order);
+      if (!actions.length) return null;
+      return (
+        <div className="quick-contact">
+          {actions.map((a, i) => (
+            <a
+              key={a.href + i}
+              href={a.href}
+              target={a.external ? "_blank" : undefined}
+              rel={a.external ? "noopener noreferrer" : undefined}
+            >{a.label}</a>
+          ))}
+        </div>
+      );
+    }
     /** Збирає довідник: 1 телефон → основне імʼя (з найранішого замовлення) + інші варіанти. */
     function buildClientsDirectory(groups) {
       const byPhone = {};
@@ -623,9 +885,16 @@
         c.names.sort((a, b) => String(a.first_seen).localeCompare(String(b.first_seen)));
         c.primary_name = c.names.length ? c.names[0].name : "Без імені";
         c.aliases = c.names.slice(1).map((n) => n.name);
+        c.phone = c.phone_display;
         c.orders_count = c.orders.length;
         c.orders.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
         c.last_order_at = c.orders.length ? c.orders[0].created_at : "";
+        const latest = c.orders[0];
+        if (latest) {
+          c.contact_method = latest.contact_method;
+          c.contact_telegram = latest.contact_telegram;
+          c.contact_email = latest.contact_email;
+        }
         c.cities = Array.from(new Set(c.orders.map((o) => o.city).filter(Boolean)));
         delete c.name_set;
         return c;
@@ -683,6 +952,32 @@
             </button>
           </form>
         </div>
+      );
+    }
+
+    function InfoTip({ text, desktopText, mobileText }) {
+      const [open, setOpen] = useState(false);
+      return (
+        <span className="info-wrap">
+          <button
+            type="button"
+            className="info-btn"
+            aria-label="Підказка"
+            aria-expanded={open}
+            title="Підказка"
+            onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
+          >i</button>
+          {open && (
+            <div className="info-tip" role="note" onClick={e => e.stopPropagation()}>
+              {text ? text : (
+                <>
+                  {desktopText && <span className="desktop-only">{desktopText}</span>}
+                  {mobileText && <span className="mobile-only">{mobileText}</span>}
+                </>
+              )}
+            </div>
+          )}
+        </span>
       );
     }
 
@@ -770,11 +1065,17 @@
               <div>
                 <h2>{orderNumber}</h2>
                 <div className="meta" style={{ color: "var(--muted)", marginTop: 4 }}>
-                  {order.client} · {order.phone} · {order.city || "—"}
+                  {order.client}
+                  {order.city ? <> · {order.city}</> : null}
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  <ContactLinks order={order} stack />
                 </div>
               </div>
               <button className="btn ghost" onClick={onClose}>Закрити</button>
             </header>
+
+            <QuickContact order={order} />
 
             <div className="section-title" style={{ marginTop: 0 }}>Швидкі дії</div>
             <div className="quick-actions">
@@ -999,9 +1300,11 @@
                 <div className="ot-sub">Маржа: {money(grand.profit)}</div>
               </div>
               {view === "kanban" && (
-                <div className="ot-item">
-                  <div className="ot-label">Підказка</div>
-                  <div className="ot-sub">Перетягніть картку в інший стовпчик, щоб змінити статус</div>
+                <div style={{ marginLeft: "auto", alignSelf: "flex-start" }}>
+                  <InfoTip
+                    desktopText="Перетягніть картку в інший стовпчик, щоб змінити статус."
+                    mobileText="Гортайте стовпчики вбік. Статус змінюйте списком на картці."
+                  />
                 </div>
               )}
             </div>
@@ -1032,9 +1335,10 @@
                   </h3>
                   <div className={"col-body" + (dragOver === s ? " drag-over" : "")}>
                     {byStatus[s].items.map(g => (
-                      <button
+                      <div
                         key={g.order_number}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         draggable
                         className={"card " + statusClass(g.status) + (moving === g.order_number ? " dragging" : "")}
                         onDragStart={e => {
@@ -1049,17 +1353,36 @@
                           skipClickRef.current = true;
                           setTimeout(() => { skipClickRef.current = false; }, 120);
                         }}
+                        onKeyDown={e => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelected(g.order_number);
+                          }
+                        }}
                         onClick={() => {
                           if (skipClickRef.current || moving) return;
                           setSelected(g.order_number);
                         }}
                       >
                         <div className="num">{g.order_number}</div>
-                        <div className="meta">{g.client}<br />{g.phone}<br />{g.city || "—"}</div>
+                        <div className="meta">{g.client}<br /><ContactLinks order={g} onClickStop /><br />{g.city || "—"}</div>
                         <div className="money">{money(g.revenue)}</div>
                         <div className="meta">Маржа: {money(g.profit)}</div>
-                        <div className="drag-hint">↗ перетягнути</div>
-                      </button>
+                        <select
+                          className="card-status mobile-only"
+                          value={g.status}
+                          disabled={moving === g.order_number}
+                          onClick={e => e.stopPropagation()}
+                          onMouseDown={e => e.stopPropagation()}
+                          onTouchStart={e => e.stopPropagation()}
+                          onChange={e => {
+                            e.stopPropagation();
+                            moveToStatus(g.order_number, e.target.value);
+                          }}
+                        >
+                          {STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
+                        </select>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -1072,7 +1395,7 @@
               {groups.map(g => (
                 <div key={g.order_number} className="row-card" onClick={() => setSelected(g.order_number)}>
                   <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
-                  <div>{g.client}<div style={{ color: "var(--muted)", fontSize: 12 }}>{g.phone}</div></div>
+                  <div>{g.client}<div style={{ marginTop: 4 }}><ContactLinks order={g} onClickStop /></div></div>
                   <div><StatusChip status={g.status} /></div>
                   <div>{money(g.revenue)}</div>
                   <div>{money(g.profit)}</div>
@@ -1119,12 +1442,12 @@
       if (!rows.length) return <div className="empty">Немає помісячних даних</div>;
       return (
         <div className="chart-wrap">
-          <div className="dual-bars">
+          <div className="dual-bars" data-count={rows.length}>
             {rows.map(m => {
               const rev = Number(m.revenue) || 0;
               const mar = Number(m.profit) || 0;
-              const hRev = Math.max(3, Math.round((rev / max) * 130));
-              const hMar = Math.max(3, Math.round((mar / max) * 130));
+              const hRev = Math.max(3, Math.round((rev / max) * 100));
+              const hMar = Math.max(3, Math.round((mar / max) * 100));
               return (
                 <div className="dual-col" key={m.month} title={"Виручка " + money(rev) + " · Маржа " + money(mar)}>
                   <div className="dual-tip">{shortMoney(rev)}</div>
@@ -1149,20 +1472,21 @@
       const max = Math.max(1, ...STATUSES.map(s => (byStatus && byStatus[s]) || 0));
       const total = STATUSES.reduce((s, name) => s + ((byStatus && byStatus[name]) || 0), 0);
       return (
-        <div className="chart-wrap">
-          <div className="status-cols">
+        <div className="chart-wrap status-chart">
+          <div className="status-list">
             {STATUSES.map(s => {
               const n = (byStatus && byStatus[s]) || 0;
-              const h = n ? Math.max(8, Math.round((n / max) * 120)) : 4;
+              const pct = n ? Math.max(6, Math.round((n / max) * 100)) : 0;
               return (
-                <div className="status-col" key={s}>
-                  <div className="count">{n}</div>
-                  <div className="stem" style={{
-                    height: h,
-                    background: n ? STATUS_CHART_COLORS[s] : "#e5e8eb",
-                    opacity: n ? 1 : 0.55,
-                  }} />
+                <div className="status-row" key={s}>
                   <div className="name">{s}</div>
+                  <div className="track">
+                    <div className="fill" style={{
+                      width: pct + "%",
+                      background: n ? STATUS_CHART_COLORS[s] : "transparent",
+                    }} />
+                  </div>
+                  <div className="count">{n}</div>
                 </div>
               );
             })}
@@ -1185,11 +1509,7 @@
       const marPct = Math.min(100 - costPct, Math.round((mar / base) * 1000) / 10);
       return (
         <div className="chart-wrap stack-block">
-          <div>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, fontWeight: 650 }}>
-              Склад виручки
-            </div>
-            <div className="stack-bar" title={"Виручка " + money(rev)}>
+          <div className="stack-bar" title={"Виручка " + money(rev)}>
               {cst > 0 && (
                 <div className="stack-seg" style={{ width: costPct + "%", background: "#6b7280" }}>
                   {costPct >= 18 ? "Собівартість" : ""}
@@ -1201,7 +1521,6 @@
                 </div>
               )}
               {rev <= 0 && <div className="stack-seg" style={{ width: "100%", background: "#d1d5db", color: "var(--muted)" }}>Немає даних</div>}
-            </div>
           </div>
           <div className="stack-meta">
             <div className="stack-row">
@@ -1400,15 +1719,24 @@
 
           <div className="charts-grid">
             <div className="panel">
-              <h2>Виручка і маржа по місяцях</h2>
+              <div className="panel-head">
+                <h2>Виручка і маржа по місяцях</h2>
+                <InfoTip text="Сірий стовпчик — виручка, зелений — маржа за місяць." />
+              </div>
               <MonthlyBarsChart monthly={monthly} />
             </div>
             <div className="panel">
-              <h2>Замовлення по статусах</h2>
+              <div className="panel-head">
+                <h2>Замовлення по статусах</h2>
+                <InfoTip text="Скільки замовлень у кожному статусі. Довша смужка — більше замовлень." />
+              </div>
               <StatusBarsChart byStatus={t.by_status} />
             </div>
             <div className="panel">
-              <h2>Структура фінансів</h2>
+              <div className="panel-head">
+                <h2>Структура фінансів</h2>
+                <InfoTip text="Як виручка ділиться на собівартість і маржу, плюс комісії та витрати." />
+              </div>
               <FinanceBarsChart
                 revenue={t.revenue}
                 cost={t.cost}
@@ -1418,13 +1746,17 @@
               />
             </div>
             <div className="panel">
-              <h2>Маржа: отримано / борг</h2>
+              <div className="panel-head">
+                <h2>Маржа: отримано / борг</h2>
+                <InfoTip text="Скільки маржі вже отримано і скільки ще має надійти від підрядника." />
+              </div>
               <MarginSplitChart received={t.margin_received} debt={t.margin_debt} />
             </div>
           </div>
 
           <div className="panel">
             <h2>Помісячно</h2>
+            <div className="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -1449,6 +1781,7 @@
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           {selected && (
@@ -1499,6 +1832,7 @@
                 await load();
               } catch (e) { setError(e.message); }
             }}>Зберегти партнера</button>
+            <div className="table-scroll">
             <table style={{ marginTop: 16 }}>
               <thead><tr><th>КОД</th><th>Назва</th><th>Ставка</th><th>Продано</th><th>Нараховано</th><th>Виплачено</th><th>Залишок</th></tr></thead>
               <tbody>
@@ -1510,6 +1844,7 @@
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           <div className="panel">
@@ -1532,6 +1867,7 @@
                 await load();
               } catch (e) { setError(e.message); }
             }}>Записати виплату</button>
+            <div className="table-scroll">
             <table style={{ marginTop: 16 }}>
               <thead><tr><th>Дата</th><th>КОД</th><th>Назва</th><th>Сума</th><th>Спосіб</th><th>Примітка</th></tr></thead>
               <tbody>
@@ -1540,6 +1876,7 @@
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       );
@@ -1584,6 +1921,7 @@
               await load();
             } catch (e) { setError(e.message); }
           }}>Додати витрату</button>
+          <div className="table-scroll">
           <table style={{ marginTop: 16 }}>
             <thead><tr><th>Дата</th><th>Категорія</th><th>Опис</th><th>Сума</th><th>Примітка</th></tr></thead>
             <tbody>
@@ -1592,6 +1930,7 @@
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       );
     }
@@ -1633,11 +1972,10 @@
       return (
         <div>
           <div className="panel" style={{ marginBottom: 16 }}>
-            <h2>Довідник клієнтів за телефоном</h2>
-            <p style={{ margin: "0 0 12px", color: "var(--muted)", fontSize: 14, lineHeight: 1.45 }}>
-              Один номер = один клієнт. Основне імʼя береться з найранішого замовлення;
-              інші написання імені показуються як другорядні (через « / »), щоб ловити дублі на кшталт «Іван» і «Іван Петренко».
-            </p>
+            <div className="panel-head">
+              <h2>Довідник клієнтів за телефоном</h2>
+              <InfoTip text="Один номер = один клієнт. Основне імʼя — з найранішого замовлення; інші написання — через « / », щоб ловити дублі." />
+            </div>
             <div className="toolbar" style={{ marginBottom: 0 }}>
               <input type="search" placeholder="Пошук: телефон або імʼя…" value={q} onChange={e => setQ(e.target.value)} />
               <button className="btn secondary" onClick={load}>Оновити</button>
@@ -1649,6 +1987,7 @@
           {!loading && !filtered.length && <div className="empty">Клієнтів не знайдено</div>}
           {!loading && !!filtered.length && (
             <div className="panel">
+              <div className="table-scroll">
               <table>
                 <thead>
                   <tr>
@@ -1663,7 +2002,9 @@
                 <tbody>
                   {filtered.map((c) => (
                     <tr key={c.phone_key} style={{ cursor: "pointer" }} onClick={() => setSelected(selected === c.phone_key ? null : c.phone_key)}>
-                      <td className="phone-key">{c.phone_display}</td>
+                      <td className="phone-key" onClick={(e) => e.stopPropagation()}>
+                        <ContactLinks order={c} />
+                      </td>
                       <td>
                         <strong>{c.primary_name}</strong>
                         {!!c.aliases.length && (
@@ -1678,6 +2019,7 @@
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
           {selected && (() => {
@@ -1685,9 +2027,9 @@
             if (!c) return null;
             return (
               <div className="panel">
-                <h2>Замовлення · {c.phone_display}</h2>
+                <h2>Замовлення · {c.primary_name}</h2>
                 <p style={{ marginTop: 0, color: "var(--muted)", fontSize: 13 }}>
-                  Основне: <strong style={{ color: "var(--ink)" }}>{c.primary_name}</strong>
+                  Контакт: <ContactLinks order={c} />
                   {!!c.aliases.length && <> · також: {c.aliases.join(" / ")}</>}
                 </p>
                 <div className="list">

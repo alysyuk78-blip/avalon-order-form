@@ -101,6 +101,13 @@ function doPost(e) {
       if (patternFileInfo && patternFileInfo.name) {
         notes = [notes, "Файл візерунку: " + patternFileInfo.name + " (надіслано власнику в Telegram; підряднику переслати вручну)"].filter(function (x) { return x; }).join("\n");
       }
+      var cm = String(data.contact_method || "phone");
+      var contactNote = "";
+      if (cm === "telegram" && data.contact_telegram) contactNote = "Telegram: @" + String(data.contact_telegram).replace(/^@/, "");
+      else if (cm === "email" && data.contact_email) contactNote = "E-mail: " + String(data.contact_email).trim();
+      else if (cm === "viber" && data.phone) contactNote = "Viber: " + data.phone;
+      else if (cm === "whatsapp" && data.phone) contactNote = "WhatsApp: " + data.phone;
+      if (contactNote) notes = [notes, contactNote].filter(function (x) { return x; }).join("\n");
 
       var row = [
         data.order_number || "", dateStr, "Нове", data.referral_source || "direct",   // A-D №,Дата,Статус,Джерело
@@ -118,6 +125,12 @@ function doPost(e) {
         data.how_found || (data.how_found_custom || ""), notes                         // AE-AF
       ];
       lastRow = appendOrderRow_(sheet, row);
+      ensureContactColumns_(sheet);
+      sheet.getRange(lastRow, 38, 1, 3).setValues([[
+        cm,
+        cm === "telegram" ? String(data.contact_telegram || "").replace(/^@/, "") : "",
+        cm === "email" ? String(data.contact_email || "").trim() : ""
+      ]]);
       var rr = sheet.getRange(lastRow, 1, 1, row.length);
       rr.setVerticalAlignment("middle").setWrap(true);
       sheet.getRange(lastRow, 1).setFontWeight("bold");
@@ -1062,12 +1075,15 @@ function setupOrders(sheet) {
     "Маржу отримано ✓", // AH (34): підрядник перерахував мені маржу за це замовлення
     "Роздрібна ціна",    // AI (35): ціна до знижки (₴ за рядок / позицію)
     "Знижка %",          // AJ (36)
-    "Знижка ₴"           // AK (37)
+    "Знижка ₴",          // AK (37)
+    "Спосіб зв'язку",    // AL (38)
+    "Telegram",          // AM (39)
+    "E-mail"             // AN (40)
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -1440,7 +1456,7 @@ function authorize() {
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 37; // A–AK
+var ADMIN_ORDER_COLS = 40; // A–AN (контакт: AL–AN)
 var STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
 
 function applyStatusSideEffects_(sh, row, newStatus) {
@@ -1492,6 +1508,39 @@ function ensureDiscountColumns_(sheet) {
   sheet.getRange(2, 35, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat("#,##0 ₴");
   sheet.getRange(2, 36, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat('0.0"%"');
   sheet.getRange(2, 37, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat("#,##0 ₴");
+  ensureContactColumns_(sheet);
+}
+
+/** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
+function ensureContactColumns_(sheet) {
+  if (!sheet) return;
+  if (sheet.getMaxColumns() < ADMIN_ORDER_COLS) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), ADMIN_ORDER_COLS - sheet.getMaxColumns());
+  }
+  var h38 = String(sheet.getRange(1, 38).getValue() || "");
+  if (h38.indexOf("зв") < 0 && h38.indexOf("Telegram") < 0) {
+    sheet.getRange(1, 38, 1, 3).setValues([["Спосіб зв'язку", "Telegram", "E-mail"]]);
+    sheet.getRange(1, 38, 1, 3)
+      .setFontWeight("bold").setBackground(RAL7016).setFontColor(HDR_TEXT)
+      .setFontFamily(HDR_FONT).setHorizontalAlignment("center").setVerticalAlignment("middle");
+    sheet.setColumnWidth(38, 110);
+    sheet.setColumnWidth(39, 120);
+    sheet.setColumnWidth(40, 160);
+  }
+}
+
+function parseContactFromNotes_(notes) {
+  var out = { contact_method: "", contact_telegram: "", contact_email: "" };
+  var n = String(notes || "");
+  var m = n.match(/Telegram:\s*@?([A-Za-z0-9_]{3,32})/i);
+  if (m) { out.contact_method = "telegram"; out.contact_telegram = m[1]; return out; }
+  m = n.match(/E-mail:\s*([^\s\n]+@[^\s\n]+)/i);
+  if (m) { out.contact_method = "email"; out.contact_email = m[1]; return out; }
+  m = n.match(/Viber:\s*([+\d\s()]+)/i);
+  if (m) { out.contact_method = "viber"; return out; }
+  m = n.match(/WhatsApp:\s*([+\d\s()]+)/i);
+  if (m) { out.contact_method = "whatsapp"; return out; }
+  return out;
 }
 
 function handleAdminRequest_(data) {
@@ -1540,6 +1589,17 @@ function cellBool_(v) {
 }
 
 function mapOrderRow_(rowIndex, v) {
+  var notes = String(v[31] || "");
+  var contactMethod = String(v[37] || "").trim();
+  var contactTelegram = String(v[38] || "").trim();
+  var contactEmail = String(v[39] || "").trim();
+  if (!contactMethod) {
+    var parsed = parseContactFromNotes_(notes);
+    contactMethod = parsed.contact_method;
+    if (!contactTelegram) contactTelegram = parsed.contact_telegram;
+    if (!contactEmail) contactEmail = parsed.contact_email;
+  }
+  if (!contactMethod && cellPhone_(v[5])) contactMethod = "phone";
   return {
     row: rowIndex,
     order_number: String(v[0] || ""),
@@ -1549,6 +1609,9 @@ function mapOrderRow_(rowIndex, v) {
     client: String(v[4] || ""),
     phone: cellPhone_(v[5]),
     city: String(v[6] || ""),
+    contact_method: contactMethod,
+    contact_telegram: contactTelegram,
+    contact_email: contactEmail,
     basket_type: String(v[7] || ""),
     construction: String(v[8] || ""),
     color: String(v[9] || ""),
@@ -1596,7 +1659,8 @@ function adminListOrders_(data) {
     var mapped = mapOrderRow_(i + 2, values[i]);
     if (statusFilter && mapped.status !== statusFilter) continue;
     if (q) {
-      var hay = (mapped.order_number + " " + mapped.client + " " + mapped.phone + " " + mapped.city).toLowerCase();
+      var hay = (mapped.order_number + " " + mapped.client + " " + mapped.phone + " " + mapped.city + " " +
+        mapped.contact_telegram + " " + mapped.contact_email).toLowerCase();
       if (hay.indexOf(q) < 0) continue;
     }
     orders.push(mapped);
@@ -1614,6 +1678,9 @@ function adminListOrders_(data) {
         client: o.client,
         phone: o.phone,
         city: o.city,
+        contact_method: o.contact_method,
+        contact_telegram: o.contact_telegram,
+        contact_email: o.contact_email,
         delivery_date: o.delivery_date,
         client_paid: o.client_paid,
         margin_paid: o.margin_paid,
