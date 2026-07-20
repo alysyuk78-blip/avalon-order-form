@@ -1,5 +1,10 @@
 # CODEX HANDOFF — avalon-order-form
 
+## Fix: дубль телефону в drawer — 20.07.2026
+
+У картці замовлення телефон показувався двічі (`ContactLinks` у шапці +
+`QuickContact`). Залишено лише `QuickContact` (кнопки під шапкою).
+
 ## Production: Apps Script v37 (CRM audit) — 20.07.2026
 
 - `clasp push` → version **37** → production `/exec` оновлено.
