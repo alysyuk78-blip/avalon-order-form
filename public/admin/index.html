@@ -145,12 +145,30 @@
     .orders-totals {
       display: flex; flex-wrap: wrap; gap: 16px 28px; margin-bottom: 14px;
       background: var(--panel); border-radius: var(--radius); padding: 14px 16px;
-      box-shadow: var(--shadow);
+      box-shadow: var(--shadow); position: relative;
     }
     .orders-totals .ot-item { display: grid; gap: 2px; }
     .orders-totals .ot-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
     .orders-totals .ot-value { font-size: 18px; font-weight: 750; }
     .orders-totals .ot-sub { font-size: 13px; font-weight: 650; color: var(--brand-soft); }
+    .ot-info {
+      position: absolute; top: 10px; right: 10px;
+      width: 28px; height: 28px; border-radius: 999px; border: 0; outline: none;
+      background: #eef1f3; color: var(--muted); font-size: 13px; font-weight: 750;
+      display: grid; place-items: center; cursor: pointer; line-height: 1;
+    }
+    .ot-info[aria-expanded="true"] { background: var(--brand); color: #fff; }
+    .ot-tip {
+      position: absolute; top: 42px; right: 10px; z-index: 5;
+      width: min(260px, calc(100% - 20px));
+      background: #1c2124; color: #fff; border-radius: 10px;
+      padding: 10px 12px; font-size: 12px; font-weight: 550; line-height: 1.4;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    }
+    .ot-tip::before {
+      content: ""; position: absolute; top: -5px; right: 10px;
+      width: 10px; height: 10px; background: #1c2124; transform: rotate(45deg);
+    }
     .kpi .sub { margin-top: 6px; font-size: 13px; font-weight: 650; color: var(--brand-soft); }
     .charts-grid {
       display: grid; grid-template-columns: 1.15fr 1fr; gap: 12px; margin-bottom: 16px;
@@ -1053,6 +1071,7 @@
       const [loading, setLoading] = useState(true);
       const [dragOver, setDragOver] = useState("");
       const [moving, setMoving] = useState("");
+      const [showHint, setShowHint] = useState(false);
       const dragOrderRef = useRef("");
       const skipClickRef = useRef(false);
 
@@ -1146,11 +1165,22 @@
                 <div className="ot-sub">Маржа: {money(grand.profit)}</div>
               </div>
               {view === "kanban" && (
-                <div className="ot-item">
-                  <div className="ot-label">Підказка</div>
-                  <div className="ot-sub desktop-only">Перетягніть картку в інший стовпчик, щоб змінити статус</div>
-                  <div className="ot-sub mobile-only">Гортайте стовпчики вбік · статус змінюйте списком на картці</div>
-                </div>
+                <>
+                  <button
+                    type="button"
+                    className="ot-info"
+                    aria-label="Підказка"
+                    aria-expanded={showHint}
+                    title="Підказка"
+                    onClick={() => setShowHint(v => !v)}
+                  >i</button>
+                  {showHint && (
+                    <div className="ot-tip" role="note">
+                      <span className="desktop-only">Перетягніть картку в інший стовпчик, щоб змінити статус.</span>
+                      <span className="mobile-only">Гортайте стовпчики вбік. Статус змінюйте списком на картці.</span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
