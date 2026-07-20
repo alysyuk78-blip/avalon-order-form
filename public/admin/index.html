@@ -1091,6 +1091,7 @@
       }
 
       useEffect(() => { load(); }, [token]);
+      useEffect(() => { setShowHint(false); }, [view]);
 
       async function moveToStatus(orderNumber, newStatus) {
         const current = groups.find(g => g.order_number === orderNumber);
