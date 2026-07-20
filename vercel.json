@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "buildCommand": "npm run build:admin",
   "rewrites": [
     { "source": "/(.*)", "destination": "/public/$1" }
   ]

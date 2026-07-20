@@ -17,6 +17,11 @@ module.exports = async function handler(req, res) {
       const data = await callAdminSheets("add_expense", { expense: body });
       return res.status(200).json(data);
     }
+    if (req.method === "PATCH") {
+      const body = req.body || {};
+      const data = await callAdminSheets("update_expense", { expense: body });
+      return res.status(200).json(data);
+    }
     return res.status(405).json({ error: "Method not allowed" });
   } catch (err) {
     console.error("admin/expenses:", err);
