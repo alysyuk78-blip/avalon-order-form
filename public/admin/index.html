@@ -2,7 +2,7 @@
 <html lang="uk">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="robots" content="noindex, nofollow" />
   <title>Avalon CRM — кабінет</title>
   <link rel="icon" href="/images/logo-shield-outline.png" />
@@ -254,10 +254,6 @@
     .remind-item .tag.debt { color: var(--warn); background: rgba(154, 103, 0, 0.12); }
     .remind-item .tag.stuck { color: var(--st-work-fg); background: var(--st-work-chip); }
     .remind-item .tag.ship { color: var(--st-ship-fg); background: var(--st-ship-chip); }
-    @media (max-width: 900px) {
-      .charts-grid { grid-template-columns: 1fr; }
-      .status-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); height: auto; min-height: 200px; }
-    }
     .col.st-new { background: var(--st-new-bg); }
     .col.st-new h3 { color: var(--st-new-fg); }
     .col.st-work { background: var(--st-work-bg); }
@@ -329,15 +325,113 @@
     .empty { color: var(--muted); font-size: 14px; padding: 24px; text-align: center; }
     .alias { color: var(--muted); font-size: 12px; }
     .phone-key { font-variant-numeric: tabular-nums; font-weight: 650; }
+    .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .card-status {
+      margin-top: 8px; width: 100%; border: 0; outline: none; border-radius: 8px;
+      padding: 8px 10px; background: #eef1f3; color: var(--ink); font-size: 12px; font-weight: 650;
+      min-height: 40px;
+    }
+    .desktop-only { display: initial; }
+    .mobile-only { display: none; }
     @media (max-width: 1100px) {
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .row-card { grid-template-columns: 1fr 1fr; }
       .kanban { grid-template-columns: repeat(3, minmax(200px, 1fr)); }
     }
+    @media (max-width: 900px) {
+      .charts-grid { grid-template-columns: 1fr; }
+      .status-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); height: auto; min-height: 200px; }
+    }
     @media (max-width: 720px) {
+      .desktop-only { display: none !important; }
+      .mobile-only { display: block; }
+      body { padding-bottom: env(safe-area-inset-bottom, 0); }
+      .top {
+        gap: 10px; padding: 10px 12px;
+        padding-top: max(10px, env(safe-area-inset-top, 0px));
+      }
+      .brand { min-width: 0; flex: 1; }
+      .brand img { height: 30px; }
+      .brand strong { font-size: 13px; }
+      .brand span { font-size: 10px; }
+      .nav {
+        order: 3; flex: 1 1 100%;
+        flex-wrap: nowrap; overflow-x: auto; gap: 6px;
+        padding-bottom: 2px; -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+      .nav::-webkit-scrollbar { display: none; }
+      .nav button {
+        flex: 0 0 auto; padding: 10px 14px; font-size: 13px;
+        background: #eef1f3; color: var(--ink);
+      }
+      .nav button.active { background: var(--brand); color: #fff; }
+      .top-actions { gap: 6px; }
+      .top-actions .btn { padding: 9px 11px; font-size: 12px; }
+      .main { padding: 12px; padding-bottom: 28px; width: 100%; }
+      .toolbar { gap: 8px; align-items: stretch; }
+      .toolbar input[type="search"], .toolbar select {
+        min-width: 0; width: 100%; flex: 1 1 100%;
+        min-height: 44px; font-size: 16px;
+      }
+      .view-toggle, .period-toggle { width: 100%; }
+      .view-toggle button, .period-toggle button {
+        flex: 1; min-height: 40px; padding: 10px 8px;
+      }
+      .orders-totals { gap: 12px 16px; padding: 12px; }
+      .orders-totals .ot-value { font-size: 16px; }
+      .kanban {
+        display: flex; gap: 10px;
+        overflow-x: auto; scroll-snap-type: x mandatory;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 12px; margin: 0 -12px; padding-left: 12px; padding-right: 12px;
+      }
+      .kanban .col {
+        flex: 0 0 min(82vw, 300px);
+        min-height: 240px; max-height: none;
+        scroll-snap-align: start;
+      }
+      .col-body { max-height: 58vh; overflow-y: auto; }
+      .card { padding: 14px; }
+      .card:hover { transform: none; }
+      .card .drag-hint { display: none; }
+      .list { gap: 10px; }
+      .row-card {
+        grid-template-columns: 1fr;
+        gap: 6px; padding: 14px;
+      }
       .grid2 { grid-template-columns: 1fr; }
-      .kpi-grid { grid-template-columns: 1fr; }
-      .main { padding: 14px; }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .kpi { padding: 12px; }
+      .kpi .value { font-size: 18px; margin-top: 6px; }
+      .kpi .label { font-size: 10px; }
+      .panel { padding: 14px; margin-bottom: 12px; }
+      .panel h2 { font-size: 15px; }
+      .drawer-backdrop { align-items: stretch; }
+      .drawer {
+        width: 100%; max-width: 100%;
+        padding: 16px;
+        padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
+        border-radius: 0; animation: slideUp .22s ease;
+      }
+      @keyframes slideUp { from { transform: translateY(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+      .drawer header { position: sticky; top: 0; background: #fff; padding-bottom: 10px; z-index: 2; }
+      .quick-actions button { min-height: 40px; padding: 10px 14px; font-size: 13px; }
+      .btn { min-height: 44px; padding: 12px 16px; }
+      .field input, .field select, .field textarea { min-height: 44px; font-size: 16px; }
+      .status-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; min-height: 0; }
+      .status-col { min-height: 120px; }
+      .donut-wrap { justify-content: center; }
+      .remind-item { grid-template-columns: 1fr; gap: 8px; }
+      .login-card { padding: 22px 18px; border-radius: 16px; }
+      .login-card h1 { font-size: 22px; }
+      table { font-size: 12px; min-width: 640px; }
+      th, td { padding: 8px 6px; }
+    }
+    @media (max-width: 420px) {
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .kanban .col { flex-basis: 88vw; }
+      .brand span { display: none; }
     }
   </style>
 </head>
@@ -1001,7 +1095,8 @@
               {view === "kanban" && (
                 <div className="ot-item">
                   <div className="ot-label">Підказка</div>
-                  <div className="ot-sub">Перетягніть картку в інший стовпчик, щоб змінити статус</div>
+                  <div className="ot-sub desktop-only">Перетягніть картку в інший стовпчик, щоб змінити статус</div>
+                  <div className="ot-sub mobile-only">Гортайте стовпчики вбік · статус змінюйте списком на картці</div>
                 </div>
               )}
             </div>
@@ -1032,9 +1127,10 @@
                   </h3>
                   <div className={"col-body" + (dragOver === s ? " drag-over" : "")}>
                     {byStatus[s].items.map(g => (
-                      <button
+                      <div
                         key={g.order_number}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         draggable
                         className={"card " + statusClass(g.status) + (moving === g.order_number ? " dragging" : "")}
                         onDragStart={e => {
@@ -1049,6 +1145,12 @@
                           skipClickRef.current = true;
                           setTimeout(() => { skipClickRef.current = false; }, 120);
                         }}
+                        onKeyDown={e => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelected(g.order_number);
+                          }
+                        }}
                         onClick={() => {
                           if (skipClickRef.current || moving) return;
                           setSelected(g.order_number);
@@ -1058,8 +1160,22 @@
                         <div className="meta">{g.client}<br />{g.phone}<br />{g.city || "—"}</div>
                         <div className="money">{money(g.revenue)}</div>
                         <div className="meta">Маржа: {money(g.profit)}</div>
-                        <div className="drag-hint">↗ перетягнути</div>
-                      </button>
+                        <div className="drag-hint desktop-only">↗ перетягнути</div>
+                        <select
+                          className="card-status mobile-only"
+                          value={g.status}
+                          disabled={moving === g.order_number}
+                          onClick={e => e.stopPropagation()}
+                          onMouseDown={e => e.stopPropagation()}
+                          onTouchStart={e => e.stopPropagation()}
+                          onChange={e => {
+                            e.stopPropagation();
+                            moveToStatus(g.order_number, e.target.value);
+                          }}
+                        >
+                          {STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
+                        </select>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -1425,6 +1541,7 @@
 
           <div className="panel">
             <h2>Помісячно</h2>
+            <div className="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -1449,6 +1566,7 @@
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           {selected && (
@@ -1499,6 +1617,7 @@
                 await load();
               } catch (e) { setError(e.message); }
             }}>Зберегти партнера</button>
+            <div className="table-scroll">
             <table style={{ marginTop: 16 }}>
               <thead><tr><th>КОД</th><th>Назва</th><th>Ставка</th><th>Продано</th><th>Нараховано</th><th>Виплачено</th><th>Залишок</th></tr></thead>
               <tbody>
@@ -1510,6 +1629,7 @@
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           <div className="panel">
@@ -1532,6 +1652,7 @@
                 await load();
               } catch (e) { setError(e.message); }
             }}>Записати виплату</button>
+            <div className="table-scroll">
             <table style={{ marginTop: 16 }}>
               <thead><tr><th>Дата</th><th>КОД</th><th>Назва</th><th>Сума</th><th>Спосіб</th><th>Примітка</th></tr></thead>
               <tbody>
@@ -1540,6 +1661,7 @@
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       );
@@ -1584,6 +1706,7 @@
               await load();
             } catch (e) { setError(e.message); }
           }}>Додати витрату</button>
+          <div className="table-scroll">
           <table style={{ marginTop: 16 }}>
             <thead><tr><th>Дата</th><th>Категорія</th><th>Опис</th><th>Сума</th><th>Примітка</th></tr></thead>
             <tbody>
@@ -1592,6 +1715,7 @@
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       );
     }
@@ -1649,6 +1773,7 @@
           {!loading && !filtered.length && <div className="empty">Клієнтів не знайдено</div>}
           {!loading && !!filtered.length && (
             <div className="panel">
+              <div className="table-scroll">
               <table>
                 <thead>
                   <tr>
@@ -1678,6 +1803,7 @@
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
           {selected && (() => {
