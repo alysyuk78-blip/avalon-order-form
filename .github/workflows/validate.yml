@@ -18,6 +18,16 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check admin bundle
+        run: |
+          npm ci
+          npm run check:admin
+
       - name: Check server JavaScript
         run: |
           node --check api/order.js

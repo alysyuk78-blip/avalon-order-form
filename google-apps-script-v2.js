@@ -161,7 +161,7 @@ function doPost(e) {
 function findLastRealOrderRow_(sheet) {
   var last = Math.max(sheet.getLastRow(), 2);
   if (last < 2) return 1;
-  var values = sheet.getRange(2, 1, last - 1, 1).getValues();
+  var values = sheet.getRange(2, 1, last, 1).getValues();
   for (var i = values.length - 1; i >= 0; i--) {
     if (/^ORD-\d{6}-\d{3}$/.test(String(values[i][0] || "").trim())) {
       return i + 2;
@@ -389,6 +389,18 @@ function toISODate(v) {
   var m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})/); // dd.MM.yyyy
   if (m) return m[3] + "-" + m[2] + "-" + m[1];
   return "";
+}
+
+/** Числовий timestamp для сортування created_at / дат з таблиці. */
+function parseCreatedAtMs_(v) {
+  var iso = toISODate(v);
+  if (iso) {
+    var p = iso.split("-");
+    return new Date(+p[0], +p[1] - 1, +p[2]).getTime();
+  }
+  var m = String(v || "").match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{1,2}):(\d{2}))?/);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0)).getTime();
+  return 0;
 }
 
 /** Встанови один раз: створює тригер onEdit для синхронізації дат із календарем. */
@@ -639,7 +651,7 @@ function checkContractorTelegram() {
 function buildOrderFromRows_(sh, orderNumber) {
   var last = sh.getLastRow();
   if (last < 2) return null;
-  var vals = sh.getRange(2, 1, last - 1, 32).getValues();
+  var vals = sh.getRange(2, 1, last, 32).getValues();
   var order = null;
   for (var i = 0; i < vals.length; i++) {
     var r = vals[i];
@@ -1212,9 +1224,9 @@ function setupDropshippers(ss) {
   sh.getRange("A2:E2").setValues([["OSBB-Lvivska12","[ПІБ голови]","ОСББ","[тел / чат]",150]]);
   // Авто-формули (спадають донизу для всіх рядків з КОДом)
   var O = SHEET_ORDERS, P = SHEET_PAYOUTS;
-  sh.getRange("F2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIF(' + O + '!D:D;A2:A;' + O + '!Q:Q)))');
-  sh.getRange("G2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIF(' + O + '!D:D;A2:A;' + O + '!V:V)))');
-  sh.getRange("H2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIF(' + O + '!D:D;A2:A;' + O + '!Y:Y)))');
+  sh.getRange("F2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(' + O + '!Q:Q;' + O + '!D:D;A2:A;' + O + '!C:C;"<>Скасовано")))');
+  sh.getRange("G2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(' + O + '!V:V;' + O + '!D:D;A2:A;' + O + '!C:C;"<>Скасовано")))');
+  sh.getRange("H2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(' + O + '!Y:Y;' + O + '!D:D;A2:A;' + O + '!C:C;"<>Скасовано")))');
   sh.getRange("I2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIF(' + P + '!B:B;A2:A;' + P + '!D:D)))');
   sh.getRange("J2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";H2:H-I2:I))');
   sh.getRange("E2:E").setNumberFormat("#,##0 ₴");
@@ -1511,6 +1523,16 @@ function ensureDiscountColumns_(sheet) {
   ensureContactColumns_(sheet);
 }
 
+function ensureDiscountColumnsOnce_() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty("ORDERS_COLS_V2_READY") === "1") return;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_ORDERS);
+  if (!sheet) return;
+  ensureDiscountColumns_(sheet);
+  props.setProperty("ORDERS_COLS_V2_READY", "1");
+}
+
 /** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
 function ensureContactColumns_(sheet) {
   if (!sheet) return;
@@ -1558,6 +1580,7 @@ function handleAdminRequest_(data) {
     if (action === "upsert_partner") return jsonOut(adminUpsertPartner_(data.partner || data));
     if (action === "list_expenses") return jsonOut(adminListExpenses_(data));
     if (action === "add_expense") return jsonOut(adminAddExpense_(data.expense || data));
+    if (action === "update_expense") return jsonOut(adminUpdateExpense_(data.expense || data));
     if (action === "list_payouts") return jsonOut(adminListPayouts_());
     if (action === "add_payout") return jsonOut(adminAddPayout_(data.payout || data));
     return jsonOut({ status: "error", message: "Unknown admin_action: " + action });
@@ -1570,7 +1593,7 @@ function adminOrdersSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) throw new Error("Аркуш «Замовлення» не знайдено");
-  ensureDiscountColumns_(sheet);
+  ensureDiscountColumnsOnce_();
   return sheet;
 }
 
@@ -1697,15 +1720,17 @@ function adminListOrders_(data) {
     }
     var g = byNum[o.order_number];
     g.items_count += 1;
-    g.quantity += Number(o.quantity) || 0;
-    g.cost_total += Number(o.cost_total) || 0;
-    g.revenue += Number(o.revenue) || 0;
-    g.profit += Number(o.profit) || 0;
-    g.commission += Number(o.commission) || 0;
-    g.net_profit += Number(o.net_profit) || 0;
-    g.list_price += Number(o.list_price) || 0;
-    g.discount_uah += Number(o.discount_uah) || 0;
-    if (o.created_at && (!g.created_at || String(o.created_at) < String(g.created_at))) g.created_at = o.created_at;
+    if (o.status !== "Скасовано") {
+      g.quantity += Number(o.quantity) || 0;
+      g.cost_total += Number(o.cost_total) || 0;
+      g.revenue += Number(o.revenue) || 0;
+      g.profit += Number(o.profit) || 0;
+      g.commission += Number(o.commission) || 0;
+      g.net_profit += Number(o.net_profit) || 0;
+      g.list_price += Number(o.list_price) || 0;
+      g.discount_uah += Number(o.discount_uah) || 0;
+    }
+    if (o.created_at && (!g.created_at || parseCreatedAtMs_(o.created_at) < parseCreatedAtMs_(g.created_at))) g.created_at = o.created_at;
   });
   var groups = Object.keys(byNum).map(function (k) {
     var g = byNum[k];
@@ -1713,7 +1738,7 @@ function adminListOrders_(data) {
     return g;
   });
   groups.sort(function (a, b) {
-    return String(b.created_at).localeCompare(String(a.created_at));
+    return parseCreatedAtMs_(b.created_at) - parseCreatedAtMs_(a.created_at);
   });
   return { status: "ok", orders: orders, groups: groups };
 }
@@ -1932,7 +1957,7 @@ function adminListPartners_() {
   if (!sh) return { status: "ok", partners: [] };
   var last = sh.getLastRow();
   if (last < 2) return { status: "ok", partners: [] };
-  var values = sh.getRange(2, 1, last, 10).getDisplayValues();
+  var values = sh.getRange(2, 1, last, 10).getValues();
   var partners = [];
   for (var i = 0; i < values.length; i++) {
     var code = String(values[i][0] || "").trim();
@@ -2008,7 +2033,7 @@ function adminListExpenses_(data) {
       note: String(values[i][4] || "")
     });
   }
-  expenses.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  expenses.sort(function (a, b) { return parseCreatedAtMs_(b.date) - parseCreatedAtMs_(a.date); });
   return { status: "ok", expenses: expenses };
 }
 
@@ -2027,6 +2052,26 @@ function adminAddExpense_(ex) {
     Math.round(Number(ex.amount) || 0),
     ex.note || ""
   ]]);
+  SpreadsheetApp.flush();
+  return adminListExpenses_({});
+}
+
+function adminUpdateExpense_(ex) {
+  if (!ex || ex.row == null) throw new Error("row required");
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_EXPENSES);
+  if (!sh) throw new Error("Аркуш витрат не знайдено");
+  var row = Number(ex.row);
+  if (row < 2) throw new Error("invalid row");
+  var dateVal = ex.date != null ? (toISODate(ex.date) || String(ex.date)) : null;
+  if (dateVal) {
+    var parts = String(dateVal).slice(0, 10).split("-");
+    sh.getRange(row, 1).setValue(new Date(+parts[0], +parts[1] - 1, +parts[2]));
+  }
+  if (ex.category != null) sh.getRange(row, 2).setValue(String(ex.category));
+  if (ex.description != null) sh.getRange(row, 3).setValue(String(ex.description));
+  if (ex.amount != null) sh.getRange(row, 4).setValue(Math.round(Number(ex.amount) || 0));
+  if (ex.note != null) sh.getRange(row, 5).setValue(String(ex.note));
   SpreadsheetApp.flush();
   return adminListExpenses_({});
 }
@@ -2052,7 +2097,7 @@ function adminListPayouts_() {
       note: String(values[i][5] || "")
     });
   }
-  payouts.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  payouts.sort(function (a, b) { return parseCreatedAtMs_(b.date) - parseCreatedAtMs_(a.date); });
   return { status: "ok", payouts: payouts };
 }
 

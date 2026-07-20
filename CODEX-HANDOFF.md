@@ -1,5 +1,27 @@
 # CODEX HANDOFF — avalon-order-form
 
+## CRM audit fixes + Apps Script v37 (pending clasp) — 20.07.2026
+
+Повний аудит CRM: точність даних, швидкість, UX.
+
+**Apps Script (потрібен clasp v37 після підтвердження):**
+- `adminListPartners_`: `getValues()` замість `getDisplayValues()` — коректні суми партнерів.
+- `parseCreatedAtMs_`: числове сортування `created_at`, витрат, виплат.
+- `buildOrderFromRows_` / `findLastRealOrderRow_`: читають до останнього рядка (не `last-1`).
+- `ensureDiscountColumnsOnce_`: міграція колонок один раз (прапорець `ORDERS_COLS_V2_READY`).
+- Скасовані виключені з сум груп / LTV; формули dropshipper через `SUMIFS` без «Скасовано».
+- `update_expense` — редагування витрат з CRM.
+
+**Admin `/admin`:**
+- Збірка через esbuild (`admin/src/main.jsx` → `public/admin/assets/admin.js`), без Babel ~3 MB у браузері.
+- Кеш замовлень у `App`; вкладки лишаються змонтованими (без refetch при перемиканні).
+- Прибрано зайвий fetch `/api/admin/dashboard`.
+- Multi-item `OrderDrawer`: вибір позиції для редагування фінансів.
+- Confirm на «Скасовано» / «Нове → В роботі»; 401 → auto logout.
+- InfoTip: Escape + клік поза; deep links `#order/ORD-…`.
+- Клієнти → клік по замовленню відкриває drawer; редагування витрат inline.
+- Login rate limit: 5 спроб / IP / 15 хв.
+
 ## Клієнти: компактні додаткові імена — 20.07.2026
 
 У вкладці «Клієнти» інші написання імені після `/` згорнуті в `…`
