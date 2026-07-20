@@ -1,10 +1,20 @@
 # CODEX HANDOFF — avalon-order-form
 
-## CRM audit fixes + Apps Script v37 (pending clasp) — 20.07.2026
+## Production: Apps Script v37 (CRM audit) — 20.07.2026
+
+- `clasp push` → version **37** → production `/exec` оновлено.
+- `/exec` перевірено: `{"status":"ok","message":"Avalon v3.0"}`.
+- Зміни: partners `getValues`, `parseCreatedAtMs_`, last-row fix,
+  `ensureDiscountColumnsOnce_`, cancelled exclusion + SUMIFS dropshipper,
+  `update_expense`.
+- `clasp logout` виконано; локальний `~/.clasprc.json` видалено.
+- Admin UI (PR #81) — окремий Vercel deploy після merge.
+
+## CRM audit fixes + Apps Script v37 — 20.07.2026
 
 Повний аудит CRM: точність даних, швидкість, UX.
 
-**Apps Script (потрібен clasp v37 після підтвердження):**
+**Apps Script (production version 37):**
 - `adminListPartners_`: `getValues()` замість `getDisplayValues()` — коректні суми партнерів.
 - `parseCreatedAtMs_`: числове сортування `created_at`, витрат, виплат.
 - `buildOrderFromRows_` / `findLastRealOrderRow_`: читають до останнього рядка (не `last-1`).
