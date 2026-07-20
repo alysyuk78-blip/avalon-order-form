@@ -1,5 +1,10 @@
 # CODEX HANDOFF — avalon-order-form
 
+## Клієнти: компактні додаткові імена — 20.07.2026
+
+У вкладці «Клієнти» інші написання імені після `/` згорнуті в `…`
+(повний список — при наведенні). Основне імʼя лишається видимим.
+
 ## Production: Apps Script v36 (контакти) + PR #78 — 20.07.2026
 
 - PR [#78](https://github.com/alysyuk78-blip/avalon-order-form/pull/78) злито в `main` (Vercel `/admin`).

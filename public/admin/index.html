@@ -366,6 +366,10 @@
     .section-title { margin: 18px 0 10px; font-size: 13px; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
     .empty { color: var(--muted); font-size: 14px; padding: 24px; text-align: center; }
     .alias { color: var(--muted); font-size: 12px; }
+    .alias-more {
+      color: var(--muted); font-size: 12px; font-weight: 650;
+      cursor: help; white-space: nowrap;
+    }
     .phone-key { font-variant-numeric: tabular-nums; font-weight: 650; }
     .contact-links { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
     .contact-links--stack { display: grid; gap: 4px; justify-items: start; }
@@ -1974,7 +1978,7 @@
           <div className="panel" style={{ marginBottom: 16 }}>
             <div className="panel-head">
               <h2>Довідник клієнтів за телефоном</h2>
-              <InfoTip text="Один номер = один клієнт. Основне імʼя — з найранішого замовлення; інші написання — через « / », щоб ловити дублі." />
+              <InfoTip text="Один номер = один клієнт. Основне імʼя — з найранішого замовлення. Якщо є інші написання, показується « / …» — наведіть, щоб побачити повний список." />
             </div>
             <div className="toolbar" style={{ marginBottom: 0 }}>
               <input type="search" placeholder="Пошук: телефон або імʼя…" value={q} onChange={e => setQ(e.target.value)} />
@@ -2008,7 +2012,7 @@
                       <td>
                         <strong>{c.primary_name}</strong>
                         {!!c.aliases.length && (
-                          <div className="alias"> / {c.aliases.join(" / ")}</div>
+                          <span className="alias-more" title={c.aliases.join(" / ")}> / …</span>
                         )}
                       </td>
                       <td>{c.orders_count}</td>
