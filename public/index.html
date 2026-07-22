@@ -65,6 +65,9 @@
             '<div id="avalon-fb-done" style="display:none;text-align:center;color:#16A34A;font-weight:600;padding:14px;">✅ Дякуємо! Ми звʼяжемось з вами найближчим часом.</div>' +
           '</div>';
         document.body.appendChild(d);
+        // Позначаємо, що клієнт почав заповнювати резервну форму — тоді сторож
+        // самозцілення не прибере панель, навіть якщо основна форма домалюється.
+        d.addEventListener("input", function () { d.setAttribute("data-touched", "1"); });
         d.querySelector("#fb-send").addEventListener("click", function () {
           var name = (d.querySelector("#fb-name").value || "").trim();
           var phone = (d.querySelector("#fb-phone").value || "").trim();
@@ -77,13 +80,31 @@
           d.querySelector("#avalon-fb-done").style.display = "block";
         });
       }
+      // Сторож рендеру. Раніше перевіряв рівно раз на 15-й секунді й показував
+      // заглушку НАЗАВЖДИ — тож на повільному телефоні, де внутрішньобраузерний
+      // Babel компілює форму довше, клієнт застрягав на заглушці, хоча форма вже
+      // домальовувалась під нею. Тепер: (1) чекаємо довше (25 с) для повільних
+      // пристроїв; (2) заглушка самозцілюється — якщо форма таки з'явилась, вона
+      // зникає сама, але лише поки людина не почала вписувати номер у заглушці.
+      function rootReady() {
+        var r = document.getElementById("root");
+        return !!(r && r.children.length > 0);
+      }
       setTimeout(function () {
-        var root = document.getElementById("root");
-        if (!root || root.children.length === 0) {
-          alertOwner("not_rendered", "Форма не відрендерилась (білий екран) за 15 секунд");
-          showFallback();
-        }
-      }, 15000);
+        if (rootReady()) return; // встигла — усе добре, сторож не потрібен
+        alertOwner("not_rendered", "Форма не відрендерилась (білий екран) за 25 секунд");
+        showFallback();
+        // Самозцілення: форма могла змонтуватись уже після заглушки. Ще ~20 с
+        // стежимо і прибираємо заглушку, щойно з'явився контент — якщо клієнт
+        // не почав заповнювати резервну форму (інакше не висмикуємо з-під рук).
+        var tries = 0;
+        var heal = setInterval(function () {
+          var fb = document.getElementById("avalon-fallback");
+          if (!fb || fb.getAttribute("data-touched") === "1") { clearInterval(heal); return; }
+          if (rootReady()) { fb.remove(); clearInterval(heal); return; }
+          if (++tries > 40) clearInterval(heal);
+        }, 500);
+      }, 25000);
       if (/[?&]_fallback/.test(location.search)) { // демо: …/?_fallback показує резервну панель
         if (document.body) showFallback(); else document.addEventListener("DOMContentLoaded", showFallback);
       }
