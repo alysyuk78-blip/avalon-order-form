@@ -1531,12 +1531,14 @@ function ensureDiscountColumns_(sheet) {
 
 function ensureDiscountColumnsOnce_() {
   var props = PropertiesService.getScriptProperties();
-  if (props.getProperty("ORDERS_COLS_V2_READY") === "1") return;
+  // V3: після додавання колонки AO «Модель кошика» треба, щоб заголовки
+  // проставились ще раз на наявній таблиці (старий прапорець V2 уже стояв).
+  if (props.getProperty("ORDERS_COLS_V3_READY") === "1") return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) return;
   ensureDiscountColumns_(sheet);
-  props.setProperty("ORDERS_COLS_V2_READY", "1");
+  props.setProperty("ORDERS_COLS_V3_READY", "1");
 }
 
 /** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
@@ -1608,6 +1610,13 @@ function adminOrdersSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) throw new Error("Аркуш «Замовлення» не знайдено");
+  // КРИТИЧНО: читання роблять getRange(..., ADMIN_ORDER_COLS). Якщо в таблиці
+  // менше колонок — getRange падає і весь список зникає. Тому ширину гарантуємо
+  // БЕЗУМОВНО при кожному читанні (ідемпотентно; вставляє лише якщо колонок бракує),
+  // а не лише через ensureDiscountColumnsOnce_ з одноразовим прапорцем.
+  if (sheet.getMaxColumns() < ADMIN_ORDER_COLS) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), ADMIN_ORDER_COLS - sheet.getMaxColumns());
+  }
   ensureDiscountColumnsOnce_();
   return sheet;
 }
