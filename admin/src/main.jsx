@@ -635,7 +635,7 @@ import { createRoot } from 'react-dom/client';
                   <select value={itemIdx} onChange={e => selectItem(Number(e.target.value))}>
                     {items.map((it, i) => (
                       <option key={it.row} value={i}>
-                        {(it.basket_type || "Кошик") + " · " + money(it.revenue)}
+                        {(it.basket_model || it.basket_type || "Кошик") + " · " + money(it.revenue)}
                       </option>
                     ))}
                   </select>
@@ -701,7 +701,7 @@ import { createRoot } from 'react-dom/client';
             <div className="section-title">Позиції ({items.length})</div>
             {items.map(it => (
               <div key={it.row} className="panel" style={{ boxShadow: "none", padding: 12 }}>
-                <div style={{ fontWeight: 700 }}>{it.basket_type || "Кошик"} · {it.construction}</div>
+                <div style={{ fontWeight: 700 }}>{it.basket_model ? it.basket_model + " · " : ""}{it.basket_type || "Кошик"} · {it.construction}</div>
                 <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
                   {it.size_w || "—"}×{it.size_h || "—"}×{it.size_d || "—"} мм · {it.quantity} шт · {it.color} · {it.pattern}
                 </div>

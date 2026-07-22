@@ -56,6 +56,8 @@ function doPost(e) {
 
     var MARKUP = 1 / (1 - 0.2593);
     var itemsIn = (Array.isArray(data.items) && data.items.length) ? data.items : [{
+      basket_model: data.basket_model, basket_model_name: data.basket_model_name,
+      bracket_model_from: data.bracket_model_from, bracket_model_to: data.bracket_model_to,
       basket_type: data.basket_type, construction_type: data.construction_type,
       color: data.color, color_custom: data.color_custom, pattern: data.pattern, pattern_custom: data.pattern_custom,
       size_w: data.size_w, size_h: data.size_h, size_d: data.size_d, quantity: data.quantity,
@@ -95,6 +97,7 @@ function doPost(e) {
 
       var notes = data.notes || "";
       var itemNotes = [];
+      if (!w && (it.bracket_model_from || it.bracket_model_to)) itemNotes.push("Потужність (BTU): " + (it.bracket_model_from || "") + " — " + (it.bracket_model_to || ""));
       if (it.ac_model_url) itemNotes.push("Посилання на кондиціонер: " + it.ac_model_url);
       if (it.model_comment) itemNotes.push("Коментар до моделі: " + it.model_comment);
       if (itemNotes.length) notes = [notes].concat(itemNotes).filter(function (x) { return x; }).join("\n");
@@ -131,6 +134,8 @@ function doPost(e) {
         cm === "telegram" ? String(data.contact_telegram || "").replace(/^@/, "") : "",
         cm === "email" ? String(data.contact_email || "").trim() : ""
       ]]);
+      // AO (41): модель кошика (AVL-0X), яку обрав клієнт — щоб видно було в CRM.
+      sheet.getRange(lastRow, 41).setValue(it.basket_model_name || it.basket_model || "");
       var rr = sheet.getRange(lastRow, 1, 1, row.length);
       rr.setVerticalAlignment("middle").setWrap(true);
       sheet.getRange(lastRow, 1).setFontWeight("bold");
@@ -1090,12 +1095,13 @@ function setupOrders(sheet) {
     "Знижка ₴",          // AK (37)
     "Спосіб зв'язку",    // AL (38)
     "Telegram",          // AM (39)
-    "E-mail"             // AN (40)
+    "E-mail",            // AN (40)
+    "Модель кошика"      // AO (41): яку модель (AVL-0X) обрав клієнт у формі
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -1468,7 +1474,7 @@ function authorize() {
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 40; // A–AN (контакт: AL–AN)
+var ADMIN_ORDER_COLS = 41; // A–AO (контакт: AL–AN; модель кошика: AO)
 var STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
 
 function applyStatusSideEffects_(sh, row, newStatus) {
@@ -1548,6 +1554,15 @@ function ensureContactColumns_(sheet) {
     sheet.setColumnWidth(38, 110);
     sheet.setColumnWidth(39, 120);
     sheet.setColumnWidth(40, 160);
+  }
+  // AO (41): заголовок «Модель кошика» — самозаповнюється на наявній таблиці,
+  // щоб не вимагати ручного перезапуску setupOrders після додавання колонки.
+  var h41 = String(sheet.getRange(1, 41).getValue() || "");
+  if (h41.indexOf("Модель") < 0) {
+    sheet.getRange(1, 41).setValue("Модель кошика")
+      .setFontWeight("bold").setBackground(RAL7016).setFontColor(HDR_TEXT)
+      .setFontFamily(HDR_FONT).setHorizontalAlignment("center").setVerticalAlignment("middle");
+    sheet.setColumnWidth(41, 170);
   }
 }
 
@@ -1635,6 +1650,7 @@ function mapOrderRow_(rowIndex, v) {
     contact_method: contactMethod,
     contact_telegram: contactTelegram,
     contact_email: contactEmail,
+    basket_model: String(v[40] || ""),
     basket_type: String(v[7] || ""),
     construction: String(v[8] || ""),
     color: String(v[9] || ""),
@@ -1701,6 +1717,7 @@ function adminListOrders_(data) {
         client: o.client,
         phone: o.phone,
         city: o.city,
+        basket_model: o.basket_model,
         contact_method: o.contact_method,
         contact_telegram: o.contact_telegram,
         contact_email: o.contact_email,
