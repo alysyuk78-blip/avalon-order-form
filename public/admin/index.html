@@ -2,18 +2,15 @@
 <html lang="uk">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="robots" content="noindex, nofollow" />
   <title>Avalon CRM — кабінет</title>
   <link rel="icon" href="/images/logo-shield-outline.png" />
-  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  <script type="module" src="/admin/assets/admin.js"></script>
   <style>
     :root {
       --ink: #1c2124;
       --muted: #5c656c;
-      --line: #d8dde1;
       --bg: #eef1f3;
       --panel: #ffffff;
       --brand: #383e42;
@@ -24,87 +21,296 @@
       --danger: #b42318;
       --shadow: 0 10px 30px rgba(28, 33, 36, 0.08);
       --radius: 14px;
-      --font: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      /* Як на сайті Apple / системний стек macOS & iOS */
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+      /* Середня прозорість колонок воронки (між блідим і насиченим) */
+      --st-new-bg: rgba(230, 184, 0, 0.08); --st-new-fg: #856404;
+      --st-work-bg: rgba(59, 130, 246, 0.08); --st-work-fg: #1d4f91;
+      --st-ready-bg: rgba(20, 184, 166, 0.08); --st-ready-fg: #0f6b5c;
+      --st-ship-bg: rgba(168, 85, 247, 0.08); --st-ship-fg: #6b21a8;
+      --st-done-bg: rgba(34, 197, 94, 0.08); --st-done-fg: #1b7a4a;
+      --st-cancel-bg: rgba(156, 163, 175, 0.10); --st-cancel-fg: #6b7280;
+      /* Бейджі трохи насиченіші за колонки, щоб читались */
+      --st-new-chip: rgba(230, 184, 0, 0.20);
+      --st-work-chip: rgba(59, 130, 246, 0.18);
+      --st-ready-chip: rgba(20, 184, 166, 0.18);
+      --st-ship-chip: rgba(168, 85, 247, 0.18);
+      --st-done-chip: rgba(34, 197, 94, 0.18);
+      --st-cancel-chip: rgba(156, 163, 175, 0.22);
     }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; min-height: 100%; }
+    * {
+      box-sizing: border-box;
+      font-family: var(--font) !important;
+      border-style: none;
+      outline: none;
+    }
+    html, body {
+      margin: 0; min-height: 100%;
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+    #root { max-width: 100%; overflow-x: hidden; }
     body {
-      font-family: var(--font);
+      font-family: var(--font) !important;
       color: var(--ink);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
       background:
         radial-gradient(1200px 500px at 10% -10%, rgba(143, 115, 64, 0.12), transparent 60%),
         radial-gradient(900px 400px at 100% 0%, rgba(56, 62, 66, 0.10), transparent 55%),
         var(--bg);
     }
-    button, input, select, textarea { font: inherit; }
+    button, input, select, textarea, th, td, h1, h2, h3, strong, label, a, span, p, div {
+      font-family: var(--font) !important;
+    }
+    button, input, select, textarea { font: inherit; border: 0; }
     button { cursor: pointer; }
-    .app { min-height: 100vh; display: flex; flex-direction: column; }
+    button:focus-visible, a:focus-visible, .nav button:focus-visible, .info-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .app { min-height: 100vh; display: flex; flex-direction: column; max-width: 100%; overflow-x: hidden; }
     .top {
       position: sticky; top: 0; z-index: 20;
       display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
       padding: 14px 20px;
-      background: rgba(255,255,255,0.88);
+      background: rgba(255,255,255,0.92);
       backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--line);
+      max-width: 100%;
     }
-    .brand { display: flex; align-items: center; gap: 10px; min-width: 180px; }
+    .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
     .brand img { height: 36px; width: auto; display: block; }
     .brand strong { display: block; font-size: 14px; letter-spacing: 0.04em; }
     .brand span { display: block; font-size: 11px; color: var(--muted); }
-    .nav { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+    .nav { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
     .nav button {
-      border: 0; background: transparent; color: var(--muted);
+      border: 0; outline: none; background: transparent; color: var(--muted);
       padding: 8px 12px; border-radius: 999px; font-weight: 600; font-size: 13px;
     }
     .nav button.active { background: var(--brand); color: #fff; }
-    .top-actions { display: flex; gap: 8px; align-items: center; }
+    .top-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
     .btn {
-      border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 650; font-size: 13px;
+      border: 0; outline: none; border-radius: 10px; padding: 10px 14px; font-weight: 650; font-size: 13px;
       background: var(--brand); color: #fff;
     }
     .btn.secondary { background: #e8ebed; color: var(--ink); }
-    .btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+    .btn.ghost { background: #eef1f3; color: var(--muted); }
     .btn:disabled { opacity: 0.55; cursor: wait; }
-    .main { padding: 20px; flex: 1; width: min(1400px, 100%); margin: 0 auto; }
+    .main {
+      padding: 20px; flex: 1; width: 100%; max-width: 1400px; margin: 0 auto;
+      min-width: 0; box-sizing: border-box;
+    }
     .login-wrap {
       min-height: 100vh; display: grid; place-items: center; padding: 24px;
     }
     .login-card {
       width: min(420px, 100%); background: var(--panel); border-radius: 20px;
-      box-shadow: var(--shadow); padding: 28px; border: 1px solid rgba(56,62,66,0.08);
+      box-shadow: var(--shadow); padding: 28px; border: 0;
     }
     .login-card h1 { margin: 0 0 6px; font-size: 24px; }
     .login-card p { margin: 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.45; }
     .field { display: grid; gap: 6px; margin-bottom: 12px; }
     .field label { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
     .field input, .field select, .field textarea {
-      width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
-      background: #fff; color: var(--ink);
+      width: 100%; border: 0; outline: none; border-radius: 10px; padding: 10px 12px;
+      background: #eef1f3; color: var(--ink);
     }
+    .field input:focus, .field select:focus, .field textarea:focus { background: #e4e8ec; }
     .field textarea { min-height: 80px; resize: vertical; }
     .error { color: var(--danger); font-size: 13px; margin: 8px 0 0; }
     .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
     .toolbar input[type="search"], .toolbar select {
-      border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff; min-width: 180px;
+      border: 0; outline: none; border-radius: 10px; padding: 10px 12px; background: #fff; min-width: 180px;
     }
     .view-toggle { display: flex; gap: 4px; background: #e8ebed; padding: 4px; border-radius: 12px; }
-    .view-toggle button { border: 0; background: transparent; padding: 8px 12px; border-radius: 8px; font-weight: 650; font-size: 12px; color: var(--muted); }
+    .view-toggle button { border: 0; outline: none; background: transparent; padding: 8px 12px; border-radius: 8px; font-weight: 650; font-size: 12px; color: var(--muted); }
     .view-toggle button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
     .kanban {
       display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 12px;
-      overflow-x: auto; padding-bottom: 8px;
+      overflow-x: auto; padding-bottom: 8px; max-width: 100%;
     }
     .col {
-      background: rgba(255,255,255,0.7); border: 1px solid var(--line); border-radius: var(--radius);
-      min-height: 280px; display: flex; flex-direction: column;
+      background: rgba(255,255,255,0.45); border: 0; border-radius: var(--radius);
+      min-height: 280px; display: flex; flex-direction: column; overflow: hidden;
     }
     .col h3 {
-      margin: 0; padding: 12px 12px 8px; font-size: 12px; letter-spacing: 0.06em;
-      text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between;
+      margin: 0; padding: 12px; font-size: 12px; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--muted);
+      display: flex; flex-direction: column; gap: 4px;
+      background: transparent;
     }
-    .col-body { padding: 0 8px 8px; display: grid; gap: 8px; }
+    .col h3 .col-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .col h3 .col-sum { font-size: 12px; font-weight: 750; letter-spacing: 0; text-transform: none; opacity: 0.95; }
+    .col h3 .col-margin { font-size: 11px; font-weight: 650; letter-spacing: 0; text-transform: none; opacity: 0.75; }
+    .col-body { padding: 8px; display: grid; gap: 8px; }
+    .orders-totals {
+      display: flex; flex-wrap: wrap; gap: 16px 28px; margin-bottom: 14px;
+      background: var(--panel); border-radius: var(--radius); padding: 14px 16px;
+      box-shadow: var(--shadow); position: relative;
+    }
+    .orders-totals .ot-item { display: grid; gap: 2px; }
+    .orders-totals .ot-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+    .orders-totals .ot-value { font-size: 18px; font-weight: 750; }
+    .orders-totals .ot-sub { font-size: 13px; font-weight: 650; color: var(--brand-soft); }
+    .ot-info, .info-btn {
+      width: 28px; height: 28px; border-radius: 999px; border: 0; outline: none;
+      background: #eef1f3; color: var(--muted); font-size: 13px; font-weight: 750;
+      display: grid; place-items: center; cursor: pointer; line-height: 1;
+      flex-shrink: 0;
+    }
+    .info-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+    .ot-info[aria-expanded="true"], .info-btn[aria-expanded="true"] { background: var(--brand); color: #fff; }
+    .ot-tip, .info-tip {
+      position: absolute; top: calc(100% + 8px); right: 0; z-index: 5;
+      width: min(280px, 70vw);
+      background: #1c2124; color: #fff; border-radius: 10px;
+      padding: 10px 12px; font-size: 12px; font-weight: 550; line-height: 1.4;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    }
+    .ot-tip::before, .info-tip::before {
+      content: ""; position: absolute; top: -5px; right: 10px;
+      width: 10px; height: 10px; background: #1c2124; transform: rotate(45deg);
+    }
+    .panel-head {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+      margin-bottom: 12px; position: relative;
+    }
+    .panel-head h2 { margin: 0; font-size: 16px; overflow-wrap: anywhere; flex: 1; min-width: 0; }
+    .kpi .sub { margin-top: 6px; font-size: 13px; font-weight: 650; color: var(--brand-soft); }
+    .charts-grid {
+      display: grid; grid-template-columns: 1.15fr 1fr; gap: 12px; margin-bottom: 16px;
+      max-width: 100%; min-width: 0;
+    }
+    .chart-wrap { min-height: 0; max-width: 100%; min-width: 0; }
+    .chart-legend {
+      display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px;
+      font-size: 12px; color: var(--muted);
+    }
+    .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .chart-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+    .dual-bars {
+      display: flex; align-items: flex-end; gap: 10px; height: 140px; padding: 0;
+      width: 100%;
+    }
+    .dual-col {
+      flex: 1 1 0; min-width: 48px; height: 100%;
+      display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px;
+    }
+    .dual-pair {
+      display: flex; align-items: flex-end; justify-content: center; gap: 5px;
+      width: 100%; height: 108px;
+    }
+    .dual-stem {
+      width: 42%; max-width: 40px; border-radius: 6px 6px 3px 3px; min-height: 3px;
+    }
+    .dual-stem.rev { background: #526058; }
+    .dual-stem.mar { background: #1b7a4a; }
+    .dual-lbl { font-size: 11px; font-weight: 650; color: var(--muted); text-align: center; }
+    .dual-tip { font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; line-height: 1.2; }
+    .status-list { display: grid; gap: 7px; width: 100%; }
+    .status-row {
+      display: grid; grid-template-columns: minmax(84px, 110px) 1fr auto;
+      gap: 10px; align-items: center; min-width: 0; width: 100%;
+    }
+    .status-row .name {
+      font-size: 12px; font-weight: 650; color: var(--ink); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .status-row .track {
+      height: 10px; border-radius: 999px; background: #e8ebed; overflow: hidden; min-width: 0;
+    }
+    .status-row .fill {
+      height: 100%; border-radius: 999px; min-width: 0; transition: width .28s ease;
+    }
+    .status-row .count {
+      font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums;
+      min-width: 1.5em; text-align: right;
+    }
+    .status-chart { min-height: 0; width: 100%; }
+    .status-chart .chart-legend { margin-top: 8px; }
+    .stack-block { display: grid; gap: 12px; }
+    .stack-bar {
+      display: flex; height: 28px; border-radius: 8px; overflow: hidden; background: #e8ebed;
+    }
+    .stack-seg {
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; color: #fff; min-width: 0; padding: 0 6px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .stack-meta { display: grid; gap: 6px; }
+    .stack-row {
+      display: grid; grid-template-columns: 14px 1fr auto; gap: 10px; align-items: center;
+      font-size: 13px;
+    }
+    .stack-row .val { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .donut-wrap {
+      display: flex; gap: 16px; align-items: center; flex-wrap: wrap; min-height: 0;
+      max-width: 100%; min-width: 0;
+    }
+    .donut {
+      position: relative; width: 120px; height: 120px; flex-shrink: 0;
+    }
+    .donut svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+    .donut-center {
+      position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
+      pointer-events: none;
+    }
+    .donut-center strong { display: block; font-size: 22px; font-weight: 750; letter-spacing: -0.02em; }
+    .donut-center span { display: block; font-size: 11px; color: var(--muted); font-weight: 650; margin-top: 2px; }
+    .donut-stats { display: grid; gap: 10px; flex: 1; min-width: 0; }
+    .donut-stat {
+      background: #f3f5f6; border-radius: 10px; padding: 10px 12px; min-width: 0;
+    }
+    .donut-stat .lab { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    .donut-stat .num { margin-top: 4px; font-size: 16px; font-weight: 750; overflow-wrap: anywhere; }
+    .period-toggle { display: flex; gap: 4px; background: #e8ebed; padding: 4px; border-radius: 12px; flex-wrap: wrap; }
+    .period-toggle button {
+      border: 0; outline: none; background: transparent; padding: 8px 12px; border-radius: 8px;
+      font-weight: 650; font-size: 12px; color: var(--muted);
+    }
+    .period-toggle button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .col.drag-over { background: rgba(56, 62, 66, 0.10) !important; }
+    .col-body.drag-over { background: rgba(255,255,255,0.35); border-radius: 10px; }
+    .card { touch-action: manipulation; }
+    .card.dragging { opacity: 0.45; transform: scale(0.98); }
+    .card .drag-hint { font-size: 10px; color: var(--muted); margin-top: 6px; opacity: 0.7; }
+    .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+    .quick-actions button {
+      border: 0; outline: none; border-radius: 999px; padding: 8px 12px;
+      font-size: 12px; font-weight: 650; background: #eef1f3; color: var(--ink);
+    }
+    .quick-actions button.active { background: var(--brand); color: #fff; }
+    .quick-actions button.ok { background: rgba(27, 122, 74, 0.14); color: var(--ok); }
+    .quick-actions button.warn { background: rgba(154, 103, 0, 0.14); color: var(--warn); }
+    .remind-list { display: grid; gap: 8px; }
+    .remind-item {
+      display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
+      background: #f3f5f6; border-radius: 12px; padding: 12px 14px; cursor: pointer; text-align: left;
+    }
+    .remind-item:hover { background: #e9ecef; }
+    .remind-item .title { font-weight: 700; font-size: 13px; }
+    .remind-item .desc { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.35; }
+    .remind-item .tag {
+      font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 999px; background: #fff; color: var(--muted);
+    }
+    .remind-item .tag.debt { color: var(--warn); background: rgba(154, 103, 0, 0.12); }
+    .remind-item .tag.stuck { color: var(--st-work-fg); background: var(--st-work-chip); }
+    .remind-item .tag.ship { color: var(--st-ship-fg); background: var(--st-ship-chip); }
+    .col.st-new { background: var(--st-new-bg); }
+    .col.st-new h3 { color: var(--st-new-fg); }
+    .col.st-work { background: var(--st-work-bg); }
+    .col.st-work h3 { color: var(--st-work-fg); }
+    .col.st-ready { background: var(--st-ready-bg); }
+    .col.st-ready h3 { color: var(--st-ready-fg); }
+    .col.st-ship { background: var(--st-ship-bg); }
+    .col.st-ship h3 { color: var(--st-ship-fg); }
+    .col.st-done { background: var(--st-done-bg); }
+    .col.st-done h3 { color: var(--st-done-fg); }
+    .col.st-cancel { background: var(--st-cancel-bg); }
+    .col.st-cancel h3 { color: var(--st-cancel-fg); }
     .card {
-      background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+      background: var(--panel); border: 0; border-radius: 12px;
       padding: 12px; box-shadow: var(--shadow); cursor: pointer; text-align: left;
       transition: transform .18s ease, box-shadow .18s ease;
     }
@@ -115,24 +321,26 @@
     .list { display: grid; gap: 8px; }
     .row-card {
       display: grid; grid-template-columns: 1.1fr 1.2fr 0.8fr 0.7fr 0.7fr 0.7fr auto;
-      gap: 10px; align-items: center; background: var(--panel); border: 1px solid var(--line);
+      gap: 10px; align-items: center; background: var(--panel); border: 0;
       border-radius: 12px; padding: 12px 14px; cursor: pointer;
     }
-    .row-card:hover { border-color: #b7bfc6; }
-    .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .row-card:hover { background: #f7f8f9; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; max-width: 100%; }
     .kpi {
-      background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-      padding: 16px; box-shadow: var(--shadow);
+      background: var(--panel); border: 0; border-radius: var(--radius);
+      padding: 16px; box-shadow: var(--shadow); min-width: 0;
     }
     .kpi .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
-    .kpi .value { margin-top: 8px; font-size: 24px; font-weight: 750; letter-spacing: -0.02em; }
+    .kpi .value { margin-top: 8px; font-size: 24px; font-weight: 750; letter-spacing: -0.02em; overflow-wrap: anywhere; }
     .panel {
-      background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+      background: var(--panel); border: 0; border-radius: var(--radius);
       padding: 16px; box-shadow: var(--shadow); margin-bottom: 16px;
+      max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: visible;
     }
-    .panel h2 { margin: 0 0 12px; font-size: 16px; }
+    .panel h2 { margin: 0 0 12px; font-size: 16px; overflow-wrap: anywhere; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th, td { text-align: left; padding: 10px 8px; border: 0; vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(28,33,36,0.03); }
     th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
     .drawer-backdrop {
       position: fixed; inset: 0; background: rgba(28,33,36,0.35); z-index: 40;
@@ -141,7 +349,7 @@
     .drawer {
       width: min(560px, 100%); height: 100%; background: #fff; overflow: auto;
       padding: 20px; box-shadow: -20px 0 50px rgba(0,0,0,0.15);
-      animation: slideIn .22s ease;
+      animation: slideIn .22s ease; border: 0;
     }
     @keyframes slideIn { from { transform: translateX(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
     .drawer header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 16px; }
@@ -149,616 +357,189 @@
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .badge {
       display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px;
-      font-size: 11px; font-weight: 700; background: #eef1f3; color: var(--muted);
+      font-size: 11px; font-weight: 700; background: #eef1f3; color: var(--muted); border: 0;
     }
-    .badge.ok { background: #e6f6ed; color: var(--ok); }
-    .badge.warn { background: #fff6db; color: var(--warn); }
+    .badge.st-new { background: var(--st-new-chip); color: var(--st-new-fg); }
+    .badge.st-work { background: var(--st-work-chip); color: var(--st-work-fg); }
+    .badge.st-ready { background: var(--st-ready-chip); color: var(--st-ready-fg); }
+    .badge.st-ship { background: var(--st-ship-chip); color: var(--st-ship-fg); }
+    .badge.st-done { background: var(--st-done-chip); color: var(--st-done-fg); }
+    .badge.st-cancel { background: var(--st-cancel-chip); color: var(--st-cancel-fg); }
     .section-title { margin: 18px 0 10px; font-size: 13px; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
     .empty { color: var(--muted); font-size: 14px; padding: 24px; text-align: center; }
-    .status-Нове { background: #fff6db; color: #856404; }
-    .status-В\ роботі, .chip-work { background: #e8f1ff; color: #1d4f91; }
+    .alias { color: var(--muted); font-size: 12px; }
+    .alias-more {
+      color: var(--muted); font-size: 12px; font-weight: 650;
+      cursor: help; white-space: nowrap;
+    }
+    .alias-more.tapped { text-decoration: underline; }
+    .phone-key { font-variant-numeric: tabular-nums; font-weight: 650; }
+    .contact-links { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+    .contact-links--stack { display: grid; gap: 4px; justify-items: start; }
+    .contact-link {
+      color: var(--brand); font-weight: 650; text-decoration: none;
+      border-bottom: 1px solid rgba(56, 62, 66, 0.18);
+    }
+    .contact-link:hover { color: var(--ink); border-bottom-color: currentColor; }
+    .contact-muted { color: var(--muted); font-size: 12px; }
+    .quick-contact { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+    .quick-contact a {
+      display: inline-flex; align-items: center; gap: 6px;
+      border-radius: 10px; padding: 9px 12px; font-weight: 650; font-size: 13px;
+      background: #eef1f3; color: var(--ink); text-decoration: none;
+    }
+    .quick-contact a:hover { background: #e4e8ec; }
+    .table-scroll {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: contain;
+    }
+    .table-scroll table { min-width: 560px; }
+    .card-status {
+      margin-top: 8px; width: 100%; border: 0; outline: none; border-radius: 8px;
+      padding: 8px 10px; background: #eef1f3; color: var(--ink); font-size: 12px; font-weight: 650;
+      min-height: 40px;
+    }
+    .desktop-only { display: initial; }
+    .mobile-only { display: none; }
     @media (max-width: 1100px) {
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .row-card { grid-template-columns: 1fr 1fr; }
       .kanban { grid-template-columns: repeat(3, minmax(200px, 1fr)); }
     }
+    @media (max-width: 900px) {
+      .charts-grid { grid-template-columns: 1fr; }
+    }
     @media (max-width: 720px) {
+      .desktop-only { display: none !important; }
+      .mobile-only { display: block !important; }
+      body { padding-bottom: env(safe-area-inset-bottom, 0); }
+      .top {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+          "brand actions"
+          "nav nav";
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        padding-top: max(10px, env(safe-area-inset-top, 0px));
+      }
+      .brand { grid-area: brand; min-width: 0; }
+      .brand img { height: 30px; }
+      .brand strong { font-size: 13px; }
+      .brand span { font-size: 10px; }
+      .top-actions { grid-area: actions; gap: 6px; }
+      .top-actions .btn { padding: 9px 11px; font-size: 12px; white-space: nowrap; }
+      .nav {
+        grid-area: nav;
+        order: unset;
+        flex: none;
+        width: 100%;
+        max-width: 100%;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        gap: 6px;
+        padding-bottom: 2px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+      .nav::-webkit-scrollbar { display: none; }
+      .nav button {
+        flex: 0 0 auto; padding: 10px 14px; font-size: 13px;
+        background: #eef1f3; color: var(--ink);
+      }
+      .nav button.active { background: var(--brand); color: #fff; }
+      .main {
+        padding: 12px;
+        padding-bottom: 28px;
+        width: 100%;
+        max-width: 100%;
+      }
+      .toolbar { gap: 8px; align-items: stretch; max-width: 100%; }
+      .toolbar input[type="search"], .toolbar select {
+        min-width: 0; width: 100%; flex: 1 1 100%;
+        min-height: 44px; font-size: 16px;
+      }
+      .view-toggle, .period-toggle { width: 100%; max-width: 100%; }
+      .view-toggle button, .period-toggle button {
+        flex: 1; min-height: 40px; padding: 10px 8px;
+      }
+      .orders-totals { gap: 12px 16px; padding: 12px; max-width: 100%; }
+      .orders-totals .ot-value { font-size: 16px; overflow-wrap: anywhere; }
+      .kanban {
+        display: flex; gap: 10px;
+        overflow-x: auto; scroll-snap-type: x mandatory;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 12px;
+        margin: 0;
+        max-width: 100%;
+      }
+      .kanban .col {
+        flex: 0 0 min(82vw, 300px);
+        width: min(82vw, 300px);
+        min-height: 240px; max-height: none;
+        scroll-snap-align: start;
+      }
+      .col-body { max-height: 58vh; overflow-y: auto; }
+      .card { padding: 14px; max-width: 100%; }
+      .card:hover { transform: none; }
+      .card .drag-hint { display: none; }
+      .list { gap: 10px; max-width: 100%; }
+      .row-card {
+        grid-template-columns: 1fr;
+        gap: 6px; padding: 14px;
+        max-width: 100%;
+      }
       .grid2 { grid-template-columns: 1fr; }
-      .kpi-grid { grid-template-columns: 1fr; }
-      .main { padding: 14px; }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .kpi { padding: 12px; }
+      .kpi .value { font-size: 18px; margin-top: 6px; }
+      .kpi .label { font-size: 10px; }
+      .panel { padding: 14px; margin-bottom: 12px; }
+      .panel h2 { font-size: 15px; }
+      .drawer-backdrop { align-items: stretch; }
+      .drawer {
+        width: 100%; max-width: 100%;
+        padding: 16px;
+        padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
+        border-radius: 0; animation: slideUp .22s ease;
+        box-shadow: none;
+      }
+      @keyframes slideUp { from { transform: translateY(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+      .drawer header { position: sticky; top: 0; background: #fff; padding-bottom: 10px; z-index: 2; }
+      .quick-actions button { min-height: 40px; padding: 10px 14px; font-size: 13px; }
+      .btn { min-height: 44px; padding: 12px 16px; }
+      .field input, .field select, .field textarea { min-height: 44px; font-size: 16px; max-width: 100%; }
+      .status-row { grid-template-columns: minmax(64px, 0.85fr) 1fr auto; gap: 8px; }
+      .status-row .track { height: 8px; }
+      .donut-wrap {
+        justify-content: center;
+        flex-direction: column;
+        align-items: stretch;
+        max-width: 100%;
+      }
+      .donut { width: min(148px, 42vw); height: min(148px, 42vw); margin: 0 auto; }
+      .donut-stats { width: 100%; }
+      .remind-item { grid-template-columns: 1fr; gap: 8px; max-width: 100%; }
+      table { min-width: 0; }
+      .login-card { padding: 22px 18px; border-radius: 16px; max-width: 100%; }
+      .login-card h1 { font-size: 22px; }
+      .table-scroll table { min-width: 520px; }
+      th, td { padding: 8px 6px; }
+    }
+    @media (max-width: 420px) {
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .kanban .col { flex-basis: 86vw; width: 86vw; }
+      .brand span { display: none; }
+      .top-actions .btn.ghost { display: none; }
     }
   </style>
 </head>
 <body>
   <div id="root"></div>
-  <script type="text/babel">
-    const { useState, useEffect, useMemo } = React;
-    const STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
-    const EXPENSE_CATS = ["Реклама / маркетинг","Доставка","Пакування / матеріали","Підряд / зарплати","Інше"];
-    const TOKEN_KEY = "avalon_admin_token";
-
-    function money(v) {
-      if (v == null || v === "") return "—";
-      return Number(v).toLocaleString("uk-UA") + " ₴";
-    }
-    function pct(v) {
-      if (v == null || v === "") return "—";
-      return Number(v).toLocaleString("uk-UA", { maximumFractionDigits: 1 }) + "%";
-    }
-
-    async function api(path, { method = "GET", body, token } = {}) {
-      const headers = { "Content-Type": "application/json" };
-      if (token) headers.Authorization = "Bearer " + token;
-      const res = await fetch(path, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-        credentials: "same-origin",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const err = new Error(data.error || data.message || ("HTTP " + res.status));
-        err.status = res.status;
-        err.data = data;
-        throw err;
-      }
-      return data;
-    }
-
-    function Login({ onLogin }) {
-      const [password, setPassword] = useState("");
-      const [error, setError] = useState("");
-      const [loading, setLoading] = useState(false);
-      async function submit(e) {
-        e.preventDefault();
-        setLoading(true); setError("");
-        try {
-          const data = await api("/api/admin/login", { method: "POST", body: { password } });
-          onLogin(data.token);
-        } catch (err) {
-          setError(err.message || "Помилка входу");
-        } finally {
-          setLoading(false);
-        }
-      }
-      return (
-        <div className="login-wrap">
-          <form className="login-card" onSubmit={submit}>
-            <img src="/images/avalon-logo-7016.svg" alt="Avalon" style={{ height: 56, marginBottom: 16 }} />
-            <h1>Кабінет CRM</h1>
-            <p>Внутрішній доступ до заявок, маржі, партнерів і витрат. Клієнти сюди не потрапляють.</p>
-            <div className="field">
-              <label>Пароль</label>
-              <input type="password" autoFocus value={password} onChange={e => setPassword(e.target.value)} placeholder="ADMIN_PASSWORD" />
-            </div>
-            {error && <div className="error">{error}</div>}
-            <button className="btn" style={{ width: "100%", marginTop: 12 }} disabled={loading || !password}>
-              {loading ? "Перевірка…" : "Увійти"}
-            </button>
-          </form>
-        </div>
-      );
-    }
-
-    function StatusChip({ status }) {
-      const map = {
-        "Нове": "warn",
-        "В роботі": "",
-        "Готове": "ok",
-        "Відправлено": "ok",
-        "Завершено": "ok",
-        "Скасовано": "",
-      };
-      return <span className={"badge " + (map[status] || "")}>{status}</span>;
-    }
-
-    function OrderDrawer({ token, orderNumber, onClose, onChanged }) {
-      const [data, setData] = useState(null);
-      const [busy, setBusy] = useState(false);
-      const [error, setError] = useState("");
-      const [form, setForm] = useState(null);
-
-      async function load() {
-        setError("");
-        const res = await api("/api/admin/order?order_number=" + encodeURIComponent(orderNumber), { token });
-        setData(res);
-        const item = (res.items && res.items[0]) || {};
-        setForm({
-          row: item.row,
-          status: (res.order && res.order.status) || item.status || "Нове",
-          cost_total: item.cost_total ?? "",
-          list_price: item.list_price ?? "",
-          discount_pct: item.discount_pct ?? "",
-          discount_uah: item.discount_uah ?? "",
-          revenue: item.revenue ?? "",
-          client_paid: !!(res.order && res.order.client_paid),
-          margin_paid: !!(res.order && res.order.margin_paid),
-          notes: item.notes || "",
-          delivery_date: (res.order && res.order.delivery_date) || item.delivery_date || "",
-          payment_method: item.payment_method || "",
-        });
-      }
-
-      useEffect(() => { load().catch(e => setError(e.message)); }, [orderNumber]);
-
-      async function save(patch) {
-        setBusy(true); setError("");
-        try {
-          const res = await api("/api/admin/order", {
-            method: "PATCH",
-            token,
-            body: { order_number: orderNumber, row: form.row, patch },
-          });
-          setData(res);
-          const item = (res.items && res.items[0]) || {};
-          setForm(f => ({
-            ...f,
-            status: (res.order && res.order.status) || f.status,
-            cost_total: item.cost_total ?? f.cost_total,
-            list_price: item.list_price ?? f.list_price,
-            discount_pct: item.discount_pct ?? f.discount_pct,
-            discount_uah: item.discount_uah ?? f.discount_uah,
-            revenue: item.revenue ?? f.revenue,
-            client_paid: !!(res.order && res.order.client_paid),
-            margin_paid: !!(res.order && res.order.margin_paid),
-          }));
-          onChanged && onChanged();
-        } catch (e) {
-          setError(e.message);
-        } finally {
-          setBusy(false);
-        }
-      }
-
-      if (!form) {
-        return (
-          <div className="drawer-backdrop" onClick={onClose}>
-            <div className="drawer" onClick={e => e.stopPropagation()}>
-              <p className="empty">{error || "Завантаження…"}</p>
-            </div>
-          </div>
-        );
-      }
-
-      const order = data.order || {};
-      const items = data.items || [];
-      const profit = (Number(form.revenue) || 0) - (Number(form.cost_total) || 0);
-      const marginPct = Number(form.revenue) ? Math.round((profit / Number(form.revenue)) * 1000) / 10 : 0;
-
-      return (
-        <div className="drawer-backdrop" onClick={onClose}>
-          <div className="drawer" onClick={e => e.stopPropagation()}>
-            <header>
-              <div>
-                <h2>{orderNumber}</h2>
-                <div className="meta" style={{ color: "var(--muted)", marginTop: 4 }}>
-                  {order.client} · {order.phone} · {order.city || "—"}
-                </div>
-              </div>
-              <button className="btn ghost" onClick={onClose}>Закрити</button>
-            </header>
-
-            <div className="field">
-              <label>Статус</label>
-              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
-                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            <button className="btn secondary" disabled={busy} onClick={() => save({ status: form.status })}>Зберегти статус</button>
-
-            <div className="section-title">Фінанси</div>
-            <div className="grid2">
-              <div className="field"><label>Собівартість</label>
-                <input type="number" value={form.cost_total} onChange={e => setForm({ ...form, cost_total: e.target.value })} /></div>
-              <div className="field"><label>Роздрібна ціна</label>
-                <input type="number" value={form.list_price} onChange={e => setForm({ ...form, list_price: e.target.value })} /></div>
-              <div className="field"><label>Знижка %</label>
-                <input type="number" step="0.1" value={form.discount_pct} onChange={e => setForm({ ...form, discount_pct: e.target.value })} /></div>
-              <div className="field"><label>Знижка ₴</label>
-                <input type="number" value={form.discount_uah} onChange={e => setForm({ ...form, discount_uah: e.target.value })} /></div>
-              <div className="field"><label>Ціна продажу / виручка</label>
-                <input type="number" value={form.revenue} onChange={e => setForm({ ...form, revenue: e.target.value })} /></div>
-              <div className="field"><label>Маржа (авто)</label>
-                <input disabled value={money(profit) + " · " + pct(marginPct)} /></div>
-            </div>
-            <div className="grid2" style={{ marginTop: 8 }}>
-              <div className="field"><label>Комісія партнера</label><input disabled value={money(items.reduce((s, it) => s + (Number(it.commission) || 0), 0))} /></div>
-              <div className="field"><label>Чистий по позиції</label><input disabled value={money(items.reduce((s, it) => s + (Number(it.net_profit) || 0), 0))} /></div>
-            </div>
-            <button className="btn" style={{ marginTop: 8 }} disabled={busy} onClick={() => save({
-              cost_total: form.cost_total === "" ? null : Number(form.cost_total),
-              list_price: form.list_price === "" ? null : Number(form.list_price),
-              discount_pct: form.discount_pct === "" ? null : Number(form.discount_pct),
-              discount_uah: form.discount_uah === "" ? null : Number(form.discount_uah),
-              revenue: form.revenue === "" ? null : Number(form.revenue),
-            })}>Зберегти фінанси</button>
-
-            <div className="section-title">Оплата / маржа</div>
-            <div className="grid2">
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input type="checkbox" checked={form.client_paid} onChange={e => { const v = e.target.checked; setForm({ ...form, client_paid: v }); save({ client_paid: v }); }} />
-                Оплата клієнта ✓
-              </label>
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input type="checkbox" checked={form.margin_paid} onChange={e => { const v = e.target.checked; setForm({ ...form, margin_paid: v }); save({ margin_paid: v }); }} />
-                Маржу отримано ✓
-              </label>
-            </div>
-
-            <div className="section-title">Доставка та нотатки</div>
-            <div className="grid2">
-              <div className="field"><label>Дата доставки</label>
-                <input type="date" value={(form.delivery_date || "").slice(0, 10)} onChange={e => setForm({ ...form, delivery_date: e.target.value })} /></div>
-              <div className="field"><label>Оплата</label>
-                <input value={form.payment_method} onChange={e => setForm({ ...form, payment_method: e.target.value })} /></div>
-            </div>
-            <div className="field"><label>Примітки</label>
-              <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
-            <button className="btn secondary" disabled={busy} onClick={() => save({
-              delivery_date: form.delivery_date,
-              payment_method: form.payment_method,
-              notes: form.notes,
-            })}>Зберегти деталі</button>
-
-            <div className="section-title">Позиції ({items.length})</div>
-            {items.map(it => (
-              <div key={it.row} className="panel" style={{ boxShadow: "none", padding: 12 }}>
-                <div style={{ fontWeight: 700 }}>{it.basket_type || "Кошик"} · {it.construction}</div>
-                <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
-                  {it.size_w || "—"}×{it.size_h || "—"}×{it.size_d || "—"} мм · {it.quantity} шт · {it.color} · {it.pattern}
-                </div>
-                <div style={{ marginTop: 6, fontSize: 13 }}>{money(it.revenue)} · маржа {pct(it.margin_pct)}</div>
-              </div>
-            ))}
-            {error && <div className="error">{error}</div>}
-          </div>
-        </div>
-      );
-    }
-
-    function OrdersView({ token }) {
-      const [groups, setGroups] = useState([]);
-      const [q, setQ] = useState("");
-      const [status, setStatus] = useState("");
-      const [view, setView] = useState("kanban");
-      const [selected, setSelected] = useState(null);
-      const [error, setError] = useState("");
-      const [loading, setLoading] = useState(true);
-
-      async function load() {
-        setLoading(true); setError("");
-        try {
-          const qs = new URLSearchParams();
-          if (q) qs.set("q", q);
-          if (status) qs.set("status", status);
-          const data = await api("/api/admin/orders?" + qs.toString(), { token });
-          setGroups(data.groups || []);
-        } catch (e) {
-          setError(e.message);
-        } finally {
-          setLoading(false);
-        }
-      }
-
-      useEffect(() => { load(); }, [token]);
-
-      const byStatus = useMemo(() => {
-        const map = {};
-        STATUSES.forEach(s => { map[s] = []; });
-        groups.forEach(g => {
-          if (!map[g.status]) map[g.status] = [];
-          map[g.status].push(g);
-        });
-        return map;
-      }, [groups]);
-
-      return (
-        <div>
-          <div className="toolbar">
-            <input type="search" placeholder="Пошук: імʼя, телефон, ORD-…" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && load()} />
-            <select value={status} onChange={e => setStatus(e.target.value)}>
-              <option value="">Усі статуси</option>
-              {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <button className="btn secondary" onClick={load}>Оновити</button>
-            <div className="view-toggle" style={{ marginLeft: "auto" }}>
-              <button className={view === "kanban" ? "active" : ""} onClick={() => setView("kanban")}>Воронка</button>
-              <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}>Список</button>
-            </div>
-          </div>
-          {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
-          {loading && <div className="empty">Завантаження замовлень…</div>}
-          {!loading && !groups.length && <div className="empty">Замовлень не знайдено</div>}
-
-          {!loading && view === "kanban" && (
-            <div className="kanban">
-              {STATUSES.map(s => (
-                <div className="col" key={s}>
-                  <h3><span>{s}</span><span>{byStatus[s].length}</span></h3>
-                  <div className="col-body">
-                    {byStatus[s].map(g => (
-                      <button key={g.order_number} className="card" onClick={() => setSelected(g.order_number)}>
-                        <div className="num">{g.order_number}</div>
-                        <div className="meta">{g.client}<br />{g.phone}<br />{g.city || "—"}</div>
-                        <div className="money">{money(g.revenue)}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {!loading && view === "list" && (
-            <div className="list">
-              {groups.map(g => (
-                <div key={g.order_number} className="row-card" onClick={() => setSelected(g.order_number)}>
-                  <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{g.created_at}</div></div>
-                  <div>{g.client}<div style={{ color: "var(--muted)", fontSize: 12 }}>{g.phone}</div></div>
-                  <div><StatusChip status={g.status} /></div>
-                  <div>{money(g.revenue)}</div>
-                  <div>{money(g.profit)}</div>
-                  <div>{pct(g.margin_pct)}</div>
-                  <div style={{ color: "var(--muted)", fontSize: 12 }}>{g.source}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {selected && (
-            <OrderDrawer
-              token={token}
-              orderNumber={selected}
-              onClose={() => setSelected(null)}
-              onChanged={load}
-            />
-          )}
-        </div>
-      );
-    }
-
-    function DashboardView({ token }) {
-      const [data, setData] = useState(null);
-      const [error, setError] = useState("");
-      useEffect(() => {
-        api("/api/admin/dashboard", { token })
-          .then(setData)
-          .catch(e => setError(e.message));
-      }, [token]);
-      if (error) return <div className="error">{error}</div>;
-      if (!data) return <div className="empty">Завантаження зведення…</div>;
-      const t = data.totals || {};
-      return (
-        <div>
-          <div className="kpi-grid">
-            <div className="kpi"><div className="label">Виручка</div><div className="value">{money(t.revenue)}</div></div>
-            <div className="kpi"><div className="label">Собівартість</div><div className="value">{money(t.cost)}</div></div>
-            <div className="kpi"><div className="label">Валовий прибуток</div><div className="value">{money(t.profit)}</div></div>
-            <div className="kpi"><div className="label">Маржа %</div><div className="value">{pct(t.margin_pct)}</div></div>
-            <div className="kpi"><div className="label">Маржа до отримання</div><div className="value">{money(t.margin_debt)}</div></div>
-            <div className="kpi"><div className="label">Маржу отримано</div><div className="value">{money(t.margin_received)}</div></div>
-            <div className="kpi"><div className="label">Комісії + витрати</div><div className="value">{money((t.commission || 0) + (t.expenses || 0))}</div></div>
-            <div className="kpi"><div className="label">Чистий факт</div><div className="value">{money(t.net_fact)}</div></div>
-          </div>
-          <div className="panel">
-            <h2>По статусах</h2>
-            <div className="toolbar">
-              {STATUSES.map(s => (
-                <span key={s} className="badge">{s}: {(t.by_status && t.by_status[s]) || 0}</span>
-              ))}
-            </div>
-          </div>
-          <div className="panel">
-            <h2>Помісячно</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Місяць</th><th>Виручка</th><th>Собівартість</th><th>Валовий</th><th>Маржа %</th>
-                  <th>Отримано</th><th>Борг</th><th>Комісії</th><th>Витрати</th><th>Чистий</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(data.monthly || []).map(m => (
-                  <tr key={m.month}>
-                    <td>{m.month}</td>
-                    <td>{money(m.revenue)}</td>
-                    <td>{money(m.cost)}</td>
-                    <td>{money(m.profit)}</td>
-                    <td>{pct(m.margin_pct)}</td>
-                    <td>{money(m.margin_received)}</td>
-                    <td>{money(m.margin_debt)}</td>
-                    <td>{money(m.commission)}</td>
-                    <td>{money(m.expenses)}</td>
-                    <td>{money(m.net_fact)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      );
-    }
-
-    function PartnersView({ token }) {
-      const [partners, setPartners] = useState([]);
-      const [payouts, setPayouts] = useState([]);
-      const [error, setError] = useState("");
-      const [form, setForm] = useState({ code: "", name: "", type: "ОСББ", contact: "", rate: 150 });
-      const [payout, setPayout] = useState({ code: "", amount: "", method: "Переказ", note: "" });
-
-      async function load() {
-        const [p, pay] = await Promise.all([
-          api("/api/admin/partners", { token }),
-          api("/api/admin/payouts", { token }),
-        ]);
-        setPartners(p.partners || []);
-        setPayouts(pay.payouts || []);
-      }
-      useEffect(() => { load().catch(e => setError(e.message)); }, [token]);
-
-      return (
-        <div>
-          {error && <div className="error">{error}</div>}
-          <div className="panel">
-            <h2>Партнери / дропшипери</h2>
-            <div className="grid2">
-              <div className="field"><label>КОД</label><input value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} placeholder="OSBB-Lvivska12" /></div>
-              <div className="field"><label>Назва</label><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-              <div className="field"><label>Тип</label><input value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} /></div>
-              <div className="field"><label>Контакт</label><input value={form.contact} onChange={e => setForm({ ...form, contact: e.target.value })} /></div>
-              <div className="field"><label>Ставка за кошик, ₴</label><input type="number" value={form.rate} onChange={e => setForm({ ...form, rate: e.target.value })} /></div>
-            </div>
-            <button className="btn" onClick={async () => {
-              try {
-                await api("/api/admin/partners", { method: "POST", token, body: { ...form, rate: Number(form.rate) || 0 } });
-                setForm({ code: "", name: "", type: "ОСББ", contact: "", rate: 150 });
-                await load();
-              } catch (e) { setError(e.message); }
-            }}>Зберегти партнера</button>
-            <table style={{ marginTop: 16 }}>
-              <thead><tr><th>КОД</th><th>Назва</th><th>Ставка</th><th>Продано</th><th>Нараховано</th><th>Виплачено</th><th>Залишок</th></tr></thead>
-              <tbody>
-                {partners.map(p => (
-                  <tr key={p.code}>
-                    <td>{p.code}</td><td>{p.name}<div style={{ color: "var(--muted)", fontSize: 12 }}>{p.contact}</div></td>
-                    <td>{money(p.rate)}</td><td>{p.sold}</td><td>{money(p.accrued)}</td><td>{money(p.paid)}</td><td>{money(p.balance)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="panel">
-            <h2>Виплата партнеру</h2>
-            <div className="grid2">
-              <div className="field"><label>КОД</label>
-                <select value={payout.code} onChange={e => setPayout({ ...payout, code: e.target.value })}>
-                  <option value="">Оберіть</option>
-                  {partners.map(p => <option key={p.code} value={p.code}>{p.code} — {p.name}</option>)}
-                </select>
-              </div>
-              <div className="field"><label>Сума, ₴</label><input type="number" value={payout.amount} onChange={e => setPayout({ ...payout, amount: e.target.value })} /></div>
-              <div className="field"><label>Спосіб</label><input value={payout.method} onChange={e => setPayout({ ...payout, method: e.target.value })} /></div>
-              <div className="field"><label>Примітка</label><input value={payout.note} onChange={e => setPayout({ ...payout, note: e.target.value })} /></div>
-            </div>
-            <button className="btn secondary" onClick={async () => {
-              try {
-                await api("/api/admin/payouts", { method: "POST", token, body: { ...payout, amount: Number(payout.amount) } });
-                setPayout({ code: "", amount: "", method: "Переказ", note: "" });
-                await load();
-              } catch (e) { setError(e.message); }
-            }}>Записати виплату</button>
-            <table style={{ marginTop: 16 }}>
-              <thead><tr><th>Дата</th><th>КОД</th><th>Назва</th><th>Сума</th><th>Спосіб</th><th>Примітка</th></tr></thead>
-              <tbody>
-                {payouts.slice(0, 30).map(p => (
-                  <tr key={p.row}><td>{p.date}</td><td>{p.code}</td><td>{p.name}</td><td>{money(p.amount)}</td><td>{p.method}</td><td>{p.note}</td></tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      );
-    }
-
-    function ExpensesView({ token }) {
-      const [expenses, setExpenses] = useState([]);
-      const [error, setError] = useState("");
-      const [form, setForm] = useState({
-        date: new Date().toISOString().slice(0, 10),
-        category: "Реклама / маркетинг",
-        description: "",
-        amount: "",
-        note: "",
-      });
-
-      async function load() {
-        const data = await api("/api/admin/expenses", { token });
-        setExpenses(data.expenses || []);
-      }
-      useEffect(() => { load().catch(e => setError(e.message)); }, [token]);
-
-      return (
-        <div className="panel">
-          <h2>Витрати (реклама та інше)</h2>
-          {error && <div className="error">{error}</div>}
-          <div className="grid2">
-            <div className="field"><label>Дата</label><input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
-            <div className="field"><label>Категорія</label>
-              <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>
-                {EXPENSE_CATS.map(c => <option key={c}>{c}</option>)}
-              </select>
-            </div>
-            <div className="field"><label>Опис</label><input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
-            <div className="field"><label>Сума, ₴</label><input type="number" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
-            <div className="field"><label>Примітка</label><input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} /></div>
-          </div>
-          <button className="btn" onClick={async () => {
-            try {
-              await api("/api/admin/expenses", { method: "POST", token, body: { ...form, amount: Number(form.amount) } });
-              setForm(f => ({ ...f, description: "", amount: "", note: "" }));
-              await load();
-            } catch (e) { setError(e.message); }
-          }}>Додати витрату</button>
-          <table style={{ marginTop: 16 }}>
-            <thead><tr><th>Дата</th><th>Категорія</th><th>Опис</th><th>Сума</th><th>Примітка</th></tr></thead>
-            <tbody>
-              {expenses.map(ex => (
-                <tr key={ex.row}><td>{ex.date}</td><td>{ex.category}</td><td>{ex.description}</td><td>{money(ex.amount)}</td><td>{ex.note}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-    }
-
-    function App() {
-      const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) || "");
-      const [tab, setTab] = useState("orders");
-
-      function login(t) {
-        sessionStorage.setItem(TOKEN_KEY, t);
-        setToken(t);
-      }
-      function logout() {
-        sessionStorage.removeItem(TOKEN_KEY);
-        setToken("");
-      }
-
-      if (!token) return <Login onLogin={login} />;
-
-      return (
-        <div className="app">
-          <div className="top">
-            <div className="brand">
-              <img src="/images/avalon-logo-7016.svg" alt="Avalon" />
-              <div>
-                <strong>AVALON CRM</strong>
-                <span>внутрішній кабінет</span>
-              </div>
-            </div>
-            <nav className="nav">
-              <button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}>Замовлення</button>
-              <button className={tab === "dash" ? "active" : ""} onClick={() => setTab("dash")}>Зведення</button>
-              <button className={tab === "partners" ? "active" : ""} onClick={() => setTab("partners")}>Партнери</button>
-              <button className={tab === "expenses" ? "active" : ""} onClick={() => setTab("expenses")}>Витрати</button>
-            </nav>
-            <div className="top-actions">
-              <a className="btn ghost" href="/" style={{ textDecoration: "none" }}>Форма</a>
-              <button className="btn secondary" onClick={logout}>Вийти</button>
-            </div>
-          </div>
-          <main className="main">
-            {tab === "orders" && <OrdersView token={token} />}
-            {tab === "dash" && <DashboardView token={token} />}
-            {tab === "partners" && <PartnersView token={token} />}
-            {tab === "expenses" && <ExpensesView token={token} />}
-          </main>
-        </div>
-      );
-    }
-
-    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-  </script>
 </body>
 </html>

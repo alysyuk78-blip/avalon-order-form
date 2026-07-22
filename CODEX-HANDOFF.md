@@ -1,5 +1,105 @@
 # CODEX HANDOFF — avalon-order-form
 
+## Fix: дубль телефону в drawer — 20.07.2026
+
+У картці замовлення телефон показувався двічі (`ContactLinks` у шапці +
+`QuickContact`). Залишено лише `QuickContact` (кнопки під шапкою).
+
+## Production: Apps Script v37 (CRM audit) — 20.07.2026
+
+- `clasp push` → version **37** → production `/exec` оновлено.
+- `/exec` перевірено: `{"status":"ok","message":"Avalon v3.0"}`.
+- Зміни: partners `getValues`, `parseCreatedAtMs_`, last-row fix,
+  `ensureDiscountColumnsOnce_`, cancelled exclusion + SUMIFS dropshipper,
+  `update_expense`.
+- `clasp logout` виконано; локальний `~/.clasprc.json` видалено.
+- Admin UI (PR #81) — окремий Vercel deploy після merge.
+
+## CRM audit fixes + Apps Script v37 — 20.07.2026
+
+Повний аудит CRM: точність даних, швидкість, UX.
+
+**Apps Script (production version 37):**
+- `adminListPartners_`: `getValues()` замість `getDisplayValues()` — коректні суми партнерів.
+- `parseCreatedAtMs_`: числове сортування `created_at`, витрат, виплат.
+- `buildOrderFromRows_` / `findLastRealOrderRow_`: читають до останнього рядка (не `last-1`).
+- `ensureDiscountColumnsOnce_`: міграція колонок один раз (прапорець `ORDERS_COLS_V2_READY`).
+- Скасовані виключені з сум груп / LTV; формули dropshipper через `SUMIFS` без «Скасовано».
+- `update_expense` — редагування витрат з CRM.
+
+**Admin `/admin`:**
+- Збірка через esbuild (`admin/src/main.jsx` → `public/admin/assets/admin.js`), без Babel ~3 MB у браузері.
+- Кеш замовлень у `App`; вкладки лишаються змонтованими (без refetch при перемиканні).
+- Прибрано зайвий fetch `/api/admin/dashboard`.
+- Multi-item `OrderDrawer`: вибір позиції для редагування фінансів.
+- Confirm на «Скасовано» / «Нове → В роботі»; 401 → auto logout.
+- InfoTip: Escape + клік поза; deep links `#order/ORD-…`.
+- Клієнти → клік по замовленню відкриває drawer; редагування витрат inline.
+- Login rate limit: 5 спроб / IP / 15 хв.
+
+## Клієнти: компактні додаткові імена — 20.07.2026
+
+У вкладці «Клієнти» інші написання імені після `/` згорнуті в `…`
+(повний список — при наведенні). Основне імʼя лишається видимим.
+
+## Production: Apps Script v36 (контакти) + PR #78 — 20.07.2026
+
+- PR [#78](https://github.com/alysyuk78-blip/avalon-order-form/pull/78) злито в `main` (Vercel `/admin`).
+- Apps Script: `clasp push` → version **36** → production `/exec` оновлено.
+- Нові колонки AL–AN: спосіб звʼязку, Telegram, E-mail; CRM читає їх для
+  клікабельних контактів (також парсить старі рядки з приміток).
+- `clasp logout` виконано; локальний `~/.clasprc.json` видалено.
+
+## Production: PR #75 + Apps Script v35 — 19.07.2026
+
+- PR [#75](https://github.com/alysyuk78-blip/avalon-order-form/pull/75) злито в `main`.
+- Vercel Production: `https://avalon-order-form.vercel.app/admin` з новим UI.
+- Apps Script: `clasp push` → version **35** → production `/exec` deployment оновлено
+  (`by_status` по унікальних замовленнях + хронологічне сортування `monthly`).
+- `clasp logout` виконано; локальний `~/.clasprc.json` видалено.
+
+## Мобільна версія `/admin` — 20.07.2026
+
+У `public/admin/index.html`:
+- шапка: горизонтальний скрол вкладок, компактний бренд;
+- воронка: snap-свайп по стовпчиках; на телефоні статус змінюється списком на картці;
+- більші поля/кнопки (без iOS-зуму), повноекранна картка замовлення;
+- таблиці з горизонтальним скролом; KPI у 2 колонки;
+- підказки сховані в іконку «і»; компактні діаграми на desktop;
+- клікабельні контакти: tel / Telegram / Viber / WhatsApp / mailto.
+
+## Міні-CRM: воронка, кольори статусів, довідник клієнтів — 19.07.2026
+
+У `public/admin/index.html`:
+- шрифт Apple на всьому UI (`!important` на `*` / заголовки / таблиці); дати коротко `ДД.ММ.РРРР ГГ:ХХ`;
+- у режимі «Воронка» під назвою статусу — кількість карток, сума замовлень і сума маржі;
+- зверху воронки — загальна сума замовлень + під нею загальна сума маржі (**без скасованих**);
+- кольори статусів: стовпчики воронки з середньою прозорістю (~8%); бейджі трохи насиченіші;
+  без контурів/рамок у всьому CRM — блоки й кнопки лише контрастом фону;
+  без смужки на картках (Нове / В роботі / Готове / Відправлено / Завершено / Скасовано);
+- вкладка «Зведення»: оновлені діаграми; фільтр періоду (усі / місяць / 30 / 7 днів);
+  блок «Що зробити сьогодні» (борг маржі, «В роботі», без дати доставки; **1 рядок на замовлення**);
+  під KPI «Виручка» — сума маржі; KPI/графіки рахуються по **замовленнях**, не по рядках-позиціях;
+- воронка: перетягування карток між статусами; у картці — швидкі дії статусу/оплати;
+- виправлено парсинг дат `дд.мм.рррр`, сортування місяців `MM.YYYY`, попередження для мультипозиційних фінансів;
+- вкладка «Клієнти»: довідник за нормалізованим телефоном; основне імʼя з
+  найранішого замовлення, інші написання — другорядні через « / ».
+
+У `google-apps-script-v2.js`:
+- `dashboard.by_status` рахує унікальні замовлення;
+- сортування `monthly` за роком/місяцем, не лексикографічно;
+- колонки контакту AL–AN + парсинг з приміток (production version **36**).
+
+## Міні-CRM увімкнено в production — 19.07.2026
+
+- Кабінет: `https://avalon-order-form.vercel.app/admin`
+- Vercel: `ADMIN_PASSWORD`, `ADMIN_API_SECRET` задані (Production/Preview)
+- Apps Script deployment version **34** з `admin_action` + колонки AI–AK
+- У Script Properties встановлено `ADMIN_API_SECRET` (той самий, що у Vercel)
+- У git додано хелпер `installAdminApiSecret()` та `executionApi` у `appsscript.json`
+- `clasp logout` виконано після deployment
+- Форму клієнта в цьому кроці не змінювали
+
 ## Міні-CRM веб-кабінет `/admin` — 18.07.2026
 
 Додано захищений кабінет поверх наявної Google Sheets облікової системи.

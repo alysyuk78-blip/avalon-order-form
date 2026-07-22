@@ -3,9 +3,18 @@
   "version": "1.0.0",
   "private": true,
   "description": "Форма замовлення кошика для кондиціонера — Avalon Metal Design",
+  "scripts": {
+    "build:admin": "esbuild admin/src/main.jsx --bundle --outfile=public/admin/assets/admin.js --minify --loader:.jsx=jsx",
+    "check:admin": "esbuild admin/src/main.jsx --bundle --outfile=/tmp/admin-check.js --loader:.jsx=jsx"
+  },
   "dependencies": {
-    "formidable": "^3.5.1",
     "form-data": "^4.0.0",
+    "formidable": "^3.5.1",
     "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   }
 }
