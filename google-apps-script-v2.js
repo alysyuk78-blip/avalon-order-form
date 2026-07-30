@@ -97,6 +97,10 @@ function doPost(e) {
 
       var notes = data.notes || "";
       var itemNotes = [];
+      if (it.product_type === "bracket") {
+        if (it.bracket_length) itemNotes.push("Довжина кронштейнів: " + it.bracket_length);
+        itemNotes.push("Віброподушки: " + (it.vibro_pads ? "так" : "ні"));
+      }
       if (!w && (it.bracket_model_from || it.bracket_model_to)) itemNotes.push("Потужність (BTU): " + (it.bracket_model_from || "") + " — " + (it.bracket_model_to || ""));
       if (it.ac_model_url) itemNotes.push("Посилання на кондиціонер: " + it.ac_model_url);
       if (it.model_comment) itemNotes.push("Коментар до моделі: " + it.model_comment);

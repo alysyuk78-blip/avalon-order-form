@@ -752,3 +752,35 @@ getRange(...,41) на 40-колонковій таблиці падав → admi
 
 Урок: піднімаючи ADMIN_ORDER_COLS, завжди гарантувати ширину на шляху ЧИТАННЯ,
 не лише запису.
+
+# Оновлення 30.07.2026: нові товари каталогу (AVL-01, AVL-06/1, кронштейни) + новий тип "bracket"
+
+Форма public/index.html:
+- CATALOG_MODELS: додано AVL-01 «Суцільний» (першим), AVL-06/1 «Ламельний»,
+  та ДВА товари типу кронштейн: AVL-K-01, AVL-SK-01 (поле type: "bracket").
+- AVL-06: підпис візерунка → «Візерунок бокових частин» (фото лишається
+  avl-06-lamella-cover.jpg — власник перезапише файл на нове).
+- Прапорці моделі: patternAllowed (візерунок не показуємо для AVL-06/1 і кронштейнів),
+  patternLabel, coverAllowed, constructionChoice (AVL-06/1 — вибір Суцільний/Розбірний),
+  installImage (AVL-SK-01 — фото монтажу на сторінці моделі).
+- Тип "bracket": замість розмірів/візерунка/кришки — опції Довжина
+  (450/500/600/700/індивідуальна), Віброподушки (так/ні), Колір, Кількість (комплектів).
+  Нові поля форми: bracket_length, bracket_length_custom, vibro_pads, construction_pick.
+  Окрема гілка у configuratorIsComplete/buildItem; у item — product_type, bracket_length, vibro_pads.
+
+api/order.js: formatTelegramMessage + formatProductionMessage — окрема гілка для
+product_type === "bracket" (Модель, Довжина, Віброподушки, Колір, N комплектів).
+
+google-apps-script-v2.js: itemNotes для кронштейнів пише «Довжина кронштейнів» і
+«Віброподушки» у Примітки (щоб потрапляли в таблицю/CRM). Модель уже йде в колонку AO.
+
+ПЕРЕВІРЕНО локально (браузер): AVL-01 (Колір/Візерунок/Кришка/Розмір),
+AVL-06/1 (Колір/Конструкція/Кришка/Розмір, без візерунка), AVL-K-01
+(Колір/Довжина/Віброподушки, к-сть комплектів) + наскрізне додавання кронштейна в заявку.
+
+⚠️ ПОТРІБНО ПЕРЕД ПРОДОМ:
+1. Додати 6 фото у public/images/basket-models/: avl-01-solid.jpg,
+   avl-k-01-brackets.jpg, avl-sk-01-system.jpg, avl-sk-01-install.jpg,
+   avl-09-louver.jpg (AVL-06/1), і ПЕРЕЗАПИСАТИ avl-06-lamella-cover.jpg новим фото.
+2. clasp-деплой google-apps-script-v2.js (itemNotes кронштейнів).
+⚠️ CURSOR: ціна кронштейнів поки «рахує менеджер» (quote_required). Прайс додамо пізніше.

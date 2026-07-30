@@ -532,6 +532,20 @@
     // Каталог моделей. Ці дані керують картками й заявкою, а не цінами для клієнта.
     const CATALOG_MODELS = [
       {
+        id: "AVL-01",
+        name: "Суцільний",
+        fullName: "Суцільний кошик",
+        image: "images/basket-models/avl-01-solid.jpg",
+        type: "basket",
+        construction: "Суцільний",
+        defaultCover: false,
+        coverAllowed: true,
+        patternAllowed: true,
+        summary: "Суцільна (нерозбірна) конструкція з декоративним візерунком під зовнішній блок кондиціонера.",
+        benefits: ["Жорстка суцільна конструкція", "Вибір візерунка та кольору", "Опційна верхня кришка"],
+        mounting: "Фасад або кронштейни"
+      },
+      {
         id: "AVL-02",
         name: "Екран під утеплювач",
         fullName: "Екран на кронштейнах під утеплювач",
@@ -584,8 +598,25 @@
         image: "images/basket-models/avl-06-lamella-cover.jpg",
         construction: "Суцільний",
         defaultCover: true,
+        patternAllowed: true,
+        patternLabel: "Візерунок бокових частин",
         summary: "Ламельний фасад і захист зверху як єдина готова модель.",
-        benefits: ["Верхня кришка вже передбачена", "Ламельний фасад", "Захист від опадів"],
+        benefits: ["Верхня кришка вже передбачена", "Ламельний фасад", "Візерунок бокових частин"],
+        mounting: "Фасад або кронштейни"
+      },
+      {
+        id: "AVL-06/1",
+        name: "Ламельний",
+        fullName: "Ламельний кошик",
+        image: "images/basket-models/avl-09-louver.jpg",
+        type: "basket",
+        construction: "Суцільний",
+        constructionChoice: true,
+        defaultCover: false,
+        coverAllowed: true,
+        patternAllowed: false,
+        summary: "Ламельний кошик у суцільному або розбірному виконанні, з опційною верхньою кришкою. Без вибору візерунка.",
+        benefits: ["Суцільне або розбірне виконання", "Вибір кольору", "Опційна верхня кришка"],
         mounting: "Фасад або кронштейни"
       },
       {
@@ -609,8 +640,33 @@
         summary: "Закрита модель для даху, тераси, балкона або іншої горизонтальної площини.",
         benefits: ["Закритий з усіх сторін", "Верхня кришка", "Кріплення до горизонтальної основи"],
         mounting: "Горизонтальна площина"
+      },
+      {
+        id: "AVL-K-01",
+        name: "Кронштейни декоративні",
+        fullName: "Кронштейни декоративні (комплект)",
+        image: "images/basket-models/avl-k-01-brackets.jpg",
+        type: "bracket",
+        construction: "Комплект кронштейнів",
+        summary: "Пара декоративних кронштейнів для монтажу зовнішнього блоку кондиціонера на фасад.",
+        benefits: ["Міцне кріплення до фасаду", "Вибір довжини та кольору", "Опційні віброподушки"],
+        mounting: "Фасад"
+      },
+      {
+        id: "AVL-SK-01",
+        name: "Кронштейна система",
+        fullName: "Кронштейна система (комплект)",
+        image: "images/basket-models/avl-sk-01-system.jpg",
+        installImage: "images/basket-models/avl-sk-01-install.jpg",
+        type: "bracket",
+        construction: "Комплект системи",
+        summary: "Зварена кронштейна система для надійного монтажу зовнішнього блоку на фасад.",
+        benefits: ["Жорстка зварена рама", "Вибір довжини та кольору", "Опційні віброподушки"],
+        mounting: "Фасад"
       }
     ];
+    // Довжина кронштейнів (мм) для товарів type: "bracket".
+    const BRACKET_LENGTH_OPTIONS = ["450", "500", "600", "700"];
 
     const CATALOG_PRIMARY_COLORS = [
       { label: "Білий (RAL 9016)", code: "RAL 9016", hex: "#F3F3F3" },
@@ -1497,6 +1553,8 @@
         quantity: "1", has_cover: false, color: "", color_custom: "", pattern: "", pattern_custom: "", model_comment: "",
         size_w: "", size_h: "", size_d: "", block_w: "", block_h: "", block_d: "",
         ac_brand: "", ac_model: "", ac_model_url: "", bracket_model_from: "", bracket_model_to: "",
+        // Кронштейни (AVL-K-01 / AVL-SK-01): довжина, віброподушки. Кошик AVL-06/1: вибір конструкції.
+        bracket_length: "", bracket_length_custom: "", vibro_pads: null, construction_pick: "",
         transport: "", transport_custom: "", delivery_address: "", delivery_location: "",
         delivery_date: "", payment_method: "", how_found: "", how_found_custom: "",
         notes: "", terms_accepted: false, referral_source: "direct"
@@ -1574,8 +1632,11 @@
           basket_model_name: model.fullName,
           construction_type: `${model.construction} · ${model.id}`,
           basket_type: "",
-          has_cover: model.defaultCover
+          has_cover: model.defaultCover,
+          bracket_length: "", bracket_length_custom: "", vibro_pads: null,
+          construction_pick: ""
         }));
+        setCoversBrackets(null);
         setMeasureMode(model.id === "AVL-02" ? "bracket_range" : "ac");
         goTo("model");
       };
@@ -1602,21 +1663,68 @@
         return !!sv(form.ac_model_url);
       };
       const colorIsComplete = () => !!form.color;
-      const configuratorIsComplete = () => !!(
-        selectedModel && colorIsComplete() && form.pattern &&
-        (form.pattern !== "Інший" || sv(form.pattern_custom)) && Number(form.quantity) >= 1 && measurementIsComplete()
-      );
+      const isBracket = !!(selectedModel && selectedModel.type === "bracket");
+      const patternEnabled = !!(selectedModel && !isBracket && selectedModel.patternAllowed !== false);
+      const constructionChoiceOn = !!(selectedModel && selectedModel.constructionChoice);
+      const bracketLengthIsComplete = () => !!(form.bracket_length && (form.bracket_length !== "custom" || Number(form.bracket_length_custom) > 0));
+      const patternIsComplete = () => !patternEnabled || (form.pattern && (form.pattern !== "Інший" || sv(form.pattern_custom)));
+      const configuratorIsComplete = () => {
+        if (!selectedModel) return false;
+        if (Number(form.quantity) < 1) return false;
+        if (isBracket) {
+          // Кронштейни: колір + довжина + віброподушки (так/ні). Без розмірів/візерунка.
+          return colorIsComplete() && bracketLengthIsComplete() && form.vibro_pads !== null;
+        }
+        if (!colorIsComplete() || !patternIsComplete() || !measurementIsComplete()) return false;
+        if (constructionChoiceOn && !form.construction_pick) return false;
+        return true;
+      };
+
+      const bracketLengthLabel = () => {
+        if (!isBracket || !form.bracket_length) return "";
+        return form.bracket_length === "custom"
+          ? `${sv(form.bracket_length_custom)} мм (індивідуальна)`
+          : `${form.bracket_length} мм`;
+      };
 
       const buildItem = () => {
-        return {
+        const construction = constructionChoiceOn && form.construction_pick
+          ? form.construction_pick
+          : selectedModel.construction;
+        const base = {
+          product_type: selectedModel.type || "basket",
           basket_model: selectedModel.id,
           basket_model_name: selectedModel.fullName,
-          construction_type: `${selectedModel.construction} · ${selectedModel.id}`,
+          construction_type: `${construction} · ${selectedModel.id}`,
           basket_type: form.basket_type,
           color: form.color,
           color_custom: form.color_custom,
-          pattern: form.pattern,
-          pattern_custom: form.pattern_custom,
+          quantity: Number(form.quantity) || 1,
+          model_comment: sv(form.model_comment),
+          // Це заявка на індивідуальний прорахунок: автоматичну ціну не передаємо.
+          quote_required: true,
+          price_total: 0, price_per_unit: 0, price_per_m2: 0, area_m2: 0,
+          cost_total: 0, profit: 0, basket_area_m2: 0, cover_area_m2: 0,
+          basket_cost_per_m2: 0, cover_cost_per_m2: 0,
+          basket_cost_total: 0, cover_cost_total: 0
+        };
+        if (isBracket) {
+          // Кронштейни: довжина + віброподушки, без розмірів/візерунка/кришки.
+          return {
+            ...base,
+            pattern: "", pattern_custom: "", has_cover: false,
+            size_mode: "bracket", size_w: 0, size_h: 0, size_d: 0,
+            block_w: 0, block_h: 0, block_d: 0,
+            ac_brand: "", ac_model: "", ac_model_url: "",
+            bracket_model_from: "", bracket_model_to: "", covers_brackets: false,
+            bracket_length: bracketLengthLabel(),
+            vibro_pads: form.vibro_pads === true
+          };
+        }
+        return {
+          ...base,
+          pattern: patternEnabled ? form.pattern : "",
+          pattern_custom: patternEnabled ? form.pattern_custom : "",
           has_cover: !!form.has_cover,
           size_mode: measureMode,
           size_w: Number(form.size_w) || 0,
@@ -1631,14 +1739,7 @@
           bracket_model_from: sv(form.bracket_model_from),
           bracket_model_to: sv(form.bracket_model_to),
           covers_brackets: coversBrackets === true,
-          quantity: Number(form.quantity) || 1,
-          model_comment: sv(form.model_comment),
-          // Це заявка на індивідуальний прорахунок: автоматичну ціну не передаємо.
-          quote_required: true,
-          price_total: 0, price_per_unit: 0, price_per_m2: 0, area_m2: 0,
-          cost_total: 0, profit: 0, basket_area_m2: 0, cover_area_m2: 0,
-          basket_cost_per_m2: 0, cover_cost_per_m2: 0,
-          basket_cost_total: 0, cover_cost_total: 0
+          bracket_length: "", vibro_pads: false
         };
       };
 
@@ -1653,8 +1754,10 @@
           basket_model: "", basket_model_name: "", construction_type: "", basket_type: "",
           quantity: "1", has_cover: false, color: "", color_custom: "", pattern: "", pattern_custom: "", model_comment: "",
           size_w: "", size_h: "", size_d: "", block_w: "", block_h: "", block_d: "",
-          ac_brand: "", ac_model: "", ac_model_url: "", bracket_model_from: "", bracket_model_to: ""
+          ac_brand: "", ac_model: "", ac_model_url: "", bracket_model_from: "", bracket_model_to: "",
+          bracket_length: "", bracket_length_custom: "", vibro_pads: null, construction_pick: ""
         }));
+        setPatternFile(null);
       };
 
       const addToRequest = () => {
@@ -1765,6 +1868,7 @@
       };
 
       const itemMeasurement = (item) => {
+        if (item.product_type === "bracket") return { primary: `Довжина: ${item.bracket_length || "уточнить менеджер"}${item.vibro_pads ? " · віброподушки" : ""}` };
         const dimensions = (width, height, depth) => Number(width) > 0 && Number(height) > 0 && Number(depth) > 0 ? `${width} × ${height} × ${depth} мм` : "";
         const basketDimensions = dimensions(item.size_w, item.size_h, item.size_d);
         const blockDimensions = dimensions(item.block_w, item.block_h, item.block_d);
@@ -1776,7 +1880,7 @@
       };
       const ItemMeasurement = ({ item }) => {
         const summary = itemMeasurement(item);
-        return <p className="mt-1 text-sm" style={{ color: "#66716b" }}>{summary.primary} · {item.quantity} шт.</p>;
+        return <p className="mt-1 text-sm" style={{ color: "#66716b" }}>{summary.primary} · {item.quantity} {item.product_type === "bracket" ? "компл." : "шт."}</p>;
       };
 
       if (submitted) {
@@ -1862,7 +1966,10 @@
             <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
               <button type="button" onClick={() => goTo("catalog")} className="catalog-secondary catalog-choice mb-5 text-sm font-semibold">← Усі моделі</button>
               <section className="grid gap-7 lg:grid-cols-2 items-start">
-                <img src={selectedModel.image} alt={selectedModel.fullName} className="apple-model-image w-full bg-white" style={{ aspectRatio: "4 / 3", objectFit: "cover", borderRadius: 8, border: "1px solid #dce1dc" }} />
+                <div className="space-y-3">
+                  <img src={selectedModel.image} alt={selectedModel.fullName} className="apple-model-image w-full bg-white" style={{ aspectRatio: "4 / 3", objectFit: "cover", borderRadius: 8, border: "1px solid #dce1dc" }} />
+                  {selectedModel.installImage && <figure><img src={selectedModel.installImage} alt="Принцип монтажу" className="w-full bg-white" style={{ aspectRatio: "4 / 3", objectFit: "cover", borderRadius: 8, border: "1px solid #dce1dc" }} /><figcaption className="mt-1 text-xs text-center" style={{ color: "#8a9690" }}>Принцип монтажу кондиціонера</figcaption></figure>}
+                </div>
                 <div>
                   <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#8f7340" }}>{selectedModel.id}</p>
                   <h1 className="mt-2 text-3xl font-bold" style={{ color: "#1f2925" }}>{selectedModel.fullName}</h1>
@@ -1896,8 +2003,8 @@
                       <ErrorText visible={showErrors && !colorIsComplete()}>Оберіть колір.</ErrorText>
                     </div>
 
-                    <div>
-                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Візерунок</h3>
+                    {patternEnabled && <div>
+                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>{selectedModel.patternLabel || "Візерунок"}</h3>
                       <p className="mt-1 text-xs" style={{ color: "#66716b" }}>Натисніть на візерунок, який вам подобається.</p>
                       <div className={`pattern-choice-grid mt-3 ${showErrors && (!form.pattern || (form.pattern === "Інший" && !sv(form.pattern_custom))) ? "catalog-choice-group is-error" : ""}`} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(112px, 132px))", gap: 12 }}>
                         {CATALOG_PATTERN_OPTIONS.map(pattern => <button key={pattern.label} type="button" onClick={() => { set("pattern", pattern.label); set("pattern_custom", ""); }} className={`catalog-choice pattern-choice text-left ${form.pattern === pattern.label ? "is-active" : ""}`}><img src={pattern.image} alt={`Візерунок ${pattern.label}`} /><span className="pattern-label">{pattern.label}</span></button>)}
@@ -1906,10 +2013,30 @@
                       {form.pattern === "Інший" && <div className="mt-3"><StyledInput placeholder="Опишіть бажаний візерунок" value={form.pattern_custom} onChange={event => set("pattern_custom", event.target.value)} error={showErrors && !sv(form.pattern_custom)} /></div>}
                       <div className="mt-3"><label htmlFor="catalog-pattern-file" className="upload-zone block text-sm font-semibold" style={{ borderRadius: 6 }}><span className="inline-flex items-center gap-2"><IconUpload /> {patternFile ? patternFile.name : "Додати ескіз або фото (необов'язково)"}</span></label><input id="catalog-pattern-file" type="file" className="hidden" accept="image/*,.pdf" onChange={event => setPatternFile(event.target.files?.[0] || null)} /></div>
                       <ErrorText visible={showErrors && (!form.pattern || (form.pattern === "Інший" && !sv(form.pattern_custom)))}>Оберіть або опишіть візерунок.</ErrorText>
-                    </div>
+                    </div>}
                   </div>
 
                   <div className="space-y-7">
+                    {constructionChoiceOn && <div className={showErrors && !form.construction_pick ? "catalog-choice-group is-error" : ""}>
+                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Конструкція</h3>
+                      <div className="mt-3 grid grid-cols-2 gap-2">{["Суцільний", "Розбірний"].map(opt => <button key={opt} type="button" onClick={() => set("construction_pick", opt)} className={`catalog-option catalog-choice text-sm font-semibold ${form.construction_pick === opt ? "is-active" : ""}`}>{opt}</button>)}</div>
+                      <ErrorText visible={showErrors && !form.construction_pick}>Оберіть конструкцію.</ErrorText>
+                    </div>}
+                    {isBracket && <div>
+                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Довжина кронштейнів</h3>
+                      <div className={`mt-3 grid grid-cols-3 gap-2 ${showErrors && !bracketLengthIsComplete() ? "catalog-choice-group is-error" : ""}`}>
+                        {BRACKET_LENGTH_OPTIONS.map(len => <button key={len} type="button" onClick={() => set("bracket_length", len)} className={`catalog-option catalog-choice text-sm font-semibold ${form.bracket_length === len ? "is-active" : ""}`}>{len} мм</button>)}
+                        <button type="button" onClick={() => set("bracket_length", "custom")} className={`catalog-option catalog-choice text-sm font-semibold ${form.bracket_length === "custom" ? "is-active" : ""}`}>Індивідуальна</button>
+                      </div>
+                      {form.bracket_length === "custom" && <div className="mt-3"><Field label="Довжина, мм"><StyledInput type="number" min="1" value={form.bracket_length_custom} onChange={event => set("bracket_length_custom", event.target.value)} error={showErrors && !(Number(form.bracket_length_custom) > 0)} /></Field></div>}
+                      <ErrorText visible={showErrors && !bracketLengthIsComplete()}>Оберіть довжину кронштейнів.</ErrorText>
+                    </div>}
+                    {isBracket && <div className={showErrors && form.vibro_pads === null ? "catalog-choice-group is-error" : ""}>
+                      <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Віброподушки</h3>
+                      <div className="mt-3 grid grid-cols-2 gap-2">{[{ value: true, label: "З віброподушками" }, { value: false, label: "Без віброподушок" }].map(option => <button key={String(option.value)} type="button" onClick={() => set("vibro_pads", option.value)} className={`catalog-option catalog-choice text-sm font-semibold ${form.vibro_pads === option.value ? "is-active" : ""}`}>{option.label}</button>)}</div>
+                      <ErrorText visible={showErrors && form.vibro_pads === null}>Оберіть, чи потрібні віброподушки.</ErrorText>
+                    </div>}
+                    {!isBracket && <React.Fragment>
                     <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Верхня кришка</h3>
                       {selectedModel.coverAllowed === false ? <p className="mt-3 text-sm font-semibold p-3" style={{ color: "#526058", background: "#f4f5f3", borderRadius: 16 }}>Для цієї моделі верхня кришка не передбачена.</p> : selectedModel.defaultCover ? <p className="mt-3 text-sm font-semibold p-3" style={{ color: "#173d31", background: "#edf5f0", borderRadius: 16 }}>Передбачена конструкцією цієї моделі.</p> : <div className="mt-3 grid grid-cols-2 gap-2">{[{ value: false, label: "Без кришки" }, { value: true, label: "З кришкою" }].map(option => <button key={String(option.value)} type="button" onClick={() => set("has_cover", option.value)} className={`catalog-option catalog-choice text-sm font-semibold ${form.has_cover === option.value ? "is-active" : ""}`}>{option.label}</button>)}</div>}
@@ -1938,8 +2065,9 @@
 
                     {measureMode === "url" && <Field label="Посилання на модель кондиціонера"><StyledInput type="url" placeholder="https://..." value={form.ac_model_url} onChange={event => set("ac_model_url", event.target.value)} error={showErrors && !measurementIsComplete()} /></Field>}
                     <ErrorText visible={showErrors && measureMode !== "bracket_range" && !measurementIsComplete()}>Заповніть обраний спосіб визначення розміру.</ErrorText>
+                    </React.Fragment>}
 
-                    <Field label="Кількість, шт."><StyledInput type="number" min="1" value={form.quantity} onChange={event => set("quantity", event.target.value)} error={showErrors && !(Number(form.quantity) >= 1)} /></Field>
+                    <Field label={isBracket ? "Кількість, комплектів" : "Кількість, шт."}><StyledInput type="number" min="1" value={form.quantity} onChange={event => set("quantity", event.target.value)} error={showErrors && !(Number(form.quantity) >= 1)} /></Field>
                     <Field label="Коментар до цієї моделі"><textarea value={form.model_comment} onChange={event => set("model_comment", event.target.value)} placeholder="Наприклад: особливості монтажу, розміщення блока або побажання до виробу." rows="4" className="catalog-textarea" /></Field>
                   </div>
                 </div>
