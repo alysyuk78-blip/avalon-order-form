@@ -1757,7 +1757,8 @@
           ac_brand: "", ac_model: "", ac_model_url: "", bracket_model_from: "", bracket_model_to: "",
           bracket_length: "", bracket_length_custom: "", vibro_pads: null, construction_pick: ""
         }));
-        setPatternFile(null);
+        // Ескіз (patternFile) НЕ скидаємо тут: він на рівні заявки й потрібен аж до
+        // відправлення. Скидання стирало вкладений файл ще до submit (регрес).
       };
 
       const addToRequest = () => {

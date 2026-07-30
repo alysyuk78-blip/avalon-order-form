@@ -660,7 +660,8 @@ function checkContractorTelegram() {
 function buildOrderFromRows_(sh, orderNumber) {
   var last = sh.getLastRow();
   if (last < 2) return null;
-  var vals = sh.getRange(2, 1, last, 32).getValues();
+  var ncol = Math.min(41, sh.getMaxColumns()); // 41 = колонка AO «Модель кошика»
+  var vals = sh.getRange(2, 1, last, ncol).getValues();
   var order = null;
   for (var i = 0; i < vals.length; i++) {
     var r = vals[i];
@@ -677,10 +678,21 @@ function buildOrderFromRows_(sh, orderNumber) {
       line = String(line || "").trim();
       if (line) order.noteLines[line] = true;
     });
+    // Кронштейни (AVL-K-01 / AVL-SK-01): відновлюємо модель (кол. AO) та довжину/
+    // віброподушки з приміток САМЕ цього рядка (не з обʼєднаних по замовленню) —
+    // щоб у багатопозиційних замовленнях характеристики не переплутались.
+    var rowNotes = String(r[31] || "");
+    var rowModel = String(r[40] || "");
+    var rowIsBracket = /кронштейн|комплект/i.test(String(r[8] || "")) || /^AVL-(K|SK)/i.test(rowModel);
+    var lenMatch = rowNotes.match(/Довжина кронштейнів:\s*([^\n]+)/i);
     order.items.push({
+      product_type: rowIsBracket ? "bracket" : "basket",
+      basket_model: rowModel, basket_model_name: rowModel,
       basket_type: r[7], construction_type: r[8], has_cover: String(r[8] || "").toLowerCase().indexOf("кришка") >= 0, color: r[9], pattern: r[10],
       ac_brand: r[11], ac_model: r[12], size_w: r[13], size_h: r[14], size_d: r[15],
-      quantity: r[16], area_m2: r[17], cost_total: r[19]
+      quantity: r[16], area_m2: r[17], cost_total: r[19],
+      bracket_length: lenMatch ? lenMatch[1].trim() : "",
+      vibro_pads: /Віброподушки:\s*так/i.test(rowNotes)
     });
   }
   if (order) {
@@ -726,6 +738,15 @@ function buildProductionMsg_(data) {
   items.forEach(function (it, i) {
     var color = it.color ? esc_(it.color) + (it.color_custom ? " (" + esc_(it.color_custom) + ")" : "") : "";
     var pattern = it.pattern ? esc_(it.pattern) + (it.pattern_custom ? " (" + esc_(it.pattern_custom) + ")" : "") : "";
+    if (it.product_type === "bracket") {
+      if (multi) m += "\n🔩 <b>Кронштейни " + (i + 1) + "</b>\n";
+      if (it.basket_model_name || it.basket_model) m += "• Модель: <b>" + esc_(it.basket_model_name || it.basket_model) + "</b>\n";
+      if (it.bracket_length) m += "• Довжина: <b>" + esc_(it.bracket_length) + "</b>\n";
+      m += "• Віброподушки: <b>" + (it.vibro_pads ? "Так" : "Ні") + "</b>\n";
+      if (color) m += "• Колір: <b>" + color + "</b>\n";
+      m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " компл.</b>\n";
+      return;
+    }
     if (multi) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
     m += "• Тип: <b>" + esc_(it.basket_type) + "</b>\n";
     m += "• Конструкція: <b>" + esc_(it.construction_type) + "</b>\n";
