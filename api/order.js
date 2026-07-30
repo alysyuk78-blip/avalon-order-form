@@ -153,6 +153,7 @@ function formatTelegramMessage(order) {
   const contact = getCustomerContact(order);
   const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
     basket_model: order.basket_model, basket_model_name: order.basket_model_name,
+    product_type: order.product_type, bracket_length: order.bracket_length, vibro_pads: order.vibro_pads,
     basket_type: order.basket_type, construction_type: order.construction_type,
     color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
     size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
@@ -181,7 +182,16 @@ function formatTelegramMessage(order) {
   items.forEach((it, i) => {
     const color = it.color ? e(it.color) + (it.color_custom ? " (" + e(it.color_custom) + ")" : "") : "";
     const pattern = it.pattern ? e(it.pattern) + (it.pattern_custom ? " (" + e(it.pattern_custom) + ")" : "") : "";
-    if (multi) msg += `\n🧺 <b>Кошик ${i + 1}</b>\n`;
+    if (multi) msg += `\n🧺 <b>${it.product_type === "bracket" ? "Кронштейни" : "Кошик"} ${i + 1}</b>\n`;
+    if (it.product_type === "bracket") {
+      if (it.basket_model_name || it.basket_model) msg += `• Модель: <b>${e(it.basket_model_name || it.basket_model)}</b>\n`;
+      if (it.bracket_length) msg += `• Довжина: <b>${e(it.bracket_length)}</b>\n`;
+      msg += `• Віброподушки: <b>${it.vibro_pads ? "Так" : "Ні"}</b>\n`;
+      if (color) msg += `• Колір: <b>${color}</b>\n`;
+      if (it.model_comment) msg += `• Коментар до моделі: ${e(it.model_comment)}\n`;
+      msg += `• Кількість: <b>${Number(it.quantity) || 1} компл.</b>\n`;
+      return;
+    }
     if (it.basket_model_name || it.basket_model) msg += `• Модель: <b>${e(it.basket_model_name || it.basket_model)}</b>\n`;
     msg += `• Тип: <b>${e(it.basket_type)}</b>\n`;
     msg += `• Конструкція: <b>${e(it.construction_type)}</b>\n`;
@@ -246,6 +256,7 @@ function formatProductionMessage(order) {
   const e = (v) => escHtml(v);
   const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
     basket_model: order.basket_model, basket_model_name: order.basket_model_name,
+    product_type: order.product_type, bracket_length: order.bracket_length, vibro_pads: order.vibro_pads,
     basket_type: order.basket_type, construction_type: order.construction_type,
     color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
     size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
@@ -254,6 +265,13 @@ function formatProductionMessage(order) {
   }];
   let msg = `🏭 <b>ДЛЯ ВИРОБНИЦТВА</b> · ${e(order.order_number)}\n`;
   items.forEach((it, i) => {
+    if (it.product_type === "bracket") {
+      const bModel = it.basket_model_name || it.basket_model;
+      const bColor = (it.color === "Інші кольори" || it.color === "Інший") ? (it.color_custom || it.color) : it.color;
+      msg += `\n${i + 1}. <b>${bModel ? e(bModel) + " · " : ""}${e(it.bracket_length) || "довжину уточнити"}</b>\n   ${e(bColor)}, віброподушки: ${it.vibro_pads ? "так" : "ні"}, <b>${it.quantity} компл.</b>\n`;
+      if (it.model_comment) msg += `   Коментар: ${e(it.model_comment)}\n`;
+      return;
+    }
     const constr = (it.construction_type || "").split("(")[0].trim() || it.construction_type || "";
     const color = (it.color === "Інші кольори" || it.color === "Інший") ? (it.color_custom || it.color) : it.color;
     const pattern = it.pattern === "Інший" ? (it.pattern_custom || it.pattern) : it.pattern;
