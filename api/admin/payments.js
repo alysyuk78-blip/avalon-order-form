@@ -2,6 +2,9 @@ const { requireAdmin, setAdminCors, handleOptions } = require("../../lib/admin-a
 const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
 
 module.exports = async function handler(req, res) {
+  const startedAt = Date.now();
+  const requestId = req.headers && req.headers["x-vercel-id"];
+  console.log(JSON.stringify({ level: "info", msg: "start", route: "/api/admin/payments", method: req.method, requestId }));
   setAdminCors(req, res);
   if (req.method === "OPTIONS") return handleOptions(req, res);
   if (!requireAdmin(req, res)) return;
@@ -10,6 +13,7 @@ module.exports = async function handler(req, res) {
     if (req.method === "GET") {
       const orderNumber = (req.query && req.query.order_number) || "";
       const data = await callAdminSheets("list_payments", { order_number: orderNumber });
+      console.log(JSON.stringify({ level: "info", msg: "done", route: "/api/admin/payments", method: req.method, ms: Date.now() - startedAt, requestId }));
       return res.status(200).json(data);
     }
 
@@ -24,6 +28,7 @@ module.exports = async function handler(req, res) {
         return res.status(400).json({ error: "Сума платежу мусить бути більшою за нуль" });
       }
       const data = await callAdminSheets("add_payment", { payment });
+      console.log(JSON.stringify({ level: "info", msg: "done", route: "/api/admin/payments", method: req.method, ms: Date.now() - startedAt, requestId }));
       return res.status(201).json(data);
     }
 
@@ -31,12 +36,13 @@ module.exports = async function handler(req, res) {
       const row = Number((req.query && req.query.row) || (req.body && req.body.row) || 0);
       if (!(row >= 2)) return res.status(400).json({ error: "row required" });
       const data = await callAdminSheets("delete_payment", { row });
+      console.log(JSON.stringify({ level: "info", msg: "done", route: "/api/admin/payments", method: req.method, ms: Date.now() - startedAt, requestId }));
       return res.status(200).json(data);
     }
 
     return res.status(405).json({ error: "Method not allowed" });
   } catch (err) {
-    console.error("admin/payments:", err);
+    console.error(JSON.stringify({ level: "error", msg: "failed", route: "/api/admin/payments", method: req.method, error: err.message, ms: Date.now() - startedAt, requestId }));
     return sendError(res, err);
   }
 };

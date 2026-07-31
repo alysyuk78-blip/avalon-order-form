@@ -89,6 +89,12 @@ import { createRoot } from 'react-dom/client';
       const value = String(status || "").trim();
       return STATUSES.includes(value) ? value : "Нове";
     }
+    function newRequestId() {
+      if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+        return globalThis.crypto.randomUUID();
+      }
+      return "pay-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+    }
     /** Дата замовлення: created_at (UA/ISO) або номер ORD-DDMMYY-NNN */
     function orderDate(g) {
       if (!g) return null;
@@ -511,18 +517,25 @@ import { createRoot } from 'react-dom/client';
       const [form, setForm] = useState({ type: "Передоплата", amount: "", method: "Готівка", date: "", note: "" });
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
+      const pendingRef = useRef({ fingerprint: "", requestId: "" });
       const list = payments || [];
       const s = summary || {};
 
       async function add() {
         setError("");
         if (!(Number(form.amount) > 0)) return setError("Вкажіть суму більшу за нуль");
+        const payment = { order_number: orderNumber, ...form, amount: Number(form.amount) };
+        const fingerprint = JSON.stringify(payment);
+        if (pendingRef.current.fingerprint !== fingerprint) {
+          pendingRef.current = { fingerprint, requestId: newRequestId() };
+        }
         setBusy(true);
         try {
           await api("/api/admin/payments", {
             method: "POST", token,
-            body: { payment: { order_number: orderNumber, ...form, amount: Number(form.amount) } },
+            body: { payment: { ...payment, request_id: pendingRef.current.requestId } },
           });
+          pendingRef.current = { fingerprint: "", requestId: "" };
           setForm(f => ({ ...f, amount: "", note: "" }));
           onChanged && onChanged();
         } catch (e) { setError(e.message || "Не вдалося внести платіж"); }
@@ -601,6 +614,7 @@ import { createRoot } from 'react-dom/client';
       const [error, setError] = useState("");
       const [form, setForm] = useState(null);
       const [itemIdx, setItemIdx] = useState(0);
+      const pendingQuickPaymentRef = useRef({ fingerprint: "", requestId: "" });
 
       function applyItemToForm(res, idx) {
         const item = (res.items && res.items[idx]) || {};
@@ -688,12 +702,18 @@ import { createRoot } from 'react-dom/client';
         if (!(amount > 0)) return;
         const type = which === "client" ? "Оплата повністю" : "Маржа від підрядника";
         if (!window.confirm("Внести платіж «" + type + "» на " + money(amount) + "?")) return;
+        const payment = { order_number: orderNumber, type, amount, method: "" };
+        const fingerprint = JSON.stringify(payment);
+        if (pendingQuickPaymentRef.current.fingerprint !== fingerprint) {
+          pendingQuickPaymentRef.current = { fingerprint, requestId: newRequestId() };
+        }
         setBusy(true); setError("");
         try {
           await api("/api/admin/payments", {
             method: "POST", token,
-            body: { payment: { order_number: orderNumber, type, amount, method: "" } },
+            body: { payment: { ...payment, request_id: pendingQuickPaymentRef.current.requestId } },
           });
+          pendingQuickPaymentRef.current = { fingerprint: "", requestId: "" };
           await load();
           onChanged && onChanged();
         } catch (e) { setError(e.message || "Не вдалося внести платіж"); }

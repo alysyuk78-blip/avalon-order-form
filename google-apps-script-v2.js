@@ -1594,12 +1594,23 @@ var PAYMENT_TYPES = ["Передоплата", "Доплата", "Оплата �
 function setupPayments(ss) {
   ss = ss || SpreadsheetApp.getActiveSpreadsheet();
   var existing = ss.getSheetByName(SHEET_PAYMENTS);
-  if (existing) return existing;
+  if (existing) {
+    if (existing.getMaxColumns() < 7) {
+      existing.insertColumnsAfter(existing.getMaxColumns(), 7 - existing.getMaxColumns());
+    }
+    if (String(existing.getRange(1, 7).getValue() || "").indexOf("ID") < 0) {
+      existing.getRange(1, 7).setValue("ID запиту")
+        .setFontWeight("bold").setBackground(RAL7016).setFontColor(HDR_TEXT)
+        .setFontFamily(HDR_FONT).setHorizontalAlignment("center").setVerticalAlignment("middle");
+      existing.setColumnWidth(7, 210);
+    }
+    return existing;
+  }
   var sh = ss.insertSheet(SHEET_PAYMENTS);
-  var headers = ["Дата", "№ Замовлення", "Тип", "Сума, ₴", "Спосіб", "Примітка"];
+  var headers = ["Дата", "№ Замовлення", "Тип", "Сума, ₴", "Спосіб", "Примітка", "ID запиту"];
   sh.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sh, headers.length);
-  [110, 150, 180, 120, 150, 260].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  [110, 150, 180, 120, 150, 260, 210].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.getRange("A2:A").setNumberFormat("dd.MM.yyyy");
   sh.getRange("D2:D").setNumberFormat("#,##0 ₴");
   var rule = SpreadsheetApp.newDataValidation().requireValueInList(PAYMENT_TYPES).setAllowInvalid(false).build();
@@ -1617,7 +1628,7 @@ function readPayments_(orderNumber) {
   var sh = paymentsSheet_();
   var last = sh.getLastRow();
   if (last < 2) return [];
-  var vals = sh.getRange(2, 1, last - 1, 6).getValues();
+  var vals = sh.getRange(2, 1, last - 1, 7).getValues();
   var num = String(orderNumber || "").trim();
   var out = [];
   for (var i = 0; i < vals.length; i++) {
@@ -1632,7 +1643,8 @@ function readPayments_(orderNumber) {
       type: String(r[2] || ""),
       amount: cellNum_(r[3]) || 0,
       method: String(r[4] || ""),
-      note: String(r[5] || "")
+      note: String(r[5] || ""),
+      request_id: String(r[6] || "")
     });
   }
   return out;
@@ -1729,6 +1741,24 @@ function adminAddPayment_(data) {
   if (!(amount > 0)) throw new Error("Сума платежу мусить бути більшою за нуль");
   var type = String(p.type || "Передоплата").trim();
   if (PAYMENT_TYPES.indexOf(type) < 0) throw new Error("Невідомий тип платежу: " + type);
+  var requestId = String(p.request_id || "").trim();
+
+  // Безпечний повтор після мережевого тайм-ауту: той самий запит повертає вже
+  // створений платіж, але ніколи не додає другий рядок.
+  if (requestId) {
+    var allPayments = readPayments_("");
+    for (var pi = 0; pi < allPayments.length; pi++) {
+      var existing = allPayments[pi];
+      if (existing.request_id !== requestId) continue;
+      if (existing.order_number !== num || existing.type !== type || Number(existing.amount) !== amount) {
+        throw new Error("ID запиту вже використано для іншого платежу");
+      }
+      return {
+        status: "ok", duplicate: true, payment_row: existing.row,
+        summary: syncOrderPaymentState_(num), payments: readPayments_(num)
+      };
+    }
+  }
 
   // Замовлення мусить існувати — щоб платіж не «завис» на неіснуючому номері.
   var osh = adminOrdersSheet_();
@@ -1745,12 +1775,13 @@ function adminAddPayment_(data) {
   var sh = paymentsSheet_();
   var date = toISODate(p.date) || Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd");
   var row = sh.getLastRow() + 1;
-  sh.getRange(row, 1, 1, 6).setValues([[date, num, type, amount, String(p.method || ""), String(p.note || "")]]);
+  sh.getRange(row, 1, 1, 7).setValues([[
+    date, num, type, amount, String(p.method || ""), String(p.note || ""), requestId
+  ]]);
   sh.getRange(row, 1).setNumberFormat("dd.MM.yyyy");
   sh.getRange(row, 4).setNumberFormat("#,##0 ₴");
 
   var summary = syncOrderPaymentState_(num);
-  notifyPaymentAdded_(num, type, amount, summary);
   SpreadsheetApp.flush();
   return { status: "ok", payment_row: row, summary: summary, payments: readPayments_(num) };
 }
