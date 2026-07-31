@@ -99,6 +99,7 @@ function writeOrderToSheet_(data) {
     var MARKUP = 1 / (1 - 0.2593);
     var itemsIn = (Array.isArray(data.items) && data.items.length) ? data.items : [{
       basket_model: data.basket_model, basket_model_name: data.basket_model_name,
+      unit: data.unit,
       bracket_model_from: data.bracket_model_from, bracket_model_to: data.bracket_model_to,
       basket_type: data.basket_type, construction_type: data.construction_type,
       color: data.color, color_custom: data.color_custom, pattern: data.pattern, pattern_custom: data.pattern_custom,
@@ -197,14 +198,16 @@ function writeOrderToSheet_(data) {
         cm === "telegram" ? String(data.contact_telegram || "").replace(/^@/, "") : "",
         cm === "email" ? String(data.contact_email || "").trim() : ""
       ]]);
-      // AO–AQ (41–43): виріб, його вид і характеристики.
+      // AO–AR (41–44): виріб, його вид, характеристики та одиниця виміру.
       // Вид пишемо явно, щоб підрядник і CRM не вгадували його з тексту конструкції.
       var kind = it.product_type === "bracket" ? "Кронштейни"
                : it.product_type === "other" ? "Інший виріб" : "Кошик";
-      sheet.getRange(lastRow, 41, 1, 3).setValues([[
+      var unit = String(it.unit || (it.product_type === "bracket" ? "комп." : "шт.")).trim();
+      sheet.getRange(lastRow, 41, 1, 4).setValues([[
         it.basket_model_name || it.basket_model || "",
         kind,
-        String(it.specs || "")
+        String(it.specs || ""),
+        unit || "шт."
       ]]);
       writtenRows.push(lastRow);
       var rr = sheet.getRange(lastRow, 1, 1, row.length);
@@ -723,7 +726,7 @@ function checkContractorTelegram() {
 function buildOrderFromRows_(sh, orderNumber) {
   var last = sh.getLastRow();
   if (last < 2) return null;
-  var ncol = Math.min(43, sh.getMaxColumns()); // 43 = AQ «Характеристики»
+  var ncol = Math.min(44, sh.getMaxColumns()); // 44 = AR «Одиниця виміру»
   var vals = sh.getRange(2, 1, last, ncol).getValues();
   var order = null;
   for (var i = 0; i < vals.length; i++) {
@@ -748,6 +751,7 @@ function buildOrderFromRows_(sh, orderNumber) {
     var rowModel = String(r[40] || "");
     var rowKind = String(r[41] || "");   // AP — явний вид виробу
     var rowSpecs = String(r[42] || "");  // AQ — характеристики
+    var rowUnit = String(r[43] || "").trim(); // AR — одиниця виміру
     // Вид беремо з колонки AP; для старих рядків (до появи колонки) — за текстом конструкції.
     var kindType = /кронштейн/i.test(rowKind) ? "bracket"
                  : /інш/i.test(rowKind) ? "other"
@@ -757,6 +761,7 @@ function buildOrderFromRows_(sh, orderNumber) {
     order.items.push({
       product_type: kindType,
       specs: rowSpecs,
+      unit: rowUnit || (kindType === "bracket" ? "комп." : "шт."),
       basket_model: rowModel, basket_model_name: rowModel,
       basket_type: r[7], construction_type: r[8], has_cover: String(r[8] || "").toLowerCase().indexOf("кришка") >= 0, color: r[9], pattern: r[10],
       ac_brand: r[11], ac_model: r[12], size_w: r[13], size_h: r[14], size_d: r[15],
@@ -777,10 +782,13 @@ function buildProductionMsg_(data) {
   var items = (Array.isArray(data.items) && data.items.length) ? data.items : [{
     basket_type: data.basket_type, construction_type: data.construction_type,
     color: data.color, color_custom: data.color_custom, pattern: data.pattern, pattern_custom: data.pattern_custom,
-    size_w: data.size_w, size_h: data.size_h, size_d: data.size_d, quantity: data.quantity,
+    size_w: data.size_w, size_h: data.size_h, size_d: data.size_d, quantity: data.quantity, unit: data.unit,
     ac_brand: data.ac_brand, ac_model: data.ac_model, area_m2: data.area_m2, cost_total: data.cost_total
   }];
   var multi = items.length > 1;
+  function itemUnit(it) {
+    return esc_(String(it.unit || (it.product_type === "bracket" ? "комп." : "шт.")).trim() || "шт.");
+  }
   function breakdown(it) {
     var qty = Number(it.quantity) || 1;
     var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
@@ -816,7 +824,7 @@ function buildProductionMsg_(data) {
       });
       if (color) m += "• Колір: <b>" + color + "</b>\n";
       if (Number(it.size_w) > 0) m += "• Розміри (мм): <b>" + it.size_w + "×" + it.size_h + "×" + it.size_d + "</b>\n";
-      m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " шт.</b>\n";
+      m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
       return;
     }
     if (it.product_type === "bracket") {
@@ -825,7 +833,7 @@ function buildProductionMsg_(data) {
       if (it.bracket_length) m += "• Довжина: <b>" + esc_(it.bracket_length) + "</b>\n";
       m += "• Віброподушки: <b>" + (it.vibro_pads ? "Так" : "Ні") + "</b>\n";
       if (color) m += "• Колір: <b>" + color + "</b>\n";
-      m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " компл.</b>\n";
+      m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
       return;
     }
     if (multi) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
@@ -840,7 +848,7 @@ function buildProductionMsg_(data) {
     } else {
       m += "• Розміри: <i>розрахує менеджер</i>\n";
     }
-    m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " шт.</b>\n";
+    m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
   });
 
   m += "\n💰 <b>ФІНАНСИ</b>\n";
@@ -1209,12 +1217,13 @@ function setupOrders(sheet) {
     "E-mail",            // AN (40)
     "Модель / виріб",    // AO (41): модель кошика (AVL-0X) або назва довільного виробу
     "Вид виробу",        // AP (42): Кошик / Кронштейни / Інший виріб
-    "Характеристики"     // AQ (43): опис довільного виробу (пергола, стенд тощо)
+    "Характеристики",    // AQ (43): опис довільного виробу (пергола, стенд тощо)
+    "Одиниця виміру"     // AR (44): шт. / комп. / довільне значення
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -1816,7 +1825,7 @@ function notifyPaymentAdded_(num, type, amount, summary) {
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 43; // A–AQ (контакт AL–AN; виріб AO; вид AP; характеристики AQ)
+var ADMIN_ORDER_COLS = 44; // A–AR (контакт AL–AN; виріб AO; вид AP; характеристики AQ; одиниця AR)
 var STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
 
 function applyStatusSideEffects_(sh, row, newStatus) {
@@ -1873,14 +1882,14 @@ function ensureDiscountColumns_(sheet) {
 
 function ensureDiscountColumnsOnce_() {
   var props = PropertiesService.getScriptProperties();
-  // V3: після додавання колонки AO «Модель кошика» треба, щоб заголовки
-  // проставились ще раз на наявній таблиці (старий прапорець V2 уже стояв).
-  if (props.getProperty("ORDERS_COLS_V3_READY") === "1") return;
+  // V4: після додавання AR «Одиниця виміру» заголовки треба проставити ще раз
+  // на наявній таблиці (старий прапорець V3 уже стоїть у production).
+  if (props.getProperty("ORDERS_COLS_V4_READY") === "1") return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) return;
   ensureDiscountColumns_(sheet);
-  props.setProperty("ORDERS_COLS_V3_READY", "1");
+  props.setProperty("ORDERS_COLS_V4_READY", "1");
 }
 
 /** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
@@ -1899,12 +1908,13 @@ function ensureContactColumns_(sheet) {
     sheet.setColumnWidth(39, 120);
     sheet.setColumnWidth(40, 160);
   }
-  // AO–AQ (41–43): виріб, його вид і характеристики — самозаповнюються на наявній
+  // AO–AR (41–44): виріб, його вид, характеристики та одиниця — самозаповнюються на наявній
   // таблиці, щоб не вимагати ручного перезапуску setupOrders після зміни схеми.
   var extra = [
     { col: 41, title: "Модель / виріб", key: "Модель", width: 170 },
     { col: 42, title: "Вид виробу", key: "Вид", width: 120 },
-    { col: 43, title: "Характеристики", key: "Характеристик", width: 320 }
+    { col: 43, title: "Характеристики", key: "Характеристик", width: 320 },
+    { col: 44, title: "Одиниця виміру", key: "Одиниц", width: 120 }
   ];
   extra.forEach(function (e) {
     var head = String(sheet.getRange(1, e.col).getValue() || "");
@@ -2014,6 +2024,7 @@ function mapOrderRow_(rowIndex, v) {
     basket_model: String(v[40] || ""),
     product_kind: String(v[41] || ""),      // AP: Кошик / Кронштейни / Інший виріб
     specs: String(v[42] || ""),             // AQ: характеристики довільного виробу
+    unit: String(v[43] || "").trim() || (/кронштейн/i.test(String(v[41] || "")) ? "комп." : "шт."),
     basket_type: String(v[7] || ""),
     construction: String(v[8] || ""),
     color: String(v[9] || ""),
@@ -2244,6 +2255,7 @@ function adminCreateOrder_(data) {
     has_cover: !!src.has_cover,
     size_w: src.size_w, size_h: src.size_h, size_d: src.size_d,
     quantity: src.quantity, ac_brand: src.ac_brand || "", ac_model: src.ac_model || "",
+    unit: String(src.unit || "").trim() || (src.product_type === "bracket" ? "комп." : "шт."),
     model_comment: src.model_comment || "",
     bracket_length: src.bracket_length || "", vibro_pads: !!src.vibro_pads,
     // Гроші: якщо менеджер вписав ціну — беремо її; якщо ні, а є розміри —
@@ -2337,11 +2349,12 @@ function adminUpdateOrder_(data) {
   var itemTouched = false;
   var ITEM_TEXT = { basket_type: 8, construction: 9, color: 10, pattern: 11,
                     ac_brand: 12, ac_model: 13, basket_model: 41,
-                    product_kind: 42, specs: 43 };
+                    product_kind: 42, specs: 43, unit: 44 };
   Object.keys(ITEM_TEXT).forEach(function (key) {
     if (patch[key] == null) return;
     sh.getRange(row, ITEM_TEXT[key]).setValue(String(patch[key]));
-    itemTouched = true;
+    // Одиниця — лише підпис кількості; її зміна не повинна перетирати ручні фінанси.
+    if (key !== "unit") itemTouched = true;
   });
   var ITEM_NUM = { size_w: 14, size_h: 15, size_d: 16, quantity: 17 };
   Object.keys(ITEM_NUM).forEach(function (key) {

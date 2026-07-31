@@ -28,6 +28,7 @@ import { createRoot } from 'react-dom/client';
     // Звідки прийшло замовлення, внесене вручну (пише в колонку «Джерело»).
     const MANUAL_SOURCES = ["Телефон","Instagram","Facebook","Viber / WhatsApp","Telegram","Повторний клієнт","Рекомендація","ОСББ","Партнер / підрядник","Візит в офіс","Інше"];
     const BRACKET_LENGTHS = ["450 мм","500 мм","600 мм","700 мм"];
+    const UNIT_SUGGESTIONS = ["шт.", "комп."];
     // Платежі: оплати клієнта та надходження маржі від підрядника.
     const PAYMENT_TYPES = ["Передоплата","Доплата","Оплата повністю","Маржа від підрядника","Повернення клієнту"];
     const PAYMENT_METHODS = ["Готівка","На карту","На рахунок ФО-П","На рахунок ТОВ","Накладений платіж","Інше"];
@@ -520,6 +521,8 @@ import { createRoot } from 'react-dom/client';
       const pendingRef = useRef({ fingerprint: "", requestId: "" });
       const list = payments || [];
       const s = summary || {};
+      const clientOverpaid = Math.max(0, (Number(s.client_paid) || 0) - (Number(s.revenue) || 0));
+      const marginOverreceived = Math.max(0, (Number(s.margin_received) || 0) - (Number(s.profit) || 0));
 
       async function add() {
         setError("");
@@ -558,10 +561,12 @@ import { createRoot } from 'react-dom/client';
           <div className="grid2">
             <div className="field"><label>Клієнт сплатив</label>
               <input disabled value={money(s.client_paid || 0) + " з " + money(s.revenue || 0)
-                + ((s.client_left || 0) > 0 ? " · борг " + money(s.client_left) : " · повністю")} /></div>
+                + ((s.client_left || 0) > 0 ? " · борг " + money(s.client_left)
+                  : clientOverpaid > 0 ? " · переплата " + money(clientOverpaid) : " · повністю")} /></div>
             <div className="field"><label>Маржа отримана</label>
               <input disabled value={money(s.margin_received || 0) + " з " + money(s.profit || 0)
-                + ((s.margin_left || 0) > 0 ? " · до отримання " + money(s.margin_left) : " · повністю")} /></div>
+                + ((s.margin_left || 0) > 0 ? " · до отримання " + money(s.margin_left)
+                  : marginOverreceived > 0 ? " · понад нову маржу " + money(marginOverreceived) : " · повністю")} /></div>
           </div>
 
           {list.length > 0 && (
@@ -650,6 +655,7 @@ import { createRoot } from 'react-dom/client';
           size_h: item.size_h ?? "",
           size_d: item.size_d ?? "",
           quantity: item.quantity ?? 1,
+          unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
         });
@@ -751,6 +757,7 @@ import { createRoot } from 'react-dom/client';
           size_h: item.size_h ?? "",
           size_d: item.size_d ?? "",
           quantity: item.quantity ?? 1,
+          unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
         }));
@@ -890,6 +897,10 @@ import { createRoot } from 'react-dom/client';
                 <input value={form.pattern} onChange={e => setForm({ ...form, pattern: e.target.value })} /></div>
               <div className="field"><label>Кількість</label>
                 <input type="number" min="1" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} /></div>
+              <div className="field"><label>Одиниця виміру</label>
+                <input list="crm-units-edit" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} placeholder="шт. / комп. / інше" />
+                <datalist id="crm-units-edit">{UNIT_SUGGESTIONS.map(u => <option key={u} value={u} />)}</datalist>
+              </div>
               <div className="field"><label>Ширина, мм</label>
                 <input type="number" value={form.size_w} onChange={e => setForm({ ...form, size_w: e.target.value })} /></div>
               <div className="field"><label>Висота, мм</label>
@@ -905,6 +916,7 @@ import { createRoot } from 'react-dom/client';
               construction: form.construction,
               basket_type: form.basket_type, color: form.color, pattern: form.pattern,
               quantity: Number(form.quantity) || 1,
+              unit: form.unit.trim() || "шт.",
               size_w: form.size_w === "" ? 0 : Number(form.size_w),
               size_h: form.size_h === "" ? 0 : Number(form.size_h),
               size_d: form.size_d === "" ? 0 : Number(form.size_d),
@@ -979,7 +991,7 @@ import { createRoot } from 'react-dom/client';
               <div key={it.row} className="panel" style={{ boxShadow: "none", padding: 12 }}>
                 <div style={{ fontWeight: 700 }}>{it.basket_model ? it.basket_model + " · " : ""}{it.basket_type || "Кошик"} · {it.construction}</div>
                 <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
-                  {it.size_w || "—"}×{it.size_h || "—"}×{it.size_d || "—"} мм · {it.quantity} шт · {it.color} · {it.pattern}
+                  {it.size_w || "—"}×{it.size_h || "—"}×{it.size_d || "—"} мм · {it.quantity} {it.unit || (it.product_kind === "Кронштейни" ? "комп." : "шт.")} · {it.color} · {it.pattern}
                 </div>
                 <div style={{ marginTop: 6, fontSize: 13 }}>{money(it.revenue)} · маржа {pct(it.margin_pct)}</div>
               </div>
@@ -1000,7 +1012,7 @@ import { createRoot } from 'react-dom/client';
         basket_model: "", basket_type: "", construction_type: "", color: "", pattern: "",
         has_cover: false, bracket_length: "", vibro_pads: false,
         product_name: "", specs: "",
-        size_w: "", size_h: "", size_d: "", quantity: "1",
+        size_w: "", size_h: "", size_d: "", quantity: "1", unit: "шт.",
         cost_total: "", price_total: "", list_price: "", discount_pct: "", discount_uah: "",
         transport: "", delivery_address: "", delivery_date: "", payment_method: "", notes: "",
       });
@@ -1023,6 +1035,7 @@ import { createRoot } from 'react-dom/client';
           ...f,
           basket_model: "", construction_type: "", pattern: "", has_cover: false,
           bracket_length: "", vibro_pads: false, product_name: "", specs: "",
+          unit: next === "bracket" ? "комп." : "шт.",
         }));
       }
 
@@ -1045,6 +1058,7 @@ import { createRoot } from 'react-dom/client';
           ...f,
           basket_model: id,
           construction_type: m ? m.construction + " · " + m.id : "",
+          unit: m && m.bracket ? "комп." : "шт.",
           // Кришка підставляється з каталогу: у AVL-06/07/08 вона передбачена конструкцією,
           // у AVL-02 — неможлива. Інакше ціна порахувалась би без неї.
           has_cover: !!(m && m.defaultCover),
@@ -1064,6 +1078,7 @@ import { createRoot } from 'react-dom/client';
           return setError("Вкажіть телефон, Telegram або e-mail");
         }
         if (isOther && !form.product_name.trim()) return setError("Вкажіть назву виробу");
+        if (!form.unit.trim()) return setError("Вкажіть одиницю виміру");
         setBusy(true);
         try {
           const res = await api("/api/admin/orders", {
@@ -1076,6 +1091,7 @@ import { createRoot } from 'react-dom/client';
                 basket_model_name: isOther ? form.product_name : (model ? model.name : form.basket_model),
                 construction_type: isOther ? form.product_name : form.construction_type,
                 quantity: qtyNum,
+                unit: form.unit.trim(),
                 // Колонки таблиці зберігають ПІДСУМКИ по позиції, тож множимо на кількість.
                 cost_total: costTotalCalc || "",
                 list_price: priceUnitOverride ? "" : (listTotal || ""),
@@ -1146,6 +1162,10 @@ import { createRoot } from 'react-dom/client';
                   <input value={form.product_name} onChange={e => set("product_name", e.target.value)} placeholder="Пергола / Виставковий стенд / Навіс…" /></div>
                 <div className="field"><label>Кількість</label>
                   <input type="number" min="1" value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
+                <div className="field"><label>Одиниця виміру</label>
+                  <input list="crm-units-new" value={form.unit} onChange={e => set("unit", e.target.value)} placeholder="шт. / комп. / інше" />
+                  <datalist id="crm-units-new">{UNIT_SUGGESTIONS.map(u => <option key={u} value={u} />)}</datalist>
+                </div>
                 <div className="field"><label>Колір</label>
                   <input value={form.color} onChange={e => set("color", e.target.value)} placeholder="RAL 7016" /></div>
               </div>
@@ -1178,8 +1198,12 @@ import { createRoot } from 'react-dom/client';
               )}
               <div className="field"><label>Тип (за потреби)</label>
                 <input value={form.basket_type} onChange={e => set("basket_type", e.target.value)} placeholder="Стандарт / Антивандальний" /></div>
-              <div className="field"><label>{isBracket ? "Кількість, компл." : "Кількість, шт."}</label>
+              <div className="field"><label>Кількість</label>
                 <input type="number" min="1" value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
+              <div className="field"><label>Одиниця виміру</label>
+                <input list="crm-units-new" value={form.unit} onChange={e => set("unit", e.target.value)} placeholder="шт. / комп. / інше" />
+                <datalist id="crm-units-new">{UNIT_SUGGESTIONS.map(u => <option key={u} value={u} />)}</datalist>
+              </div>
             </div>}
             {!isBracket && (
               <div className="grid2" style={{ marginTop: 8 }}>
