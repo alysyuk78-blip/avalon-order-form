@@ -11,6 +11,23 @@ import { createRoot } from 'react-dom/client';
       "Скасовано": "st-cancel",
     };
     const EXPENSE_CATS = ["Реклама / маркетинг","Доставка","Пакування / матеріали","Підряд / зарплати","Інше"];
+    // Каталог для ручного внесення (дзеркалить CATALOG_MODELS у public/index.html).
+    const CATALOG_MODELS_CRM = [
+      { id: "AVL-01", name: "Суцільний", construction: "Суцільний" },
+      { id: "AVL-02", name: "Екран під утеплювач", construction: "Розбірна", coverAllowed: false },
+      { id: "AVL-03", name: "Універсальний", construction: "Суцільний" },
+      { id: "AVL-04", name: "Зі знімною боковиною", construction: "Суцільний" },
+      { id: "AVL-05", name: "Розбірний", construction: "Розбірний (з 3-х частин)" },
+      { id: "AVL-06", name: "Ламель з кришкою", construction: "Суцільний", defaultCover: true },
+      { id: "AVL-06/1", name: "Ламельний", construction: "Суцільний" },
+      { id: "AVL-07", name: "Закритий на підставці", construction: "Суцільний", defaultCover: true },
+      { id: "AVL-08", name: "Горизонтальний монтаж", construction: "Суцільний", defaultCover: true },
+      { id: "AVL-K-01", name: "Кронштейни декоративні (компл.)", construction: "Комплект кронштейнів", bracket: true },
+      { id: "AVL-SK-01", name: "Кронштейна система (компл.)", construction: "Комплект системи", bracket: true },
+    ];
+    // Звідки прийшло замовлення, внесене вручну (пише в колонку «Джерело»).
+    const MANUAL_SOURCES = ["Телефон","Instagram","Facebook","Viber / WhatsApp","Telegram","Повторний клієнт","Рекомендація","ОСББ","Партнер / підрядник","Візит в офіс","Інше"];
+    const BRACKET_LENGTHS = ["450 мм","500 мм","600 мм","700 мм"];
     const TOKEN_KEY = "avalon_admin_token";
 
     function money(v) {
@@ -714,12 +731,220 @@ import { createRoot } from 'react-dom/client';
       );
     }
 
+    // Ручне внесення замовлення: телефон, Instagram, повторний клієнт — усе, що не
+    // прийшло через онлайн-форму. Пише той самий рядок таблиці, що й форма.
+    function NewOrderDrawer({ token, onClose, onCreated }) {
+      const [form, setForm] = useState({
+        client: "", phone: "", contact_method: "phone", contact_telegram: "", contact_email: "",
+        city: "", source: "Телефон",
+        basket_model: "", basket_type: "", construction_type: "", color: "", pattern: "",
+        has_cover: false, bracket_length: "", vibro_pads: false,
+        size_w: "", size_h: "", size_d: "", quantity: "1",
+        cost_total: "", price_total: "",
+        transport: "", delivery_address: "", delivery_date: "", payment_method: "", notes: "",
+      });
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState("");
+
+      const model = CATALOG_MODELS_CRM.find(m => m.id === form.basket_model);
+      const isBracket = !!(model && model.bracket);
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+      function pickModel(id) {
+        const m = CATALOG_MODELS_CRM.find(x => x.id === id);
+        setForm(f => ({
+          ...f,
+          basket_model: id,
+          construction_type: m ? m.construction + " · " + m.id : "",
+          // Кришка підставляється з каталогу: у AVL-06/07/08 вона передбачена конструкцією,
+          // у AVL-02 — неможлива. Інакше ціна порахувалась би без неї.
+          has_cover: !!(m && m.defaultCover),
+          ...(m && m.bracket
+            ? { size_w: "", size_h: "", size_d: "", pattern: "", has_cover: false }
+            : { bracket_length: "", vibro_pads: false }),
+        }));
+      }
+
+      const revenue = Number(form.price_total) || 0;
+      const profit = revenue - (Number(form.cost_total) || 0);
+      const marginPct = revenue ? Math.round((profit / revenue) * 1000) / 10 : 0;
+
+      async function submit() {
+        setError("");
+        if (!form.client.trim()) return setError("Вкажіть імʼя клієнта");
+        if (!form.phone.trim() && !form.contact_telegram.trim() && !form.contact_email.trim()) {
+          return setError("Вкажіть телефон, Telegram або e-mail");
+        }
+        setBusy(true);
+        try {
+          const res = await api("/api/admin/orders", {
+            method: "POST",
+            token,
+            body: {
+              order: {
+                ...form,
+                product_type: isBracket ? "bracket" : "basket",
+                basket_model_name: model ? model.name : form.basket_model,
+                quantity: Number(form.quantity) || 1,
+              },
+            },
+          });
+          onCreated(res.order_number || "");
+        } catch (e) {
+          setError(e.message || "Не вдалося створити замовлення");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      return (
+        <div className="drawer-backdrop" onClick={onClose}>
+          <div className="drawer" onClick={e => e.stopPropagation()}>
+            <header>
+              <div>
+                <h2>Нове замовлення</h2>
+                <div className="meta" style={{ color: "var(--muted)", marginTop: 4 }}>
+                  Ручне внесення — номер ORD присвоїться автоматично
+                </div>
+              </div>
+              <button className="btn ghost" onClick={onClose}>Закрити</button>
+            </header>
+
+            <div className="section-title" style={{ marginTop: 0 }}>Клієнт</div>
+            <div className="grid2">
+              <div className="field"><label>Імʼя та прізвище *</label>
+                <input value={form.client} onChange={e => set("client", e.target.value)} placeholder="Напр. Олег Петренко" /></div>
+              <div className="field"><label>Місто</label>
+                <input value={form.city} onChange={e => set("city", e.target.value)} /></div>
+              <div className="field"><label>Телефон</label>
+                <input value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="+380 __ ___ __ __" /></div>
+              <div className="field"><label>Спосіб зв'язку</label>
+                <select value={form.contact_method} onChange={e => set("contact_method", e.target.value)}>
+                  <option value="phone">Телефон</option>
+                  <option value="viber">Viber</option>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="telegram">Telegram</option>
+                  <option value="email">E-mail</option>
+                </select>
+              </div>
+              <div className="field"><label>Telegram</label>
+                <input value={form.contact_telegram} onChange={e => set("contact_telegram", e.target.value)} placeholder="@username" /></div>
+              <div className="field"><label>E-mail</label>
+                <input value={form.contact_email} onChange={e => set("contact_email", e.target.value)} /></div>
+              <div className="field"><label>Джерело замовлення</label>
+                <select value={form.source} onChange={e => set("source", e.target.value)}>
+                  {MANUAL_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="section-title">Товар</div>
+            <div className="grid2">
+              <div className="field"><label>Модель</label>
+                <select value={form.basket_model} onChange={e => pickModel(e.target.value)}>
+                  <option value="">— оберіть модель —</option>
+                  {CATALOG_MODELS_CRM.map(m => <option key={m.id} value={m.id}>{m.id} · {m.name}</option>)}
+                </select>
+              </div>
+              <div className="field"><label>Конструкція</label>
+                <input value={form.construction_type} onChange={e => set("construction_type", e.target.value)} /></div>
+              <div className="field"><label>Колір</label>
+                <input value={form.color} onChange={e => set("color", e.target.value)} placeholder="RAL 7016" /></div>
+              {!isBracket && (
+                <div className="field"><label>Візерунок</label>
+                  <input value={form.pattern} onChange={e => set("pattern", e.target.value)} placeholder="K1 … K10" /></div>
+              )}
+              {isBracket && (
+                <div className="field"><label>Довжина кронштейнів</label>
+                  <input list="bracket-lengths" value={form.bracket_length} onChange={e => set("bracket_length", e.target.value)} placeholder="600 мм" />
+                  <datalist id="bracket-lengths">{BRACKET_LENGTHS.map(l => <option key={l} value={l} />)}</datalist>
+                </div>
+              )}
+              <div className="field"><label>Тип (за потреби)</label>
+                <input value={form.basket_type} onChange={e => set("basket_type", e.target.value)} placeholder="Стандарт / Антивандальний" /></div>
+              <div className="field"><label>{isBracket ? "Кількість, компл." : "Кількість, шт."}</label>
+                <input type="number" min="1" value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
+            </div>
+            {!isBracket && (
+              <div className="grid2" style={{ marginTop: 8 }}>
+                <div className="field"><label>Ширина, мм</label>
+                  <input type="number" value={form.size_w} onChange={e => set("size_w", e.target.value)} /></div>
+                <div className="field"><label>Висота, мм</label>
+                  <input type="number" value={form.size_h} onChange={e => set("size_h", e.target.value)} /></div>
+                <div className="field"><label>Глибина, мм</label>
+                  <input type="number" value={form.size_d} onChange={e => set("size_d", e.target.value)} /></div>
+              </div>
+            )}
+            <div className="quick-actions" style={{ marginTop: 8 }}>
+              {!isBracket && model && model.coverAllowed === false && (
+                <span style={{ color: "var(--muted)", fontSize: 13 }}>Для цієї моделі верхня кришка не передбачена.</span>
+              )}
+              {!isBracket && !(model && model.coverAllowed === false) && (
+                <button type="button" className={form.has_cover ? "active" : ""} onClick={() => set("has_cover", !form.has_cover)}>
+                  {form.has_cover ? "✓ З верхньою кришкою" : "Верхня кришка"}
+                </button>
+              )}
+              {isBracket && (
+                <button type="button" className={form.vibro_pads ? "active" : ""} onClick={() => set("vibro_pads", !form.vibro_pads)}>
+                  {form.vibro_pads ? "✓ З віброподушками" : "Віброподушки"}
+                </button>
+              )}
+            </div>
+
+            <div className="section-title">Гроші</div>
+            <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
+              Порожні поля + вказані розміри = ціна порахується тією ж формулою, що для онлайн-заявок.
+            </p>
+            <div className="grid2">
+              <div className="field"><label>Собівартість, ₴</label>
+                <input type="number" value={form.cost_total} onChange={e => set("cost_total", e.target.value)} /></div>
+              <div className="field"><label>Ціна продажу (виручка), ₴</label>
+                <input type="number" value={form.price_total} onChange={e => set("price_total", e.target.value)} /></div>
+              <div className="field"><label>Маржа (авто)</label>
+                <input disabled value={money(profit) + " · " + pct(marginPct)} /></div>
+            </div>
+
+            <div className="section-title">Доставка та оплата</div>
+            <div className="grid2">
+              <div className="field"><label>Спосіб доставки</label>
+                <input value={form.transport} onChange={e => set("transport", e.target.value)} placeholder="Нова пошта / Самовивіз / Адресна" /></div>
+              <div className="field"><label>Адреса / відділення</label>
+                <input value={form.delivery_address} onChange={e => set("delivery_address", e.target.value)} /></div>
+              <div className="field"><label>Дата доставки</label>
+                <input type="date" value={form.delivery_date} onChange={e => set("delivery_date", e.target.value)} /></div>
+              <div className="field"><label>Оплата</label>
+                <select value={form.payment_method} onChange={e => set("payment_method", e.target.value)}>
+                  <option value="">— не вказано —</option>
+                  <option value="На карту">На карту</option>
+                  <option value="На рахунок ФО-П">На рахунок ФО-П</option>
+                  <option value="На рахунок ТОВ">На рахунок ТОВ</option>
+                  <option value="Готівка">Готівка</option>
+                  <option value="Уточнити з менеджером">Уточнити з менеджером</option>
+                </select>
+              </div>
+            </div>
+            <div className="field"><label>Примітки</label>
+              <textarea value={form.notes} onChange={e => set("notes", e.target.value)} /></div>
+
+            {error && <div className="error">{error}</div>}
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button className="btn" disabled={busy} onClick={submit}>
+                {busy ? "Створення…" : "Створити замовлення"}
+              </button>
+              <button className="btn ghost" disabled={busy} onClick={onClose}>Скасувати</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     function OrdersView({ token, groups, setGroups, loading, error, setError, refreshOrders, onOpenOrder }) {
       const [q, setQ] = useState("");
       const [status, setStatus] = useState("");
       const [view, setView] = useState("kanban");
       const [dragOver, setDragOver] = useState("");
       const [moving, setMoving] = useState("");
+      const [creating, setCreating] = useState(false);
       const dragOrderRef = useRef("");
       const skipClickRef = useRef(false);
 
@@ -792,12 +1017,24 @@ import { createRoot } from 'react-dom/client';
               {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
             <button className="btn secondary" onClick={load} disabled={!!moving}>Оновити</button>
+            <button className="btn" onClick={() => setCreating(true)}>+ Нове замовлення</button>
             <div className="view-toggle" style={{ marginLeft: "auto" }}>
               <button className={view === "kanban" ? "active" : ""} onClick={() => setView("kanban")}>Воронка</button>
               <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}>Список</button>
             </div>
           </div>
           {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
+          {creating && (
+            <NewOrderDrawer
+              token={token}
+              onClose={() => setCreating(false)}
+              onCreated={async (num) => {
+                setCreating(false);
+                await load();
+                if (num) onOpenOrder(num);
+              }}
+            />
+          )}
           {loading && <div className="empty">Завантаження замовлень…</div>}
           {!loading && !groups.length && <div className="empty">Замовлень не знайдено</div>}
 

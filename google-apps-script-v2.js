@@ -43,6 +43,28 @@ function doPost(e) {
       return handleAdminRequest_(data);
     }
 
+    var written = writeOrderToSheet_(data);
+
+    addDeliveryEvent(data); // подія в Google Календарі + нагадування (за 2 дні і в день о 08:30)
+    // У групу підрядника замовлення НЕ йде автоматично — лише коли менеджер
+    // поставить статус «В роботі» (див. onEditDelivery). Так підрядник не бачить
+    // попередніх/неопрацьованих запитів.
+
+    return jsonOut({ status: "ok", order_number: written.order_number, row: written.row });
+  } catch (error) {
+    return jsonOut({ status: "error", message: error.toString() });
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+/**
+ * ЄДИНЕ місце, де замовлення перетворюється в рядки аркуша «Замовлення».
+ * Викликають: doPost (заявка з форми) і adminCreateOrder_ (ручне внесення в CRM) —
+ * щоб розкладка колонок, формули й розрахунок цін ніколи не розʼїхались між каналами.
+ * Присвоює № замовлення. Повертає { order_number, row }.
+ */
+function writeOrderToSheet_(data) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(SHEET_ORDERS);
     if (!sheet) { sheet = ss.insertSheet(SHEET_ORDERS); setupOrders(sheet); }
@@ -73,24 +95,38 @@ function doPost(e) {
     itemsIn.forEach(function (it) {
       var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
       var qty = Number(it.quantity) || 1;
+      // Собівартість, вписана вручну в CRM, має пріоритет і НЕ перетирається авто-розрахунком.
+      var manualCost = (it.cost_total != null && it.cost_total !== "") ? Math.round(Number(it.cost_total)) : null;
       var areaM2 = 0, total = 0, costTotal = 0, hasMoney = false;
-      if (it.price_total != null) {
+      // Площа: кошик + верхня кришка (кришка — окрема площа w×d).
+      if (w && h) areaM2 = ((w * h + 2 * d * h) + (it.has_cover ? w * d : 0)) / 1000000;
+      if (it.price_total != null && it.price_total !== "") {
         total = Math.round(Number(it.price_total));
-        areaM2 = it.area_m2 != null ? Number(it.area_m2) : 0;
-        costTotal = it.cost_total != null ? Math.round(Number(it.cost_total)) : Math.round(total / MARKUP);
+        if (it.area_m2 != null) areaM2 = Number(it.area_m2);
+        costTotal = manualCost != null ? manualCost : Math.round(total / MARKUP);
+        hasMoney = total > 0;
+      } else if (manualCost != null) {
+        // Вписана собівартість без ціни → ціна за стандартною націнкою (маржа 25.9%).
+        // Так собівартість менеджера не перетирається, а маржа не виходить відʼємною.
+        costTotal = manualCost;
+        total = Math.round(manualCost * MARKUP);
         hasMoney = total > 0;
       } else if (w && h) {
-        areaM2 = (w * h + 2 * d * h) / 1000000;
-        var ppm2 = (it.construction_type || "").toLowerCase().indexOf("розбірний") >= 0 ? 2170 : 2030;
+        var constrLower = String(it.construction_type || "").toLowerCase();
+        var basketArea = (w * h + 2 * d * h) / 1000000;
+        var coverArea = it.has_cover ? (w * d) / 1000000 : 0;
+        // «розбір» (не «розбірний»), щоб ловити й «Розбірна» (AVL-02), і «Розбірний (з 3-х частин)».
+        var ppm2 = constrLower.indexOf("розбір") >= 0 ? 2170 : 2030;
         ppm2 = Math.round(ppm2 * MARKUP);
         if ((it.basket_type || "").toLowerCase().indexOf("антивандал") >= 0) ppm2 = Math.round(ppm2 * 1.35);
         if (it.pattern && ["K3","K4","K6","K8","K9"].indexOf(it.pattern) >= 0) ppm2 = Math.round(ppm2 * 1.15);
-        total = Math.round(areaM2 * ppm2) * qty;
+        total = Math.round(basketArea * ppm2) * qty;
+        if (coverArea) total += Math.round(coverArea * Math.round(1920 * MARKUP)) * qty; // 1920 ₴/м² — собівартість кришки
         costTotal = Math.round(total / MARKUP);
         hasMoney = total > 0;
       }
       var profit    = hasMoney ? total - costTotal : "";
-      var costUnit  = hasMoney ? Math.round(costTotal / qty) : "";
+      var costUnit  = costTotal ? Math.round(costTotal / qty) : "";
       var priceUnit = hasMoney ? Math.round(total / qty) : "";
       var revenue   = hasMoney ? total : "";
       var margin    = hasMoney ? Math.round((total - costTotal) / total * 1000) / 10 : "";
@@ -118,7 +154,7 @@ function doPost(e) {
 
       var row = [
         data.order_number || "", dateStr, "Нове", data.referral_source || "direct",   // A-D №,Дата,Статус,Джерело
-        (data.first_name || "") + " " + (data.last_name || ""),                        // E Клієнт
+        String((data.first_name || "") + " " + (data.last_name || "")).trim(),          // E Клієнт (без хвостового пробілу, коли прізвища немає)
         (data.phone ? "'" + data.phone : ""), data.city || "",                         // F-G Телефон,Місто
         it.basket_type || "", (it.construction_type || "") + (it.has_cover ? " + кришка" : ""),  // H-I (мітка кришки)
         it.color || (it.color_custom || ""), it.pattern || (it.pattern_custom || ""),  // J-K
@@ -153,18 +189,7 @@ function doPost(e) {
       sheet.getRange(lastRow, 21).setFontWeight("bold");            // Ціна продажу 1шт
       if (lastRow % 2 === 0) rr.setBackground("#F8F6F2");
     });
-
-    addDeliveryEvent(data); // подія в Google Календарі + нагадування (за 2 дні і в день о 08:30)
-    // У групу підрядника замовлення НЕ йде автоматично — лише коли менеджер
-    // поставить статус «В роботі» (див. onEditDelivery). Так підрядник не бачить
-    // попередніх/неопрацьованих запитів.
-
-    return jsonOut({ status: "ok", order_number: data.order_number, row: lastRow });
-  } catch (error) {
-    return jsonOut({ status: "error", message: error.toString() });
-  } finally {
-    try { lock.releaseLock(); } catch (e) {}
-  }
+  return { order_number: data.order_number, row: lastRow };
 }
 
 function findLastRealOrderRow_(sheet) {
@@ -785,10 +810,15 @@ function buildProductionMsg_(data) {
   if (data.delivery_address) m += "• Адреса: " + esc_(data.delivery_address) + "\n";
   if (data.delivery_date) m += "• Дата: <b>" + fmtDate_(data.delivery_date) + "</b>\n";
   if (data.notes) {
-    m += "• Додаткова інформація:\n";
-    String(data.notes).split(/\n+/).forEach(function (line) {
-      if (String(line || "").trim()) m += "  " + esc_(line) + "\n";
+    // Рядки про довжину/віброподушки вже показані у кожній позиції окремо — у злитих
+    // примітках вони лише дублюються (а в багатопозиційних могли б і заплутати).
+    var noteLines = String(data.notes).split(/\n+/).filter(function (line) {
+      return String(line || "").trim() && !/^(Довжина кронштейнів|Віброподушки)\s*:/i.test(String(line).trim());
     });
+    if (noteLines.length) {
+      m += "• Додаткова інформація:\n";
+      noteLines.forEach(function (line) { m += "  " + esc_(line) + "\n"; });
+    }
   }
 
   m += "\n🔖 Джерело заявки: " + esc_(data.referral_source || "direct") + "\n";
@@ -1617,6 +1647,7 @@ function handleAdminRequest_(data) {
     if (action === "list_orders") return jsonOut(adminListOrders_(data));
     if (action === "get_order") return jsonOut(adminGetOrder_(data));
     if (action === "update_order") return jsonOut(adminUpdateOrder_(data));
+    if (action === "create_order") return jsonOut(adminCreateOrder_(data));
     if (action === "dashboard") return jsonOut(adminDashboard_());
     if (action === "list_partners") return jsonOut(adminListPartners_());
     if (action === "upsert_partner") return jsonOut(adminUpsertPartner_(data.partner || data));
@@ -1843,6 +1874,74 @@ function applyFinanceToRow_(sh, row, patch) {
   sh.getRange(row, 35).setNumberFormat("#,##0 ₴");
   sh.getRange(row, 36).setNumberFormat("0.0");
   sh.getRange(row, 37).setNumberFormat("#,##0 ₴");
+}
+
+/**
+ * Ручне внесення замовлення з кабінету CRM: телефон, Instagram, Viber, повторний
+ * клієнт, замовлення «з рук» — усе, що не пройшло через онлайн-форму.
+ * Пише ТОЙ САМИЙ рядок, що й заявка з форми (спільний writeOrderToSheet_), тож
+ * замовлення з будь-якого джерела виглядають, рахуються й потрапляють до підрядника
+ * однаково. Номер ORD-ДДММРР-NNN присвоюється тим самим лічильником.
+ */
+function adminCreateOrder_(data) {
+  var src = data.order || data;
+
+  var fullName = String(src.client || [src.first_name, src.last_name].filter(function (x) { return x; }).join(" ") || "").trim();
+  if (!fullName) throw new Error("Вкажіть імʼя клієнта");
+  var nameParts = fullName.split(/\s+/);
+
+  var phone = String(src.phone || "").trim();
+  var tg = String(src.contact_telegram || "").replace(/^@/, "").trim();
+  var email = String(src.contact_email || "").trim();
+  if (!phone && !tg && !email) throw new Error("Вкажіть телефон, Telegram або e-mail");
+
+  // Спосіб зв'язку: беремо заявлений, але якщо для нього немає значення — вибираємо заповнений.
+  var cm = String(src.contact_method || "").trim();
+  if (cm === "telegram" && !tg) cm = "";
+  if (cm === "email" && !email) cm = "";
+  if ((cm === "phone" || cm === "viber" || cm === "whatsapp") && !phone) cm = "";
+  if (!cm) cm = phone ? "phone" : (tg ? "telegram" : "email");
+
+  var items = (Array.isArray(src.items) && src.items.length) ? src.items : [{
+    product_type: src.product_type || "basket",
+    basket_model: src.basket_model || "", basket_model_name: src.basket_model_name || src.basket_model || "",
+    basket_type: src.basket_type || "", construction_type: src.construction_type || "",
+    color: src.color || "", color_custom: src.color_custom || "",
+    pattern: src.pattern || "", pattern_custom: src.pattern_custom || "",
+    has_cover: !!src.has_cover,
+    size_w: src.size_w, size_h: src.size_h, size_d: src.size_d,
+    quantity: src.quantity, ac_brand: src.ac_brand || "", ac_model: src.ac_model || "",
+    model_comment: src.model_comment || "",
+    bracket_length: src.bracket_length || "", vibro_pads: !!src.vibro_pads,
+    // Гроші: якщо менеджер вписав ціну — беремо її; якщо ні, а є розміри —
+    // writeOrderToSheet_ порахує тією ж формулою, що й для онлайн-заявок.
+    price_total: (src.price_total === "" || src.price_total == null) ? null : Number(src.price_total),
+    cost_total: (src.cost_total === "" || src.cost_total == null) ? null : Number(src.cost_total)
+  }];
+
+  var order = {
+    first_name: nameParts[0] || "",
+    last_name: nameParts.slice(1).join(" "),
+    phone: phone, city: String(src.city || "").trim(),
+    contact_method: cm, contact_telegram: tg, contact_email: email,
+    referral_source: String(src.source || src.referral_source || "manual").trim() || "manual",
+    transport: src.transport || "", transport_custom: src.transport_custom || "",
+    delivery_address: src.delivery_address || "",
+    delivery_date: toISODate(src.delivery_date) || String(src.delivery_date || ""),
+    payment_method: src.payment_method || "",
+    how_found: src.how_found || "", how_found_custom: src.how_found_custom || "",
+    notes: src.notes || "",
+    items: items
+  };
+
+  var written = writeOrderToSheet_(order);
+  addDeliveryEvent(order); // подія в календарі + нагадування (як для онлайн-заявок)
+
+  SpreadsheetApp.flush();
+  var created = adminGetOrder_({ order_number: written.order_number });
+  created.order_number = written.order_number;
+  created.row = written.row;
+  return created;
 }
 
 function adminUpdateOrder_(data) {
