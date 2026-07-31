@@ -28,6 +28,9 @@ import { createRoot } from 'react-dom/client';
     // Звідки прийшло замовлення, внесене вручну (пише в колонку «Джерело»).
     const MANUAL_SOURCES = ["Телефон","Instagram","Facebook","Viber / WhatsApp","Telegram","Повторний клієнт","Рекомендація","ОСББ","Партнер / підрядник","Візит в офіс","Інше"];
     const BRACKET_LENGTHS = ["450 мм","500 мм","600 мм","700 мм"];
+    // Платежі: оплати клієнта та надходження маржі від підрядника.
+    const PAYMENT_TYPES = ["Передоплата","Доплата","Оплата повністю","Маржа від підрядника","Повернення клієнту"];
+    const PAYMENT_METHODS = ["Готівка","На карту","На рахунок ФО-П","На рахунок ТОВ","Накладений платіж","Інше"];
     const TOKEN_KEY = "avalon_admin_token";
 
     function money(v) {
@@ -497,6 +500,95 @@ import { createRoot } from 'react-dom/client';
       return <span className={"badge " + statusClass(status)}>{status}</span>;
     }
 
+    // Платежі замовлення: передоплати/доплати клієнта і виплати маржі підрядником.
+    function PaymentsSection({ token, orderNumber, payments, summary, onChanged }) {
+      const [form, setForm] = useState({ type: "Передоплата", amount: "", method: "Готівка", date: "", note: "" });
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState("");
+      const list = payments || [];
+      const s = summary || {};
+
+      async function add() {
+        setError("");
+        if (!(Number(form.amount) > 0)) return setError("Вкажіть суму більшу за нуль");
+        setBusy(true);
+        try {
+          await api("/api/admin/payments", {
+            method: "POST", token,
+            body: { payment: { order_number: orderNumber, ...form, amount: Number(form.amount) } },
+          });
+          setForm(f => ({ ...f, amount: "", note: "" }));
+          onChanged && onChanged();
+        } catch (e) { setError(e.message || "Не вдалося внести платіж"); }
+        finally { setBusy(false); }
+      }
+
+      async function remove(row) {
+        if (!window.confirm("Видалити цей платіж?")) return;
+        setBusy(true); setError("");
+        try {
+          await api("/api/admin/payments?row=" + row, { method: "DELETE", token });
+          onChanged && onChanged();
+        } catch (e) { setError(e.message || "Не вдалося видалити платіж"); }
+        finally { setBusy(false); }
+      }
+
+      return (
+        <>
+          <div className="section-title">Платежі</div>
+          <div className="grid2">
+            <div className="field"><label>Клієнт сплатив</label>
+              <input disabled value={money(s.client_paid || 0) + " з " + money(s.revenue || 0)
+                + ((s.client_left || 0) > 0 ? " · борг " + money(s.client_left) : " · повністю")} /></div>
+            <div className="field"><label>Маржа отримана</label>
+              <input disabled value={money(s.margin_received || 0) + " з " + money(s.profit || 0)
+                + ((s.margin_left || 0) > 0 ? " · до отримання " + money(s.margin_left) : " · повністю")} /></div>
+          </div>
+
+          {list.length > 0 && (
+            <div className="table-scroll" style={{ marginTop: 8 }}>
+              <table>
+                <thead><tr><th>Дата</th><th>Тип</th><th>Сума</th><th>Спосіб</th><th>Примітка</th><th /></tr></thead>
+                <tbody>
+                  {list.map(p => (
+                    <tr key={p.row}>
+                      <td>{(p.date || "").slice(0, 10)}</td>
+                      <td>{p.type}</td>
+                      <td><b>{money(p.amount)}</b></td>
+                      <td>{p.method || "—"}</td>
+                      <td>{p.note || "—"}</td>
+                      <td><button className="btn ghost" disabled={busy} onClick={() => remove(p.row)}>Видалити</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="grid2" style={{ marginTop: 8 }}>
+            <div className="field"><label>Тип платежу</label>
+              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
+                {PAYMENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div className="field"><label>Сума, ₴</label>
+              <input type="number" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
+            <div className="field"><label>Спосіб</label>
+              <select value={form.method} onChange={e => setForm({ ...form, method: e.target.value })}>
+                {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div className="field"><label>Дата (порожньо = сьогодні)</label>
+              <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
+          </div>
+          <div className="field"><label>Примітка</label>
+            <input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="Напр. квитанція №, хто передав" /></div>
+          {error && <div className="error">{error}</div>}
+          <button className="btn" disabled={busy} onClick={add}>{busy ? "Внесення…" : "Внести платіж"}</button>
+        </>
+      );
+    }
+
     function OrderDrawer({ token, orderNumber, onClose, onChanged }) {
       const [data, setData] = useState(null);
       const [busy, setBusy] = useState(false);
@@ -812,6 +904,14 @@ import { createRoot } from 'react-dom/client';
                 Маржу отримано ✓
               </label>
             </div>
+
+            <PaymentsSection
+              token={token}
+              orderNumber={orderNumber}
+              payments={data.payments}
+              summary={data.payment_summary}
+              onChanged={async () => { await load(); onChanged && onChanged(); }}
+            />
 
             <div className="section-title">Доставка та нотатки</div>
             <div className="grid2">
@@ -1320,6 +1420,17 @@ import { createRoot } from 'react-dom/client';
                         <div className="meta">{g.client}<br /><ContactLinks order={g} onClickStop /><br />{g.city || "—"}</div>
                         <div className="money">{money(g.revenue)}</div>
                         <div className="meta">Маржа: {money(g.profit)}</div>
+                        {/* Оплати клієнта: видно борг просто на картці, без відкриття замовлення. */}
+                        {(g.client_paid_sum > 0 || g.client_left > 0) && (
+                          <div className="meta" style={{ color: g.client_left > 0 ? "#b54842" : "#16A34A" }}>
+                            {g.client_left > 0
+                              ? "Сплачено " + money(g.client_paid_sum) + " · борг " + money(g.client_left)
+                              : "Сплачено повністю"}
+                          </div>
+                        )}
+                        {g.margin_left > 0 && g.client_left === 0 && (
+                          <div className="meta" style={{ color: "#8f7340" }}>Маржа до отримання: {money(g.margin_left)}</div>
+                        )}
                         <select
                           className="card-status mobile-only"
                           value={g.status}
