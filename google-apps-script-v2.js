@@ -1655,6 +1655,19 @@ function paymentTotals_(payments) {
  * коли внесено не менше за виручку, «Маржу отримано ✓» — коли отримано всю маржу.
  * Так галочки не суперечать сумам, які веде менеджер.
  */
+/**
+ * Стан оплат для замовлення БЕЗ жодного платежу в аркуші: довіряємо старим галочкам
+ * AG/AH (замовлення до появи журналу платежів). Щойно з'явиться перший платіж —
+ * головними стають суми, а не галочки.
+ */
+function legacyPaidState_(revenue, profit, agChecked, ahChecked) {
+  return {
+    client_paid: agChecked ? Math.round(revenue) : 0,
+    margin_paid_sum: ahChecked ? Math.round(profit) : 0,
+    legacy: true
+  };
+}
+
 function syncOrderPaymentState_(orderNumber) {
   var sh = adminOrdersSheet_();
   var last = sh.getLastRow();
@@ -1672,7 +1685,21 @@ function syncOrderPaymentState_(orderNumber) {
     revenue += cellNum_(v[0]) || 0;
     profit += cellNum_(v[1]) || 0;
   });
-  var totals = paymentTotals_(readPayments_(orderNumber));
+  var payments = readPayments_(orderNumber);
+  var agChecked = !!sh.getRange(rows[0], 33).getValue();
+  var ahChecked = !!sh.getRange(rows[0], 34).getValue();
+  if (!payments.length) {
+    // Журналу платежів для цього замовлення ще немає — не перетираємо старі галочки
+    // (інакше вже оплачені замовлення показувались би як повний борг).
+    var lg = legacyPaidState_(revenue, profit, agChecked, ahChecked);
+    return {
+      revenue: revenue, profit: profit,
+      client_paid: lg.client_paid, client_left: Math.max(0, revenue - lg.client_paid),
+      margin_received: lg.margin_paid_sum, margin_left: Math.max(0, profit - lg.margin_paid_sum),
+      legacy: true
+    };
+  }
+  var totals = paymentTotals_(payments);
   var clientDone = revenue > 0 && totals.client_paid >= revenue;
   var marginDone = profit > 0 && totals.margin_paid_sum >= profit;
   rows.forEach(function (r) {
@@ -2064,7 +2091,11 @@ function adminListOrders_(data) {
   var groups = Object.keys(byNum).map(function (k) {
     var g = byNum[k];
     g.margin_pct = g.revenue ? Math.round((g.profit / g.revenue) * 1000) / 10 : null;
-    var t = paymentTotals_(payByOrder[k] || []);
+    var pmts = payByOrder[k] || [];
+    var t = pmts.length
+      ? paymentTotals_(pmts)
+      : legacyPaidState_(Number(g.revenue) || 0, Number(g.profit) || 0, !!g.client_paid, !!g.margin_paid);
+    g.payments_count = pmts.length;
     g.client_paid_sum = t.client_paid;
     g.client_left = Math.max(0, (Number(g.revenue) || 0) - t.client_paid);
     g.margin_received = t.margin_paid_sum;
@@ -2092,14 +2123,18 @@ function adminGetOrder_(data) {
   return {
     status: "ok", order: group, items: items,
     payments: pay,
-    payment_summary: {
-      revenue: group ? (Number(group.revenue) || 0) : 0,
-      profit: group ? (Number(group.profit) || 0) : 0,
-      client_paid: payTotals.client_paid,
-      client_left: Math.max(0, (group ? (Number(group.revenue) || 0) : 0) - payTotals.client_paid),
-      margin_received: payTotals.margin_paid_sum,
-      margin_left: Math.max(0, (group ? (Number(group.profit) || 0) : 0) - payTotals.margin_paid_sum)
-    }
+    payment_summary: (function () {
+      var rev = group ? (Number(group.revenue) || 0) : 0;
+      var prof = group ? (Number(group.profit) || 0) : 0;
+      var t = pay.length ? payTotals
+        : legacyPaidState_(rev, prof, !!(group && group.client_paid), !!(group && group.margin_paid));
+      return {
+        revenue: rev, profit: prof,
+        client_paid: t.client_paid, client_left: Math.max(0, rev - t.client_paid),
+        margin_received: t.margin_paid_sum, margin_left: Math.max(0, prof - t.margin_paid_sum),
+        legacy: !pay.length
+      };
+    })()
   };
 }
 
@@ -2294,6 +2329,11 @@ function adminUpdateOrder_(data) {
     return patch[k] != null;
   });
   if (financeTouched) applyFinanceToRow_(sh, row, patch);
+  // Виручка/прибуток змінились → пороги «оплачено повністю» інші, тож галочки
+  // AG/AH треба перерахувати за фактичними платежами (їх читає і зведення).
+  if (financeTouched || itemTouched) {
+    try { syncOrderPaymentState_(orderNumber); } catch (syncErr) { /* не валимо правку */ }
+  }
 
   if (patch.status != null) {
     var st = String(patch.status).trim();

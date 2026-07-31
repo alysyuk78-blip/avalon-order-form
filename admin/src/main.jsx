@@ -673,6 +673,27 @@ import { createRoot } from 'react-dom/client';
         );
       }
 
+      // Підсумок оплат: із журналу платежів, а для давніх замовлень — зі старих галочок.
+      const paySummary = data.payment_summary || { revenue: 0, profit: 0, client_paid: 0, client_left: 0, margin_received: 0, margin_left: 0 };
+
+      // Внести залишок одним платежем (замість прямої галочки — щоб суми не розходились).
+      async function payRest(which) {
+        const amount = which === "client" ? paySummary.client_left : paySummary.margin_left;
+        if (!(amount > 0)) return;
+        const type = which === "client" ? "Оплата повністю" : "Маржа від підрядника";
+        if (!window.confirm("Внести платіж «" + type + "» на " + money(amount) + "?")) return;
+        setBusy(true); setError("");
+        try {
+          await api("/api/admin/payments", {
+            method: "POST", token,
+            body: { payment: { order_number: orderNumber, type, amount, method: "" } },
+          });
+          await load();
+          onChanged && onChanged();
+        } catch (e) { setError(e.message || "Не вдалося внести платіж"); }
+        finally { setBusy(false); }
+      }
+
       async function changeStatus(newStatus) {
         if (!confirmStatusChange(form.status, newStatus)) return;
         setForm({ ...form, status: newStatus });
@@ -741,18 +762,24 @@ import { createRoot } from 'react-dom/client';
               ))}
             </div>
             <div className="quick-actions">
+              {/* Ці кнопки НЕ ставлять галочку напряму, а вносять платіж на залишок —
+                  інакше журнал платежів і галочки AG/AH суперечили б одне одному. */}
               <button
                 type="button"
-                className={form.client_paid ? "ok" : ""}
-                disabled={busy}
-                onClick={() => { const v = !form.client_paid; setForm({ ...form, client_paid: v }); save({ client_paid: v }); }}
-              >{form.client_paid ? "✓ Клієнт заплатив" : "Клієнт заплатив"}</button>
+                className={paySummary.client_left > 0 ? "" : "ok"}
+                disabled={busy || paySummary.client_left <= 0}
+                onClick={() => payRest("client")}
+              >{paySummary.client_left > 0
+                ? "Клієнт заплатив (" + money(paySummary.client_left) + ")"
+                : "✓ Клієнт заплатив"}</button>
               <button
                 type="button"
-                className={form.margin_paid ? "ok" : ""}
-                disabled={busy}
-                onClick={() => { const v = !form.margin_paid; setForm({ ...form, margin_paid: v }); save({ margin_paid: v }); }}
-              >{form.margin_paid ? "✓ Маржу отримано" : "Маржу отримано"}</button>
+                className={paySummary.margin_left > 0 ? "" : "ok"}
+                disabled={busy || paySummary.margin_left <= 0}
+                onClick={() => payRest("margin")}
+              >{paySummary.margin_left > 0
+                ? "Маржу отримано (" + money(paySummary.margin_left) + ")"
+                : "✓ Маржу отримано"}</button>
               <button
                 type="button"
                 className="warn"
@@ -893,17 +920,6 @@ import { createRoot } from 'react-dom/client';
               revenue: form.revenue === "" ? null : Number(form.revenue),
             })}>Зберегти фінанси</button>
 
-            <div className="section-title">Оплата / маржа</div>
-            <div className="grid2">
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input type="checkbox" checked={form.client_paid} onChange={e => { const v = e.target.checked; setForm({ ...form, client_paid: v }); save({ client_paid: v }); }} />
-                Оплата клієнта ✓
-              </label>
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input type="checkbox" checked={form.margin_paid} onChange={e => { const v = e.target.checked; setForm({ ...form, margin_paid: v }); save({ margin_paid: v }); }} />
-                Маржу отримано ✓
-              </label>
-            </div>
 
             <PaymentsSection
               token={token}
