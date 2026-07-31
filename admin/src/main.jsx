@@ -776,15 +776,15 @@ import { createRoot } from 'react-dom/client';
               </>
             )}
             <div className="grid2">
-              <div className="field"><label>Собівартість</label>
+              <div className="field"><label>Собівартість (разом)</label>
                 <input type="number" value={form.cost_total} onChange={e => setForm({ ...form, cost_total: e.target.value })} /></div>
-              <div className="field"><label>Роздрібна ціна</label>
+              <div className="field"><label>Роздрібна ціна (разом)</label>
                 <input type="number" value={form.list_price} onChange={e => setForm({ ...form, list_price: e.target.value })} /></div>
               <div className="field"><label>Знижка %</label>
                 <input type="number" step="0.1" value={form.discount_pct} onChange={e => setForm({ ...form, discount_pct: e.target.value })} /></div>
               <div className="field"><label>Знижка ₴</label>
                 <input type="number" value={form.discount_uah} onChange={e => setForm({ ...form, discount_uah: e.target.value })} /></div>
-              <div className="field"><label>Ціна продажу / виручка</label>
+              <div className="field"><label>Ціна продажу / виручка (разом)</label>
                 <input type="number" value={form.revenue} onChange={e => setForm({ ...form, revenue: e.target.value })} /></div>
               <div className="field"><label>Маржа (авто)</label>
                 <input disabled value={money(profit) + " · " + pct(marginPct)} /></div>
@@ -886,11 +886,18 @@ import { createRoot } from 'react-dom/client';
         }));
       }
 
-      // Виручка = роздрібна ціна − знижка (той самий розрахунок, що в таблиці).
-      const listPrice = Number(form.list_price) || 0;
-      const discount = Number(form.discount_uah) || (listPrice && Number(form.discount_pct)
-        ? Math.round(listPrice * Number(form.discount_pct) / 100) : 0);
-      const revenueFromList = listPrice ? listPrice - discount : 0;
+      // Гроші вводяться ЗА ОДИНИЦЮ, у таблицю йдуть підсумки (× кількість).
+      const qtyNum = Math.max(1, Number(form.quantity) || 1);
+      const costUnit = Number(form.cost_total) || 0;
+      const listUnit = Number(form.list_price) || 0;
+      const priceUnitOverride = Number(form.price_total) || 0;
+      const costTotalCalc = Math.round(costUnit * qtyNum);
+      const listTotal = Math.round(listUnit * qtyNum);
+      const discountTotal = Number(form.discount_uah) || (listTotal && Number(form.discount_pct)
+        ? Math.round(listTotal * Number(form.discount_pct) / 100) : 0);
+      const revenueTotal = priceUnitOverride
+        ? Math.round(priceUnitOverride * qtyNum)
+        : (listTotal ? listTotal - discountTotal : 0);
 
       function pickModel(id) {
         const m = CATALOG_MODELS_CRM.find(x => x.id === id);
@@ -907,9 +914,8 @@ import { createRoot } from 'react-dom/client';
         }));
       }
 
-      const revenue = (Number(form.price_total) || 0) || revenueFromList;
-      const profit = revenue - (Number(form.cost_total) || 0);
-      const marginPct = revenue ? Math.round((profit / revenue) * 1000) / 10 : 0;
+      const profit = revenueTotal - costTotalCalc;
+      const marginPct = revenueTotal ? Math.round((profit / revenueTotal) * 1000) / 10 : 0;
 
       async function submit() {
         setError("");
@@ -929,7 +935,13 @@ import { createRoot } from 'react-dom/client';
                 product_type: isOther ? "other" : (isBracket ? "bracket" : "basket"),
                 basket_model_name: isOther ? form.product_name : (model ? model.name : form.basket_model),
                 construction_type: isOther ? form.product_name : form.construction_type,
-                quantity: Number(form.quantity) || 1,
+                quantity: qtyNum,
+                // Колонки таблиці зберігають ПІДСУМКИ по позиції, тож множимо на кількість.
+                cost_total: costTotalCalc || "",
+                list_price: priceUnitOverride ? "" : (listTotal || ""),
+                discount_pct: priceUnitOverride ? "" : (form.discount_pct || ""),
+                discount_uah: priceUnitOverride ? "" : (discountTotal || ""),
+                price_total: revenueTotal || "",
               },
             },
           });
@@ -1058,28 +1070,40 @@ import { createRoot } from 'react-dom/client';
             <div className="section-title">Гроші</div>
             <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
               {isOther || isBracket
-                ? "Вкажіть собівартість і ціну. Роздрібна ціна зі знижкою рахує виручку автоматично."
-                : "Для кошика можна залишити гроші порожніми — ціна порахується за розмірами тією ж формулою, що для онлайн-заявок."}
+                ? "Ціни вказуються ЗА ОДИНИЦЮ — підсумок з урахуванням кількості порахується нижче."
+                : "Ціни вказуються за одиницю. Для кошика можна залишити гроші порожніми — ціна порахується за розмірами тією ж формулою, що для онлайн-заявок."}
             </p>
             <div className="grid2">
-              <div className="field"><label>Собівартість, ₴</label>
+              <div className="field"><label>Собівартість за од., ₴</label>
                 <input type="number" value={form.cost_total} onChange={e => set("cost_total", e.target.value)} /></div>
-              <div className="field"><label>Роздрібна ціна, ₴</label>
+              <div className="field"><label>Роздрібна ціна за од., ₴</label>
                 <input type="number" value={form.list_price} onChange={e => set("list_price", e.target.value)} /></div>
-              <div className="field"><label>Знижка, %</label>
+              <div className="field"><label>Знижка, % (на позицію)</label>
                 <input type="number" step="0.1" value={form.discount_pct} onChange={e => setForm(f => ({ ...f, discount_pct: e.target.value, discount_uah: "" }))} /></div>
-              <div className="field"><label>Знижка, ₴</label>
+              <div className="field"><label>Знижка, ₴ (разом)</label>
                 <input type="number" value={form.discount_uah} onChange={e => setForm(f => ({ ...f, discount_uah: e.target.value, discount_pct: "" }))} /></div>
-              <div className="field"><label>Ціна продажу (виручка), ₴</label>
+              <div className="field"><label>Ціна продажу за од., ₴</label>
                 <input type="number" value={form.price_total} onChange={e => set("price_total", e.target.value)}
-                  placeholder={revenueFromList ? String(revenueFromList) : ""} /></div>
-              <div className="field"><label>Маржа (авто)</label>
+                  placeholder={listUnit ? "заповнено прайсом" : ""} /></div>
+              <div className="field"><label>Маржа разом (авто)</label>
                 <input disabled value={money(profit) + " · " + pct(marginPct)} /></div>
             </div>
-            {revenueFromList > 0 && !form.price_total && (
-              <p style={{ margin: "6px 0 0", color: "var(--muted)", fontSize: 13 }}>
-                Виручка = {money(listPrice)} − {money(discount)} = <b>{money(revenueFromList)}</b>
-              </p>
+            {(revenueTotal > 0 || costTotalCalc > 0) && (
+              <div className="panel" style={{ boxShadow: "none", padding: 12, marginTop: 10 }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Разом за позицію ({qtyNum} шт.)</div>
+                <div style={{ fontSize: 13, lineHeight: 1.7, color: "var(--muted)" }}>
+                  {listTotal > 0 && !priceUnitOverride && (
+                    <div>Роздрібна: {money(listUnit)} × {qtyNum} = <b>{money(listTotal)}</b>
+                      {discountTotal > 0 ? <> − знижка {money(discountTotal)}</> : null}</div>
+                  )}
+                  {priceUnitOverride > 0 && (
+                    <div>Ціна продажу: {money(priceUnitOverride)} × {qtyNum} = <b>{money(revenueTotal)}</b></div>
+                  )}
+                  <div>Виручка: <b style={{ color: "var(--text)" }}>{money(revenueTotal)}</b></div>
+                  <div>Собівартість: {money(costUnit)} × {qtyNum} = <b>{money(costTotalCalc)}</b></div>
+                  <div>Маржа: <b style={{ color: "var(--text)" }}>{money(profit)}</b> · {pct(marginPct)}</div>
+                </div>
+              </div>
             )}
 
             <div className="section-title">Доставка та оплата</div>
