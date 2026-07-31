@@ -95,24 +95,38 @@ function writeOrderToSheet_(data) {
     itemsIn.forEach(function (it) {
       var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
       var qty = Number(it.quantity) || 1;
+      // Собівартість, вписана вручну в CRM, має пріоритет і НЕ перетирається авто-розрахунком.
+      var manualCost = (it.cost_total != null && it.cost_total !== "") ? Math.round(Number(it.cost_total)) : null;
       var areaM2 = 0, total = 0, costTotal = 0, hasMoney = false;
-      if (it.price_total != null) {
+      // Площа: кошик + верхня кришка (кришка — окрема площа w×d).
+      if (w && h) areaM2 = ((w * h + 2 * d * h) + (it.has_cover ? w * d : 0)) / 1000000;
+      if (it.price_total != null && it.price_total !== "") {
         total = Math.round(Number(it.price_total));
-        areaM2 = it.area_m2 != null ? Number(it.area_m2) : 0;
-        costTotal = it.cost_total != null ? Math.round(Number(it.cost_total)) : Math.round(total / MARKUP);
+        if (it.area_m2 != null) areaM2 = Number(it.area_m2);
+        costTotal = manualCost != null ? manualCost : Math.round(total / MARKUP);
+        hasMoney = total > 0;
+      } else if (manualCost != null) {
+        // Вписана собівартість без ціни → ціна за стандартною націнкою (маржа 25.9%).
+        // Так собівартість менеджера не перетирається, а маржа не виходить відʼємною.
+        costTotal = manualCost;
+        total = Math.round(manualCost * MARKUP);
         hasMoney = total > 0;
       } else if (w && h) {
-        areaM2 = (w * h + 2 * d * h) / 1000000;
-        var ppm2 = (it.construction_type || "").toLowerCase().indexOf("розбірний") >= 0 ? 2170 : 2030;
+        var constrLower = String(it.construction_type || "").toLowerCase();
+        var basketArea = (w * h + 2 * d * h) / 1000000;
+        var coverArea = it.has_cover ? (w * d) / 1000000 : 0;
+        // «розбір» (не «розбірний»), щоб ловити й «Розбірна» (AVL-02), і «Розбірний (з 3-х частин)».
+        var ppm2 = constrLower.indexOf("розбір") >= 0 ? 2170 : 2030;
         ppm2 = Math.round(ppm2 * MARKUP);
         if ((it.basket_type || "").toLowerCase().indexOf("антивандал") >= 0) ppm2 = Math.round(ppm2 * 1.35);
         if (it.pattern && ["K3","K4","K6","K8","K9"].indexOf(it.pattern) >= 0) ppm2 = Math.round(ppm2 * 1.15);
-        total = Math.round(areaM2 * ppm2) * qty;
+        total = Math.round(basketArea * ppm2) * qty;
+        if (coverArea) total += Math.round(coverArea * Math.round(1920 * MARKUP)) * qty; // 1920 ₴/м² — собівартість кришки
         costTotal = Math.round(total / MARKUP);
         hasMoney = total > 0;
       }
       var profit    = hasMoney ? total - costTotal : "";
-      var costUnit  = hasMoney ? Math.round(costTotal / qty) : "";
+      var costUnit  = costTotal ? Math.round(costTotal / qty) : "";
       var priceUnit = hasMoney ? Math.round(total / qty) : "";
       var revenue   = hasMoney ? total : "";
       var margin    = hasMoney ? Math.round((total - costTotal) / total * 1000) / 10 : "";

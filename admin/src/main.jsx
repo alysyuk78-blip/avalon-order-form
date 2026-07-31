@@ -14,14 +14,14 @@ import { createRoot } from 'react-dom/client';
     // Каталог для ручного внесення (дзеркалить CATALOG_MODELS у public/index.html).
     const CATALOG_MODELS_CRM = [
       { id: "AVL-01", name: "Суцільний", construction: "Суцільний" },
-      { id: "AVL-02", name: "Екран під утеплювач", construction: "Розбірна" },
+      { id: "AVL-02", name: "Екран під утеплювач", construction: "Розбірна", coverAllowed: false },
       { id: "AVL-03", name: "Універсальний", construction: "Суцільний" },
       { id: "AVL-04", name: "Зі знімною боковиною", construction: "Суцільний" },
       { id: "AVL-05", name: "Розбірний", construction: "Розбірний (з 3-х частин)" },
-      { id: "AVL-06", name: "Ламель з кришкою", construction: "Суцільний" },
+      { id: "AVL-06", name: "Ламель з кришкою", construction: "Суцільний", defaultCover: true },
       { id: "AVL-06/1", name: "Ламельний", construction: "Суцільний" },
-      { id: "AVL-07", name: "Закритий на підставці", construction: "Суцільний" },
-      { id: "AVL-08", name: "Горизонтальний монтаж", construction: "Суцільний" },
+      { id: "AVL-07", name: "Закритий на підставці", construction: "Суцільний", defaultCover: true },
+      { id: "AVL-08", name: "Горизонтальний монтаж", construction: "Суцільний", defaultCover: true },
       { id: "AVL-K-01", name: "Кронштейни декоративні (компл.)", construction: "Комплект кронштейнів", bracket: true },
       { id: "AVL-SK-01", name: "Кронштейна система (компл.)", construction: "Комплект системи", bracket: true },
     ];
@@ -756,6 +756,9 @@ import { createRoot } from 'react-dom/client';
           ...f,
           basket_model: id,
           construction_type: m ? m.construction + " · " + m.id : "",
+          // Кришка підставляється з каталогу: у AVL-06/07/08 вона передбачена конструкцією,
+          // у AVL-02 — неможлива. Інакше ціна порахувалась би без неї.
+          has_cover: !!(m && m.defaultCover),
           ...(m && m.bracket
             ? { size_w: "", size_h: "", size_d: "", pattern: "", has_cover: false }
             : { bracket_length: "", vibro_pads: false }),
@@ -873,7 +876,10 @@ import { createRoot } from 'react-dom/client';
               </div>
             )}
             <div className="quick-actions" style={{ marginTop: 8 }}>
-              {!isBracket && (
+              {!isBracket && model && model.coverAllowed === false && (
+                <span style={{ color: "var(--muted)", fontSize: 13 }}>Для цієї моделі верхня кришка не передбачена.</span>
+              )}
+              {!isBracket && !(model && model.coverAllowed === false) && (
                 <button type="button" className={form.has_cover ? "active" : ""} onClick={() => set("has_cover", !form.has_cover)}>
                   {form.has_cover ? "✓ З верхньою кришкою" : "Верхня кришка"}
                 </button>
