@@ -28,6 +28,7 @@ import { createRoot } from 'react-dom/client';
     // Звідки прийшло замовлення, внесене вручну (пише в колонку «Джерело»).
     const MANUAL_SOURCES = ["Телефон","Instagram","Facebook","Viber / WhatsApp","Telegram","Повторний клієнт","Рекомендація","ОСББ","Партнер / підрядник","Візит в офіс","Інше"];
     const BRACKET_LENGTHS = ["450 мм","500 мм","600 мм","700 мм"];
+    const UNIT_SUGGESTIONS = ["шт.", "комп."];
     // Платежі: оплати клієнта та надходження маржі від підрядника.
     const PAYMENT_TYPES = ["Передоплата","Доплата","Оплата повністю","Маржа від підрядника","Повернення клієнту"];
     const PAYMENT_METHODS = ["Готівка","На карту","На рахунок ФО-П","На рахунок ТОВ","Накладений платіж","Інше"];
@@ -82,6 +83,18 @@ import { createRoot } from 'react-dom/client';
     }
     function statusClass(status) {
       return STATUS_CLASS[status] || "";
+    }
+    // Старі або вручну створені рядки інколи мають порожній/нестандартний статус.
+    // Не ховаємо такі замовлення з воронки: показуємо їх у «Нове» до уточнення.
+    function normalizeStatus(status) {
+      const value = String(status || "").trim();
+      return STATUSES.includes(value) ? value : "Нове";
+    }
+    function newRequestId() {
+      if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+        return globalThis.crypto.randomUUID();
+      }
+      return "pay-" + Date.now() + "-" + Math.random().toString(36).slice(2);
     }
     /** Дата замовлення: created_at (UA/ISO) або номер ORD-DDMMYY-NNN */
     function orderDate(g) {
@@ -505,18 +518,27 @@ import { createRoot } from 'react-dom/client';
       const [form, setForm] = useState({ type: "Передоплата", amount: "", method: "Готівка", date: "", note: "" });
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
+      const pendingRef = useRef({ fingerprint: "", requestId: "" });
       const list = payments || [];
       const s = summary || {};
+      const clientOverpaid = Math.max(0, (Number(s.client_paid) || 0) - (Number(s.revenue) || 0));
+      const marginOverreceived = Math.max(0, (Number(s.margin_received) || 0) - (Number(s.profit) || 0));
 
       async function add() {
         setError("");
         if (!(Number(form.amount) > 0)) return setError("Вкажіть суму більшу за нуль");
+        const payment = { order_number: orderNumber, ...form, amount: Number(form.amount) };
+        const fingerprint = JSON.stringify(payment);
+        if (pendingRef.current.fingerprint !== fingerprint) {
+          pendingRef.current = { fingerprint, requestId: newRequestId() };
+        }
         setBusy(true);
         try {
           await api("/api/admin/payments", {
             method: "POST", token,
-            body: { payment: { order_number: orderNumber, ...form, amount: Number(form.amount) } },
+            body: { payment: { ...payment, request_id: pendingRef.current.requestId } },
           });
+          pendingRef.current = { fingerprint: "", requestId: "" };
           setForm(f => ({ ...f, amount: "", note: "" }));
           onChanged && onChanged();
         } catch (e) { setError(e.message || "Не вдалося внести платіж"); }
@@ -539,10 +561,12 @@ import { createRoot } from 'react-dom/client';
           <div className="grid2">
             <div className="field"><label>Клієнт сплатив</label>
               <input disabled value={money(s.client_paid || 0) + " з " + money(s.revenue || 0)
-                + ((s.client_left || 0) > 0 ? " · борг " + money(s.client_left) : " · повністю")} /></div>
+                + ((s.client_left || 0) > 0 ? " · борг " + money(s.client_left)
+                  : clientOverpaid > 0 ? " · переплата " + money(clientOverpaid) : " · повністю")} /></div>
             <div className="field"><label>Маржа отримана</label>
               <input disabled value={money(s.margin_received || 0) + " з " + money(s.profit || 0)
-                + ((s.margin_left || 0) > 0 ? " · до отримання " + money(s.margin_left) : " · повністю")} /></div>
+                + ((s.margin_left || 0) > 0 ? " · до отримання " + money(s.margin_left)
+                  : marginOverreceived > 0 ? " · понад нову маржу " + money(marginOverreceived) : " · повністю")} /></div>
           </div>
 
           {list.length > 0 && (
@@ -595,6 +619,7 @@ import { createRoot } from 'react-dom/client';
       const [error, setError] = useState("");
       const [form, setForm] = useState(null);
       const [itemIdx, setItemIdx] = useState(0);
+      const pendingQuickPaymentRef = useRef({ fingerprint: "", requestId: "" });
 
       function applyItemToForm(res, idx) {
         const item = (res.items && res.items[idx]) || {};
@@ -630,6 +655,7 @@ import { createRoot } from 'react-dom/client';
           size_h: item.size_h ?? "",
           size_d: item.size_d ?? "",
           quantity: item.quantity ?? 1,
+          unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
         });
@@ -682,12 +708,18 @@ import { createRoot } from 'react-dom/client';
         if (!(amount > 0)) return;
         const type = which === "client" ? "Оплата повністю" : "Маржа від підрядника";
         if (!window.confirm("Внести платіж «" + type + "» на " + money(amount) + "?")) return;
+        const payment = { order_number: orderNumber, type, amount, method: "" };
+        const fingerprint = JSON.stringify(payment);
+        if (pendingQuickPaymentRef.current.fingerprint !== fingerprint) {
+          pendingQuickPaymentRef.current = { fingerprint, requestId: newRequestId() };
+        }
         setBusy(true); setError("");
         try {
           await api("/api/admin/payments", {
             method: "POST", token,
-            body: { payment: { order_number: orderNumber, type, amount, method: "" } },
+            body: { payment: { ...payment, request_id: pendingQuickPaymentRef.current.requestId } },
           });
+          pendingQuickPaymentRef.current = { fingerprint: "", requestId: "" };
           await load();
           onChanged && onChanged();
         } catch (e) { setError(e.message || "Не вдалося внести платіж"); }
@@ -725,6 +757,7 @@ import { createRoot } from 'react-dom/client';
           size_h: item.size_h ?? "",
           size_d: item.size_d ?? "",
           quantity: item.quantity ?? 1,
+          unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
         }));
@@ -748,6 +781,14 @@ import { createRoot } from 'react-dom/client';
             </header>
 
             <QuickContact order={order} />
+
+            <PaymentsSection
+              token={token}
+              orderNumber={orderNumber}
+              payments={data.payments}
+              summary={data.payment_summary}
+              onChanged={async () => { await load(); onChanged && onChanged(); }}
+            />
 
             <div className="section-title" style={{ marginTop: 0 }}>Швидкі дії</div>
             <div className="quick-actions">
@@ -856,6 +897,10 @@ import { createRoot } from 'react-dom/client';
                 <input value={form.pattern} onChange={e => setForm({ ...form, pattern: e.target.value })} /></div>
               <div className="field"><label>Кількість</label>
                 <input type="number" min="1" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} /></div>
+              <div className="field"><label>Одиниця виміру</label>
+                <input list="crm-units-edit" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} placeholder="шт. / комп. / інше" />
+                <datalist id="crm-units-edit">{UNIT_SUGGESTIONS.map(u => <option key={u} value={u} />)}</datalist>
+              </div>
               <div className="field"><label>Ширина, мм</label>
                 <input type="number" value={form.size_w} onChange={e => setForm({ ...form, size_w: e.target.value })} /></div>
               <div className="field"><label>Висота, мм</label>
@@ -871,6 +916,7 @@ import { createRoot } from 'react-dom/client';
               construction: form.construction,
               basket_type: form.basket_type, color: form.color, pattern: form.pattern,
               quantity: Number(form.quantity) || 1,
+              unit: form.unit.trim() || "шт.",
               size_w: form.size_w === "" ? 0 : Number(form.size_w),
               size_h: form.size_h === "" ? 0 : Number(form.size_h),
               size_d: form.size_d === "" ? 0 : Number(form.size_d),
@@ -919,16 +965,6 @@ import { createRoot } from 'react-dom/client';
               discount_uah: form.discount_uah === "" ? null : Number(form.discount_uah),
               revenue: form.revenue === "" ? null : Number(form.revenue),
             })}>Зберегти фінанси</button>
-
-
-            <PaymentsSection
-              token={token}
-              orderNumber={orderNumber}
-              payments={data.payments}
-              summary={data.payment_summary}
-              onChanged={async () => { await load(); onChanged && onChanged(); }}
-            />
-
             <div className="section-title">Доставка та нотатки</div>
             <div className="grid2">
               <div className="field"><label>Дата доставки</label>
@@ -955,7 +991,7 @@ import { createRoot } from 'react-dom/client';
               <div key={it.row} className="panel" style={{ boxShadow: "none", padding: 12 }}>
                 <div style={{ fontWeight: 700 }}>{it.basket_model ? it.basket_model + " · " : ""}{it.basket_type || "Кошик"} · {it.construction}</div>
                 <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
-                  {it.size_w || "—"}×{it.size_h || "—"}×{it.size_d || "—"} мм · {it.quantity} шт · {it.color} · {it.pattern}
+                  {it.size_w || "—"}×{it.size_h || "—"}×{it.size_d || "—"} мм · {it.quantity} {it.unit || (it.product_kind === "Кронштейни" ? "комп." : "шт.")} · {it.color} · {it.pattern}
                 </div>
                 <div style={{ marginTop: 6, fontSize: 13 }}>{money(it.revenue)} · маржа {pct(it.margin_pct)}</div>
               </div>
@@ -976,7 +1012,7 @@ import { createRoot } from 'react-dom/client';
         basket_model: "", basket_type: "", construction_type: "", color: "", pattern: "",
         has_cover: false, bracket_length: "", vibro_pads: false,
         product_name: "", specs: "",
-        size_w: "", size_h: "", size_d: "", quantity: "1",
+        size_w: "", size_h: "", size_d: "", quantity: "1", unit: "шт.",
         cost_total: "", price_total: "", list_price: "", discount_pct: "", discount_uah: "",
         transport: "", delivery_address: "", delivery_date: "", payment_method: "", notes: "",
       });
@@ -999,6 +1035,7 @@ import { createRoot } from 'react-dom/client';
           ...f,
           basket_model: "", construction_type: "", pattern: "", has_cover: false,
           bracket_length: "", vibro_pads: false, product_name: "", specs: "",
+          unit: next === "bracket" ? "комп." : "шт.",
         }));
       }
 
@@ -1021,6 +1058,7 @@ import { createRoot } from 'react-dom/client';
           ...f,
           basket_model: id,
           construction_type: m ? m.construction + " · " + m.id : "",
+          unit: m && m.bracket ? "комп." : "шт.",
           // Кришка підставляється з каталогу: у AVL-06/07/08 вона передбачена конструкцією,
           // у AVL-02 — неможлива. Інакше ціна порахувалась би без неї.
           has_cover: !!(m && m.defaultCover),
@@ -1040,6 +1078,7 @@ import { createRoot } from 'react-dom/client';
           return setError("Вкажіть телефон, Telegram або e-mail");
         }
         if (isOther && !form.product_name.trim()) return setError("Вкажіть назву виробу");
+        if (!form.unit.trim()) return setError("Вкажіть одиницю виміру");
         setBusy(true);
         try {
           const res = await api("/api/admin/orders", {
@@ -1052,6 +1091,7 @@ import { createRoot } from 'react-dom/client';
                 basket_model_name: isOther ? form.product_name : (model ? model.name : form.basket_model),
                 construction_type: isOther ? form.product_name : form.construction_type,
                 quantity: qtyNum,
+                unit: form.unit.trim(),
                 // Колонки таблиці зберігають ПІДСУМКИ по позиції, тож множимо на кількість.
                 cost_total: costTotalCalc || "",
                 list_price: priceUnitOverride ? "" : (listTotal || ""),
@@ -1122,6 +1162,10 @@ import { createRoot } from 'react-dom/client';
                   <input value={form.product_name} onChange={e => set("product_name", e.target.value)} placeholder="Пергола / Виставковий стенд / Навіс…" /></div>
                 <div className="field"><label>Кількість</label>
                   <input type="number" min="1" value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
+                <div className="field"><label>Одиниця виміру</label>
+                  <input list="crm-units-new" value={form.unit} onChange={e => set("unit", e.target.value)} placeholder="шт. / комп. / інше" />
+                  <datalist id="crm-units-new">{UNIT_SUGGESTIONS.map(u => <option key={u} value={u} />)}</datalist>
+                </div>
                 <div className="field"><label>Колір</label>
                   <input value={form.color} onChange={e => set("color", e.target.value)} placeholder="RAL 7016" /></div>
               </div>
@@ -1154,8 +1198,12 @@ import { createRoot } from 'react-dom/client';
               )}
               <div className="field"><label>Тип (за потреби)</label>
                 <input value={form.basket_type} onChange={e => set("basket_type", e.target.value)} placeholder="Стандарт / Антивандальний" /></div>
-              <div className="field"><label>{isBracket ? "Кількість, компл." : "Кількість, шт."}</label>
+              <div className="field"><label>Кількість</label>
                 <input type="number" min="1" value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
+              <div className="field"><label>Одиниця виміру</label>
+                <input list="crm-units-new" value={form.unit} onChange={e => set("unit", e.target.value)} placeholder="шт. / комп. / інше" />
+                <datalist id="crm-units-new">{UNIT_SUGGESTIONS.map(u => <option key={u} value={u} />)}</datalist>
+              </div>
             </div>}
             {!isBracket && (
               <div className="grid2" style={{ marginTop: 8 }}>
@@ -1303,27 +1351,32 @@ import { createRoot } from 'react-dom/client';
 
       const byStatus = useMemo(() => {
         const map = {};
-        STATUSES.forEach(s => { map[s] = { items: [], revenue: 0, profit: 0 }; });
+        const blank = () => ({ items: [], revenue: 0, profit: 0, client_left: 0, margin_left: 0 });
+        STATUSES.forEach(s => { map[s] = blank(); });
         groups.forEach(g => {
-          if (!map[g.status]) map[g.status] = { items: [], revenue: 0, profit: 0 };
+          if (!map[g.status]) map[g.status] = blank();
           map[g.status].items.push(g);
           if (g.status !== "Скасовано") {
             map[g.status].revenue += Number(g.revenue) || 0;
             map[g.status].profit += Number(g.profit) || 0;
+            map[g.status].client_left += Number(g.client_left) || 0;
+            map[g.status].margin_left += Number(g.margin_left) || 0;
           }
         });
         return map;
       }, [groups]);
 
       const grand = useMemo(() => {
-        let revenue = 0, profit = 0, count = 0;
+        let revenue = 0, profit = 0, count = 0, clientLeft = 0, marginLeft = 0;
         groups.forEach(g => {
           if (g.status === "Скасовано") return;
           count += 1;
           revenue += Number(g.revenue) || 0;
           profit += Number(g.profit) || 0;
+          clientLeft += Number(g.client_left) || 0;
+          marginLeft += Number(g.margin_left) || 0;
         });
-        return { revenue, profit, count };
+        return { revenue, profit, count, clientLeft, marginLeft };
       }, [groups]);
 
       return (
@@ -1366,6 +1419,12 @@ import { createRoot } from 'react-dom/client';
                 <div className="ot-label">Загальна сума замовлень</div>
                 <div className="ot-value">{money(grand.revenue)}</div>
                 <div className="ot-sub">Маржа: {money(grand.profit)}</div>
+                {grand.clientLeft > 0 && (
+                  <div className="ot-sub" style={{ color: "#b54842" }}>Борг клієнтів: {money(grand.clientLeft)}</div>
+                )}
+                {grand.marginLeft > 0 && (
+                  <div className="ot-sub" style={{ color: "#8f7340" }}>Маржа до отримання: {money(grand.marginLeft)}</div>
+                )}
               </div>
               {view === "kanban" && (
                 <div style={{ marginLeft: "auto", alignSelf: "flex-start" }}>
@@ -1400,6 +1459,12 @@ import { createRoot } from 'react-dom/client';
                     </div>
                     <div className="col-sum">{s === "Скасовано" ? "—" : money(byStatus[s].revenue)}</div>
                     <div className="col-margin">{s === "Скасовано" ? "" : ("Маржа: " + money(byStatus[s].profit))}</div>
+                    {s !== "Скасовано" && byStatus[s].client_left > 0 && (
+                      <div className="col-margin" style={{ color: "#b54842" }}>Борг клієнтів: {money(byStatus[s].client_left)}</div>
+                    )}
+                    {s !== "Скасовано" && byStatus[s].margin_left > 0 && (
+                      <div className="col-margin" style={{ color: "#8f7340" }}>Маржа до отримання: {money(byStatus[s].margin_left)}</div>
+                    )}
                   </h3>
                   <div className={"col-body" + (dragOver === s ? " drag-over" : "")}>
                     {byStatus[s].items.map(g => (
@@ -2168,7 +2233,7 @@ import { createRoot } from 'react-dom/client';
           if (filters.status) qs.set("status", filters.status);
           const suffix = qs.toString() ? ("?" + qs.toString()) : "";
           const data = await api("/api/admin/orders" + suffix, { token });
-          setGroups(data.groups || []);
+          setGroups((data.groups || []).map(g => ({ ...g, status: normalizeStatus(g.status) })));
         } catch (e) {
           setOrdersError(e.message);
           throw e;
