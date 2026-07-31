@@ -24,6 +24,7 @@ var SHEET_EXPENSES = "Витрати";
 var SHEET_DASH = "Зведення";
 var SHEET_INFO = "Інструкція";
 var SHEET_SETTLE = "Розрахунки з підрядником";
+var SHEET_PAYMENTS = "Платежі";   // передоплати/доплати клієнтів і виплати маржі підрядником
 
 var RAL7016 = "#383E42";   // заливка шапок
 var HDR_TEXT = "#FFFFFF";  // текст шапок
@@ -32,16 +33,35 @@ var HDR_FONT = "Google Sans";
 // Календар для подій доставки. Шукаємо за словом у назві (без регістру); якщо немає — дефолтний.
 var CAL_KEY = "AVALON";
 
+// Дії кабінету, що ПИШУТЬ у таблицю — лише вони потребують блокування скрипта.
+var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "upsert_partner",
+  "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment"];
+
 function doPost(e) {
+  // Тіло читаємо ДО блокування: кабінет робить кілька запитів паралельно, і якщо
+  // читання теж чекають лок, вони висять секундами, а Google віддає 404 на
+  // протермінований редирект (симптом «Sheets HTTP 404» у кабінеті).
+  var early = null;
+  try { early = JSON.parse(e.postData.contents); } catch (parseErr) { early = null; }
+  if (early && early.admin_action) {
+    if (ADMIN_WRITE_ACTIONS.indexOf(String(early.admin_action)) < 0) {
+      return handleAdminRequest_(early); // читання — без лока
+    }
+    var alock = LockService.getScriptLock();
+    try {
+      alock.waitLock(30000);
+      return handleAdminRequest_(early);
+    } catch (adminErr) {
+      return jsonOut({ status: "error", message: adminErr.toString() });
+    } finally {
+      try { alock.releaseLock(); } catch (e2) {}
+    }
+  }
+
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(30000);
-    var data = JSON.parse(e.postData.contents);
-
-    // Веб-кабінет CRM: окремий канал з секретом (не плутати з публічними заявками).
-    if (data && data.admin_action) {
-      return handleAdminRequest_(data);
-    }
+    var data = early || JSON.parse(e.postData.contents);
 
     var written = writeOrderToSheet_(data);
 
@@ -1304,11 +1324,12 @@ function updateContractorSettlement() {
 
 /** ОДИН КЛІК: галочки оплати + аркуш «Розрахунки з підрядником» + фільтр + кольори рядків. Дані не чіпає. */
 function applyAllUpdates() {
+  setupPayments();          // аркуш «Платежі» (передоплати/доплати, маржа)
   addPaymentColumn();
   updateContractorSettlement(); // перебудовує (прибирає старий ручний журнал)
   addOrderFilter();
   updateOrderColors();
-  Logger.log("Готово: галочки оплати, аркуш розрахунків, фільтр і кольори застосовано.");
+  Logger.log("Готово: платежі, галочки оплати, аркуш розрахунків, фільтр і кольори застосовано.");
 }
 
 function setupDropshippers(ss) {
@@ -1565,6 +1586,203 @@ function authorize() {
 }
 
 
+// ===================== ПЛАТЕЖІ (передоплати, доплати, маржа) =====================
+
+// Типи платежів. «Маржа від підрядника» — це надходження мені; решта — оплати клієнта.
+var PAYMENT_TYPES = ["Передоплата", "Доплата", "Оплата повністю", "Маржа від підрядника", "Повернення клієнту"];
+
+function setupPayments(ss) {
+  ss = ss || SpreadsheetApp.getActiveSpreadsheet();
+  var existing = ss.getSheetByName(SHEET_PAYMENTS);
+  if (existing) return existing;
+  var sh = ss.insertSheet(SHEET_PAYMENTS);
+  var headers = ["Дата", "№ Замовлення", "Тип", "Сума, ₴", "Спосіб", "Примітка"];
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  headerStyle(sh, headers.length);
+  [110, 150, 180, 120, 150, 260].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  sh.getRange("A2:A").setNumberFormat("dd.MM.yyyy");
+  sh.getRange("D2:D").setNumberFormat("#,##0 ₴");
+  var rule = SpreadsheetApp.newDataValidation().requireValueInList(PAYMENT_TYPES).setAllowInvalid(false).build();
+  sh.getRange(2, 3, 1000, 1).setDataValidation(rule);
+  sh.setFrozenRows(1);
+  return sh;
+}
+
+function paymentsSheet_() {
+  return setupPayments(SpreadsheetApp.getActiveSpreadsheet());
+}
+
+/** Усі платежі одного замовлення (або всі, якщо номер не задано). */
+function readPayments_(orderNumber) {
+  var sh = paymentsSheet_();
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  var vals = sh.getRange(2, 1, last - 1, 6).getValues();
+  var num = String(orderNumber || "").trim();
+  var out = [];
+  for (var i = 0; i < vals.length; i++) {
+    var r = vals[i];
+    var rowNum = String(r[1] || "").trim();
+    if (!rowNum) continue;
+    if (num && rowNum !== num) continue;
+    out.push({
+      row: i + 2,
+      date: toISODate(r[0]) || String(r[0] || ""),
+      order_number: rowNum,
+      type: String(r[2] || ""),
+      amount: cellNum_(r[3]) || 0,
+      method: String(r[4] || ""),
+      note: String(r[5] || "")
+    });
+  }
+  return out;
+}
+
+/** Підсумки платежів: скільно вніс клієнт і скільки маржі отримано. */
+function paymentTotals_(payments) {
+  var client = 0, margin = 0;
+  (payments || []).forEach(function (p) {
+    var amt = Number(p.amount) || 0;
+    if (p.type === "Маржа від підрядника") margin += amt;
+    else if (p.type === "Повернення клієнту") client -= amt;
+    else client += amt;
+  });
+  return { client_paid: Math.round(client), margin_paid_sum: Math.round(margin) };
+}
+
+/**
+ * Синхронізує галочки AG/AH із фактичними платежами: «Оплата клієнта ✓» ставиться,
+ * коли внесено не менше за виручку, «Маржу отримано ✓» — коли отримано всю маржу.
+ * Так галочки не суперечать сумам, які веде менеджер.
+ */
+/**
+ * Стан оплат для замовлення БЕЗ жодного платежу в аркуші: довіряємо старим галочкам
+ * AG/AH (замовлення до появи журналу платежів). Щойно з'явиться перший платіж —
+ * головними стають суми, а не галочки.
+ */
+function legacyPaidState_(revenue, profit, agChecked, ahChecked) {
+  return {
+    client_paid: agChecked ? Math.round(revenue) : 0,
+    margin_paid_sum: ahChecked ? Math.round(profit) : 0,
+    legacy: true
+  };
+}
+
+function syncOrderPaymentState_(orderNumber) {
+  var sh = adminOrdersSheet_();
+  var last = sh.getLastRow();
+  if (last < 2) return null;
+  var nums = sh.getRange(2, 1, last - 1, 1).getValues();
+  var rows = [];
+  for (var i = 0; i < nums.length; i++) {
+    if (String(nums[i][0] || "").trim() === String(orderNumber).trim()) rows.push(i + 2);
+  }
+  if (!rows.length) return null;
+
+  var revenue = 0, profit = 0;
+  rows.forEach(function (r) {
+    var v = sh.getRange(r, 22, 1, 2).getValues()[0]; // V виручка, W валовий прибуток
+    revenue += cellNum_(v[0]) || 0;
+    profit += cellNum_(v[1]) || 0;
+  });
+  var payments = readPayments_(orderNumber);
+  var agChecked = !!sh.getRange(rows[0], 33).getValue();
+  var ahChecked = !!sh.getRange(rows[0], 34).getValue();
+  if (!payments.length) {
+    // Журналу платежів для цього замовлення ще немає — не перетираємо старі галочки
+    // (інакше вже оплачені замовлення показувались би як повний борг).
+    var lg = legacyPaidState_(revenue, profit, agChecked, ahChecked);
+    return {
+      revenue: revenue, profit: profit,
+      client_paid: lg.client_paid, client_left: Math.max(0, revenue - lg.client_paid),
+      margin_received: lg.margin_paid_sum, margin_left: Math.max(0, profit - lg.margin_paid_sum),
+      legacy: true
+    };
+  }
+  var totals = paymentTotals_(payments);
+  var clientDone = revenue > 0 && totals.client_paid >= revenue;
+  var marginDone = profit > 0 && totals.margin_paid_sum >= profit;
+  rows.forEach(function (r) {
+    if (!!sh.getRange(r, 33).getValue() !== clientDone) sh.getRange(r, 33).setValue(clientDone);
+    if (!!sh.getRange(r, 34).getValue() !== marginDone) sh.getRange(r, 34).setValue(marginDone);
+  });
+  return {
+    revenue: revenue, profit: profit,
+    client_paid: totals.client_paid, client_left: Math.max(0, revenue - totals.client_paid),
+    margin_received: totals.margin_paid_sum, margin_left: Math.max(0, profit - totals.margin_paid_sum)
+  };
+}
+
+function adminListPayments_(data) {
+  var num = String((data && data.order_number) || "").trim();
+  var payments = readPayments_(num);
+  var res = { status: "ok", payments: payments, totals: paymentTotals_(payments) };
+  if (num) res.summary = syncOrderPaymentState_(num);
+  return res;
+}
+
+function adminAddPayment_(data) {
+  var p = data.payment || data;
+  var num = String(p.order_number || "").trim();
+  if (!num) throw new Error("Вкажіть номер замовлення");
+  var amount = Math.round(Number(p.amount) || 0);
+  if (!(amount > 0)) throw new Error("Сума платежу мусить бути більшою за нуль");
+  var type = String(p.type || "Передоплата").trim();
+  if (PAYMENT_TYPES.indexOf(type) < 0) throw new Error("Невідомий тип платежу: " + type);
+
+  // Замовлення мусить існувати — щоб платіж не «завис» на неіснуючому номері.
+  var osh = adminOrdersSheet_();
+  var last = osh.getLastRow();
+  var found = false;
+  if (last >= 2) {
+    var nums = osh.getRange(2, 1, last - 1, 1).getValues();
+    for (var i = 0; i < nums.length && !found; i++) {
+      if (String(nums[i][0] || "").trim() === num) found = true;
+    }
+  }
+  if (!found) throw new Error("Замовлення " + num + " не знайдено");
+
+  var sh = paymentsSheet_();
+  var date = toISODate(p.date) || Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd");
+  var row = sh.getLastRow() + 1;
+  sh.getRange(row, 1, 1, 6).setValues([[date, num, type, amount, String(p.method || ""), String(p.note || "")]]);
+  sh.getRange(row, 1).setNumberFormat("dd.MM.yyyy");
+  sh.getRange(row, 4).setNumberFormat("#,##0 ₴");
+
+  var summary = syncOrderPaymentState_(num);
+  notifyPaymentAdded_(num, type, amount, summary);
+  SpreadsheetApp.flush();
+  return { status: "ok", payment_row: row, summary: summary, payments: readPayments_(num) };
+}
+
+function adminDeletePayment_(data) {
+  var row = Number((data && data.row) || 0);
+  if (!(row >= 2)) throw new Error("Вкажіть рядок платежу");
+  var sh = paymentsSheet_();
+  var num = String(sh.getRange(row, 2).getValue() || "").trim();
+  sh.deleteRow(row);
+  var summary = num ? syncOrderPaymentState_(num) : null;
+  SpreadsheetApp.flush();
+  return { status: "ok", summary: summary, payments: num ? readPayments_(num) : [] };
+}
+
+/** Коротке повідомлення власнику про внесений платіж (не валить операцію при збої). */
+function notifyPaymentAdded_(num, type, amount, summary) {
+  try {
+    var msg = "💵 <b>Платіж</b> · " + esc_(num) + "\n" + esc_(type) + ": <b>" + money_(amount) + " ₴</b>";
+    if (summary) {
+      if (type === "Маржа від підрядника") {
+        msg += "\nМаржа: отримано " + money_(summary.margin_received) + " ₴ з " + money_(summary.profit) + " ₴";
+        if (summary.margin_left > 0) msg += " · залишок <b>" + money_(summary.margin_left) + " ₴</b>";
+      } else {
+        msg += "\nКлієнт: сплатив " + money_(summary.client_paid) + " ₴ з " + money_(summary.revenue) + " ₴";
+        if (summary.client_left > 0) msg += " · залишок <b>" + money_(summary.client_left) + " ₴</b>";
+      }
+    }
+    notifyOwner_(msg);
+  } catch (err) { /* сповіщення не критичне */ }
+}
+
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
 var ADMIN_ORDER_COLS = 43; // A–AQ (контакт AL–AN; виріб AO; вид AP; характеристики AQ)
@@ -1692,6 +1910,9 @@ function handleAdminRequest_(data) {
     if (action === "get_order") return jsonOut(adminGetOrder_(data));
     if (action === "update_order") return jsonOut(adminUpdateOrder_(data));
     if (action === "create_order") return jsonOut(adminCreateOrder_(data));
+    if (action === "list_payments") return jsonOut(adminListPayments_(data));
+    if (action === "add_payment") return jsonOut(adminAddPayment_(data));
+    if (action === "delete_payment") return jsonOut(adminDeletePayment_(data));
     if (action === "dashboard") return jsonOut(adminDashboard_());
     if (action === "list_partners") return jsonOut(adminListPartners_());
     if (action === "upsert_partner") return jsonOut(adminUpsertPartner_(data.partner || data));
@@ -1861,9 +2082,24 @@ function adminListOrders_(data) {
     }
     if (o.created_at && (!g.created_at || parseCreatedAtMs_(o.created_at) < parseCreatedAtMs_(g.created_at))) g.created_at = o.created_at;
   });
+  // Платежі читаємо ОДИН раз на всі замовлення — щоб не робити запит на кожну картку.
+  var payByOrder = {};
+  readPayments_("").forEach(function (pmt) {
+    if (!payByOrder[pmt.order_number]) payByOrder[pmt.order_number] = [];
+    payByOrder[pmt.order_number].push(pmt);
+  });
   var groups = Object.keys(byNum).map(function (k) {
     var g = byNum[k];
     g.margin_pct = g.revenue ? Math.round((g.profit / g.revenue) * 1000) / 10 : null;
+    var pmts = payByOrder[k] || [];
+    var t = pmts.length
+      ? paymentTotals_(pmts)
+      : legacyPaidState_(Number(g.revenue) || 0, Number(g.profit) || 0, !!g.client_paid, !!g.margin_paid);
+    g.payments_count = pmts.length;
+    g.client_paid_sum = t.client_paid;
+    g.client_left = Math.max(0, (Number(g.revenue) || 0) - t.client_paid);
+    g.margin_received = t.margin_paid_sum;
+    g.margin_left = Math.max(0, (Number(g.profit) || 0) - t.margin_paid_sum);
     return g;
   });
   groups.sort(function (a, b) {
@@ -1882,7 +2118,24 @@ function adminGetOrder_(data) {
   for (var i = 0; i < listed.groups.length; i++) {
     if (listed.groups[i].order_number === orderNumber) { group = listed.groups[i]; break; }
   }
-  return { status: "ok", order: group, items: items };
+  var pay = readPayments_(orderNumber);
+  var payTotals = paymentTotals_(pay);
+  return {
+    status: "ok", order: group, items: items,
+    payments: pay,
+    payment_summary: (function () {
+      var rev = group ? (Number(group.revenue) || 0) : 0;
+      var prof = group ? (Number(group.profit) || 0) : 0;
+      var t = pay.length ? payTotals
+        : legacyPaidState_(rev, prof, !!(group && group.client_paid), !!(group && group.margin_paid));
+      return {
+        revenue: rev, profit: prof,
+        client_paid: t.client_paid, client_left: Math.max(0, rev - t.client_paid),
+        margin_received: t.margin_paid_sum, margin_left: Math.max(0, prof - t.margin_paid_sum),
+        legacy: !pay.length
+      };
+    })()
+  };
 }
 
 function applyFinanceToRow_(sh, row, patch) {
@@ -2076,6 +2329,11 @@ function adminUpdateOrder_(data) {
     return patch[k] != null;
   });
   if (financeTouched) applyFinanceToRow_(sh, row, patch);
+  // Виручка/прибуток змінились → пороги «оплачено повністю» інші, тож галочки
+  // AG/AH треба перерахувати за фактичними платежами (їх читає і зведення).
+  if (financeTouched || itemTouched) {
+    try { syncOrderPaymentState_(orderNumber); } catch (syncErr) { /* не валимо правку */ }
+  }
 
   if (patch.status != null) {
     var st = String(patch.status).trim();
