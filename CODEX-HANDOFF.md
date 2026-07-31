@@ -1,5 +1,16 @@
 # CODEX HANDOFF — avalon-order-form
 
+## Production: PR #92 + Apps Script v46 — 31.07.2026
+
+- PR [#92](https://github.com/alysyuk78-blip/avalon-order-form/pull/92) злитий у `main`.
+- Vercel production deployment для merge-коміту `56c1762` — `READY`; живий
+  admin bundle побайтно збігається зі збіркою з `main`.
+- Production Apps Script оновлено до version **46** через чинний deployment.
+- Перед push виконано окремий `clasp pull`: live v45 точно збігався з комітом
+  `274053f`, сторонніх ручних змін у Google не було.
+- `/exec` після deployment: `{"status":"ok","message":"Avalon v3.0"}`.
+- `clasp logout` виконано; активних токенів у `.clasprc.json` немає.
+
 ## Одиниця виміру та перерахунок залишків — 31.07.2026
 
 - До позиції замовлення додано колонку AR `Одиниця виміру`; схема `A–AR`,
