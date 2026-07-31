@@ -538,6 +538,8 @@ import { createRoot } from 'react-dom/client';
           size_h: item.size_h ?? "",
           size_d: item.size_d ?? "",
           quantity: item.quantity ?? 1,
+          product_kind: item.product_kind || "",
+          specs: item.specs || "",
         });
       }
 
@@ -610,6 +612,8 @@ import { createRoot } from 'react-dom/client';
           size_h: item.size_h ?? "",
           size_d: item.size_d ?? "",
           quantity: item.quantity ?? 1,
+          product_kind: item.product_kind || "",
+          specs: item.specs || "",
         }));
       }
 
@@ -711,9 +715,17 @@ import { createRoot } from 'react-dom/client';
               Щоб залишити свою ціну — впишіть її нижче в «Фінансах» після збереження.
             </p>
             <div className="grid2">
-              <div className="field"><label>Модель</label>
+              <div className="field"><label>Модель / виріб</label>
                 <input list="crm-models" value={form.basket_model} onChange={e => setForm({ ...form, basket_model: e.target.value })} />
                 <datalist id="crm-models">{CATALOG_MODELS_CRM.map(m => <option key={m.id} value={m.name} />)}</datalist>
+              </div>
+              <div className="field"><label>Вид виробу</label>
+                <select value={form.product_kind} onChange={e => setForm({ ...form, product_kind: e.target.value })}>
+                  <option value="">— не вказано —</option>
+                  <option value="Кошик">Кошик</option>
+                  <option value="Кронштейни">Кронштейни</option>
+                  <option value="Інший виріб">Інший виріб</option>
+                </select>
               </div>
               <div className="field"><label>Конструкція</label>
                 <input value={form.construction} onChange={e => setForm({ ...form, construction: e.target.value })} /></div>
@@ -732,8 +744,12 @@ import { createRoot } from 'react-dom/client';
               <div className="field"><label>Глибина, мм</label>
                 <input type="number" value={form.size_d} onChange={e => setForm({ ...form, size_d: e.target.value })} /></div>
             </div>
+            <div className="field"><label>Характеристики (для виробів не з каталогу)</label>
+              <textarea value={form.specs} onChange={e => setForm({ ...form, specs: e.target.value })} rows="3"
+                placeholder="Розміри, матеріал, комплектація — по рядку на пункт" /></div>
             <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy} onClick={() => save({
-              basket_model: form.basket_model, construction: form.construction,
+              basket_model: form.basket_model, product_kind: form.product_kind, specs: form.specs,
+              construction: form.construction,
               basket_type: form.basket_type, color: form.color, pattern: form.pattern,
               quantity: Number(form.quantity) || 1,
               size_w: form.size_w === "" ? 0 : Number(form.size_w),
@@ -837,21 +853,44 @@ import { createRoot } from 'react-dom/client';
     // Ручне внесення замовлення: телефон, Instagram, повторний клієнт — усе, що не
     // прийшло через онлайн-форму. Пише той самий рядок таблиці, що й форма.
     function NewOrderDrawer({ token, onClose, onCreated }) {
+      const [kind, setKind] = useState("basket"); // basket | bracket | other
       const [form, setForm] = useState({
         client: "", phone: "", contact_method: "phone", contact_telegram: "", contact_email: "",
         city: "", source: "Телефон",
         basket_model: "", basket_type: "", construction_type: "", color: "", pattern: "",
         has_cover: false, bracket_length: "", vibro_pads: false,
+        product_name: "", specs: "",
         size_w: "", size_h: "", size_d: "", quantity: "1",
-        cost_total: "", price_total: "",
+        cost_total: "", price_total: "", list_price: "", discount_pct: "", discount_uah: "",
         transport: "", delivery_address: "", delivery_date: "", payment_method: "", notes: "",
       });
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
 
       const model = CATALOG_MODELS_CRM.find(m => m.id === form.basket_model);
-      const isBracket = !!(model && model.bracket);
+      const isOther = kind === "other";
+      const isBracket = kind === "bracket" || !!(model && model.bracket);
       const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+      // Виріб не з каталогу: моделі/візерунка немає, ціну веде менеджер.
+      const bracketModels = CATALOG_MODELS_CRM.filter(m => m.bracket);
+      const basketModels = CATALOG_MODELS_CRM.filter(m => !m.bracket);
+      const shownModels = kind === "bracket" ? bracketModels : basketModels;
+
+      function changeKind(next) {
+        setKind(next);
+        setForm(f => ({
+          ...f,
+          basket_model: "", construction_type: "", pattern: "", has_cover: false,
+          bracket_length: "", vibro_pads: false, product_name: "", specs: "",
+        }));
+      }
+
+      // Виручка = роздрібна ціна − знижка (той самий розрахунок, що в таблиці).
+      const listPrice = Number(form.list_price) || 0;
+      const discount = Number(form.discount_uah) || (listPrice && Number(form.discount_pct)
+        ? Math.round(listPrice * Number(form.discount_pct) / 100) : 0);
+      const revenueFromList = listPrice ? listPrice - discount : 0;
 
       function pickModel(id) {
         const m = CATALOG_MODELS_CRM.find(x => x.id === id);
@@ -868,7 +907,7 @@ import { createRoot } from 'react-dom/client';
         }));
       }
 
-      const revenue = Number(form.price_total) || 0;
+      const revenue = (Number(form.price_total) || 0) || revenueFromList;
       const profit = revenue - (Number(form.cost_total) || 0);
       const marginPct = revenue ? Math.round((profit / revenue) * 1000) / 10 : 0;
 
@@ -878,6 +917,7 @@ import { createRoot } from 'react-dom/client';
         if (!form.phone.trim() && !form.contact_telegram.trim() && !form.contact_email.trim()) {
           return setError("Вкажіть телефон, Telegram або e-mail");
         }
+        if (isOther && !form.product_name.trim()) return setError("Вкажіть назву виробу");
         setBusy(true);
         try {
           const res = await api("/api/admin/orders", {
@@ -886,8 +926,9 @@ import { createRoot } from 'react-dom/client';
             body: {
               order: {
                 ...form,
-                product_type: isBracket ? "bracket" : "basket",
-                basket_model_name: model ? model.name : form.basket_model,
+                product_type: isOther ? "other" : (isBracket ? "bracket" : "basket"),
+                basket_model_name: isOther ? form.product_name : (model ? model.name : form.basket_model),
+                construction_type: isOther ? form.product_name : form.construction_type,
                 quantity: Number(form.quantity) || 1,
               },
             },
@@ -942,11 +983,31 @@ import { createRoot } from 'react-dom/client';
             </div>
 
             <div className="section-title">Товар</div>
-            <div className="grid2">
+            <div className="quick-actions" style={{ marginBottom: 10 }}>
+              {[{ v: "basket", l: "Кошик з каталогу" }, { v: "bracket", l: "Кронштейни" }, { v: "other", l: "Інший виріб" }].map(o => (
+                <button key={o.v} type="button" className={kind === o.v ? "active" : ""} onClick={() => changeKind(o.v)}>{o.l}</button>
+              ))}
+            </div>
+            {isOther && (
+              <div className="grid2">
+                <div className="field"><label>Назва виробу *</label>
+                  <input value={form.product_name} onChange={e => set("product_name", e.target.value)} placeholder="Пергола / Виставковий стенд / Навіс…" /></div>
+                <div className="field"><label>Кількість</label>
+                  <input type="number" min="1" value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
+                <div className="field"><label>Колір</label>
+                  <input value={form.color} onChange={e => set("color", e.target.value)} placeholder="RAL 7016" /></div>
+              </div>
+            )}
+            {isOther && (
+              <div className="field"><label>Характеристики</label>
+                <textarea value={form.specs} onChange={e => set("specs", e.target.value)} rows="4"
+                  placeholder={"Розміри, матеріал, комплектація — по рядку на пункт. Напр.:\nРозмір 3000×4000 мм\nПрофіль 40×40, порошкове фарбування\nПоліуглинка + монтаж"} /></div>
+            )}
+            {!isOther && <div className="grid2">
               <div className="field"><label>Модель</label>
                 <select value={form.basket_model} onChange={e => pickModel(e.target.value)}>
                   <option value="">— оберіть модель —</option>
-                  {CATALOG_MODELS_CRM.map(m => <option key={m.id} value={m.id}>{m.id} · {m.name}</option>)}
+                  {shownModels.map(m => <option key={m.id} value={m.id}>{m.id} · {m.name}</option>)}
                 </select>
               </div>
               <div className="field"><label>Конструкція</label>
@@ -967,7 +1028,7 @@ import { createRoot } from 'react-dom/client';
                 <input value={form.basket_type} onChange={e => set("basket_type", e.target.value)} placeholder="Стандарт / Антивандальний" /></div>
               <div className="field"><label>{isBracket ? "Кількість, компл." : "Кількість, шт."}</label>
                 <input type="number" min="1" value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
-            </div>
+            </div>}
             {!isBracket && (
               <div className="grid2" style={{ marginTop: 8 }}>
                 <div className="field"><label>Ширина, мм</label>
@@ -979,10 +1040,10 @@ import { createRoot } from 'react-dom/client';
               </div>
             )}
             <div className="quick-actions" style={{ marginTop: 8 }}>
-              {!isBracket && model && model.coverAllowed === false && (
+              {!isBracket && !isOther && model && model.coverAllowed === false && (
                 <span style={{ color: "var(--muted)", fontSize: 13 }}>Для цієї моделі верхня кришка не передбачена.</span>
               )}
-              {!isBracket && !(model && model.coverAllowed === false) && (
+              {!isBracket && !isOther && !(model && model.coverAllowed === false) && (
                 <button type="button" className={form.has_cover ? "active" : ""} onClick={() => set("has_cover", !form.has_cover)}>
                   {form.has_cover ? "✓ З верхньою кришкою" : "Верхня кришка"}
                 </button>
@@ -996,16 +1057,30 @@ import { createRoot } from 'react-dom/client';
 
             <div className="section-title">Гроші</div>
             <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
-              Порожні поля + вказані розміри = ціна порахується тією ж формулою, що для онлайн-заявок.
+              {isOther || isBracket
+                ? "Вкажіть собівартість і ціну. Роздрібна ціна зі знижкою рахує виручку автоматично."
+                : "Для кошика можна залишити гроші порожніми — ціна порахується за розмірами тією ж формулою, що для онлайн-заявок."}
             </p>
             <div className="grid2">
               <div className="field"><label>Собівартість, ₴</label>
                 <input type="number" value={form.cost_total} onChange={e => set("cost_total", e.target.value)} /></div>
+              <div className="field"><label>Роздрібна ціна, ₴</label>
+                <input type="number" value={form.list_price} onChange={e => set("list_price", e.target.value)} /></div>
+              <div className="field"><label>Знижка, %</label>
+                <input type="number" step="0.1" value={form.discount_pct} onChange={e => setForm(f => ({ ...f, discount_pct: e.target.value, discount_uah: "" }))} /></div>
+              <div className="field"><label>Знижка, ₴</label>
+                <input type="number" value={form.discount_uah} onChange={e => setForm(f => ({ ...f, discount_uah: e.target.value, discount_pct: "" }))} /></div>
               <div className="field"><label>Ціна продажу (виручка), ₴</label>
-                <input type="number" value={form.price_total} onChange={e => set("price_total", e.target.value)} /></div>
+                <input type="number" value={form.price_total} onChange={e => set("price_total", e.target.value)}
+                  placeholder={revenueFromList ? String(revenueFromList) : ""} /></div>
               <div className="field"><label>Маржа (авто)</label>
                 <input disabled value={money(profit) + " · " + pct(marginPct)} /></div>
             </div>
+            {revenueFromList > 0 && !form.price_total && (
+              <p style={{ margin: "6px 0 0", color: "var(--muted)", fontSize: 13 }}>
+                Виручка = {money(listPrice)} − {money(discount)} = <b>{money(revenueFromList)}</b>
+              </p>
+            )}
 
             <div className="section-title">Доставка та оплата</div>
             <div className="grid2">

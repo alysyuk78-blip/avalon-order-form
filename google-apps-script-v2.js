@@ -91,6 +91,7 @@ function writeOrderToSheet_(data) {
     }];
     var dateStr = Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm");
     var lastRow = sheet.getLastRow();
+    var writtenRows = [];   // номери рядків по позиціях — потрібні CRM для фінансів кожної позиції
 
     itemsIn.forEach(function (it) {
       var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
@@ -111,7 +112,9 @@ function writeOrderToSheet_(data) {
         costTotal = manualCost;
         total = Math.round(manualCost * MARKUP);
         hasMoney = total > 0;
-      } else if (w && h) {
+      } else if (w && h && it.product_type !== "bracket" && it.product_type !== "other") {
+        // Площинна формула — лише для кошиків. Кронштейни й довільні вироби
+        // (пергола, стенд…) отримують ціну від менеджера, не з ₴/м².
         var constrLower = String(it.construction_type || "").toLowerCase();
         var basketArea = (w * h + 2 * d * h) / 1000000;
         var coverArea = it.has_cover ? (w * d) / 1000000 : 0;
@@ -174,8 +177,16 @@ function writeOrderToSheet_(data) {
         cm === "telegram" ? String(data.contact_telegram || "").replace(/^@/, "") : "",
         cm === "email" ? String(data.contact_email || "").trim() : ""
       ]]);
-      // AO (41): модель кошика (AVL-0X), яку обрав клієнт — щоб видно було в CRM.
-      sheet.getRange(lastRow, 41).setValue(it.basket_model_name || it.basket_model || "");
+      // AO–AQ (41–43): виріб, його вид і характеристики.
+      // Вид пишемо явно, щоб підрядник і CRM не вгадували його з тексту конструкції.
+      var kind = it.product_type === "bracket" ? "Кронштейни"
+               : it.product_type === "other" ? "Інший виріб" : "Кошик";
+      sheet.getRange(lastRow, 41, 1, 3).setValues([[
+        it.basket_model_name || it.basket_model || "",
+        kind,
+        String(it.specs || "")
+      ]]);
+      writtenRows.push(lastRow);
       var rr = sheet.getRange(lastRow, 1, 1, row.length);
       rr.setVerticalAlignment("middle").setWrap(true);
       sheet.getRange(lastRow, 1).setFontWeight("bold");
@@ -189,7 +200,7 @@ function writeOrderToSheet_(data) {
       sheet.getRange(lastRow, 21).setFontWeight("bold");            // Ціна продажу 1шт
       if (lastRow % 2 === 0) rr.setBackground("#F8F6F2");
     });
-  return { order_number: data.order_number, row: lastRow };
+  return { order_number: data.order_number, row: lastRow, rows: writtenRows };
 }
 
 function findLastRealOrderRow_(sheet) {
@@ -389,6 +400,12 @@ function onEditDelivery(e) {
  */
 function recalcRow_(sh, row) {
   if (row < 2) return;
+  // Площинна формула (₴/м² кошика) чинна ЛИШЕ для кошиків. Кронштейни й довільні
+  // вироби (пергола, стенд…) мають власну ціну від менеджера — не перетираємо її.
+  if (sh.getMaxColumns() >= 42) {
+    var kind = String(sh.getRange(row, 42).getValue() || "");
+    if (kind && kind.toLowerCase().indexOf("кошик") < 0) return;
+  }
   var v = sh.getRange(row, 1, 1, 17).getValues()[0]; // A..Q
   var basket_type = v[7], construction = v[8], pattern = v[10];
   var w = Number(v[13]) || 0, h = Number(v[14]) || 0, d = Number(v[15]) || 0;
@@ -686,7 +703,7 @@ function checkContractorTelegram() {
 function buildOrderFromRows_(sh, orderNumber) {
   var last = sh.getLastRow();
   if (last < 2) return null;
-  var ncol = Math.min(41, sh.getMaxColumns()); // 41 = колонка AO «Модель кошика»
+  var ncol = Math.min(43, sh.getMaxColumns()); // 43 = AQ «Характеристики»
   var vals = sh.getRange(2, 1, last, ncol).getValues();
   var order = null;
   for (var i = 0; i < vals.length; i++) {
@@ -709,10 +726,17 @@ function buildOrderFromRows_(sh, orderNumber) {
     // щоб у багатопозиційних замовленнях характеристики не переплутались.
     var rowNotes = String(r[31] || "");
     var rowModel = String(r[40] || "");
-    var rowIsBracket = /кронштейн|комплект/i.test(String(r[8] || "")) || /^AVL-(K|SK)/i.test(rowModel);
+    var rowKind = String(r[41] || "");   // AP — явний вид виробу
+    var rowSpecs = String(r[42] || "");  // AQ — характеристики
+    // Вид беремо з колонки AP; для старих рядків (до появи колонки) — за текстом конструкції.
+    var kindType = /кронштейн/i.test(rowKind) ? "bracket"
+                 : /інш/i.test(rowKind) ? "other"
+                 : /кошик/i.test(rowKind) ? "basket"
+                 : (/кронштейн|комплект/i.test(String(r[8] || "")) || /^AVL-(K|SK)/i.test(rowModel)) ? "bracket" : "basket";
     var lenMatch = rowNotes.match(/Довжина кронштейнів:\s*([^\n]+)/i);
     order.items.push({
-      product_type: rowIsBracket ? "bracket" : "basket",
+      product_type: kindType,
+      specs: rowSpecs,
       basket_model: rowModel, basket_model_name: rowModel,
       basket_type: r[7], construction_type: r[8], has_cover: String(r[8] || "").toLowerCase().indexOf("кришка") >= 0, color: r[9], pattern: r[10],
       ac_brand: r[11], ac_model: r[12], size_w: r[13], size_h: r[14], size_d: r[15],
@@ -764,6 +788,17 @@ function buildProductionMsg_(data) {
   items.forEach(function (it, i) {
     var color = it.color ? esc_(it.color) + (it.color_custom ? " (" + esc_(it.color_custom) + ")" : "") : "";
     var pattern = it.pattern ? esc_(it.pattern) + (it.pattern_custom ? " (" + esc_(it.pattern_custom) + ")" : "") : "";
+    if (it.product_type === "other") {
+      if (multi) m += "\n🧱 <b>Виріб " + (i + 1) + "</b>\n";
+      if (it.basket_model_name || it.basket_model) m += "• Виріб: <b>" + esc_(it.basket_model_name || it.basket_model) + "</b>\n";
+      if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
+        if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
+      });
+      if (color) m += "• Колір: <b>" + color + "</b>\n";
+      if (Number(it.size_w) > 0) m += "• Розміри (мм): <b>" + it.size_w + "×" + it.size_h + "×" + it.size_d + "</b>\n";
+      m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " шт.</b>\n";
+      return;
+    }
     if (it.product_type === "bracket") {
       if (multi) m += "\n🔩 <b>Кронштейни " + (i + 1) + "</b>\n";
       if (it.basket_model_name || it.basket_model) m += "• Модель: <b>" + esc_(it.basket_model_name || it.basket_model) + "</b>\n";
@@ -1152,12 +1187,14 @@ function setupOrders(sheet) {
     "Спосіб зв'язку",    // AL (38)
     "Telegram",          // AM (39)
     "E-mail",            // AN (40)
-    "Модель кошика"      // AO (41): яку модель (AVL-0X) обрав клієнт у формі
+    "Модель / виріб",    // AO (41): модель кошика (AVL-0X) або назва довільного виробу
+    "Вид виробу",        // AP (42): Кошик / Кронштейни / Інший виріб
+    "Характеристики"     // AQ (43): опис довільного виробу (пергола, стенд тощо)
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -1530,7 +1567,7 @@ function authorize() {
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 41; // A–AO (контакт: AL–AN; модель кошика: AO)
+var ADMIN_ORDER_COLS = 43; // A–AQ (контакт AL–AN; виріб AO; вид AP; характеристики AQ)
 var STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
 
 function applyStatusSideEffects_(sh, row, newStatus) {
@@ -1613,15 +1650,21 @@ function ensureContactColumns_(sheet) {
     sheet.setColumnWidth(39, 120);
     sheet.setColumnWidth(40, 160);
   }
-  // AO (41): заголовок «Модель кошика» — самозаповнюється на наявній таблиці,
-  // щоб не вимагати ручного перезапуску setupOrders після додавання колонки.
-  var h41 = String(sheet.getRange(1, 41).getValue() || "");
-  if (h41.indexOf("Модель") < 0) {
-    sheet.getRange(1, 41).setValue("Модель кошика")
+  // AO–AQ (41–43): виріб, його вид і характеристики — самозаповнюються на наявній
+  // таблиці, щоб не вимагати ручного перезапуску setupOrders після зміни схеми.
+  var extra = [
+    { col: 41, title: "Модель / виріб", key: "Модель", width: 170 },
+    { col: 42, title: "Вид виробу", key: "Вид", width: 120 },
+    { col: 43, title: "Характеристики", key: "Характеристик", width: 320 }
+  ];
+  extra.forEach(function (e) {
+    var head = String(sheet.getRange(1, e.col).getValue() || "");
+    if (head.indexOf(e.key) >= 0) return;
+    sheet.getRange(1, e.col).setValue(e.title)
       .setFontWeight("bold").setBackground(RAL7016).setFontColor(HDR_TEXT)
       .setFontFamily(HDR_FONT).setHorizontalAlignment("center").setVerticalAlignment("middle");
-    sheet.setColumnWidth(41, 170);
-  }
+    sheet.setColumnWidth(e.col, e.width);
+  });
 }
 
 function parseContactFromNotes_(notes) {
@@ -1717,6 +1760,8 @@ function mapOrderRow_(rowIndex, v) {
     contact_telegram: contactTelegram,
     contact_email: contactEmail,
     basket_model: String(v[40] || ""),
+    product_kind: String(v[41] || ""),      // AP: Кошик / Кронштейни / Інший виріб
+    specs: String(v[42] || ""),             // AQ: характеристики довільного виробу
     basket_type: String(v[7] || ""),
     construction: String(v[8] || ""),
     color: String(v[9] || ""),
@@ -1784,6 +1829,7 @@ function adminListOrders_(data) {
         phone: o.phone,
         city: o.city,
         basket_model: o.basket_model,
+        product_kind: o.product_kind,
         contact_method: o.contact_method,
         contact_telegram: o.contact_telegram,
         contact_email: o.contact_email,
@@ -1905,6 +1951,8 @@ function adminCreateOrder_(data) {
 
   var items = (Array.isArray(src.items) && src.items.length) ? src.items : [{
     product_type: src.product_type || "basket",
+    specs: src.specs || "",
+    list_price: src.list_price, discount_pct: src.discount_pct, discount_uah: src.discount_uah,
     basket_model: src.basket_model || "", basket_model_name: src.basket_model_name || src.basket_model || "",
     basket_type: src.basket_type || "", construction_type: src.construction_type || "",
     color: src.color || "", color_custom: src.color_custom || "",
@@ -1936,6 +1984,22 @@ function adminCreateOrder_(data) {
   };
 
   var written = writeOrderToSheet_(order);
+
+  // Роздрібна ціна / знижка (колонки AI–AK) живуть окремо від запису рядка — застосовуємо
+  // ТИМ САМИМ кодом, що й правка фінансів у кабінеті, щоб виручка = прайс − знижка.
+  var sheetForFin = adminOrdersSheet_();
+  (written.rows || [written.row]).forEach(function (r, i) {
+    var it = items[i] || {};
+    var fin = {};
+    if (it.cost_total != null && it.cost_total !== "") fin.cost_total = Number(it.cost_total);
+    if (it.list_price != null && it.list_price !== "") fin.list_price = Number(it.list_price);
+    if (it.discount_pct != null && it.discount_pct !== "") fin.discount_pct = Number(it.discount_pct);
+    if (it.discount_uah != null && it.discount_uah !== "") fin.discount_uah = Number(it.discount_uah);
+    if (fin.list_price != null || fin.discount_pct != null || fin.discount_uah != null) {
+      applyFinanceToRow_(sheetForFin, r, fin);
+    }
+  });
+
   addDeliveryEvent(order); // подія в календарі + нагадування (як для онлайн-заявок)
 
   SpreadsheetApp.flush();
@@ -1988,7 +2052,8 @@ function adminUpdateOrder_(data) {
   // ── Характеристики позиції: лише цей рядок ──
   var itemTouched = false;
   var ITEM_TEXT = { basket_type: 8, construction: 9, color: 10, pattern: 11,
-                    ac_brand: 12, ac_model: 13, basket_model: 41 };
+                    ac_brand: 12, ac_model: 13, basket_model: 41,
+                    product_kind: 42, specs: 43 };
   Object.keys(ITEM_TEXT).forEach(function (key) {
     if (patch[key] == null) return;
     sh.getRange(row, ITEM_TEXT[key]).setValue(String(patch[key]));
