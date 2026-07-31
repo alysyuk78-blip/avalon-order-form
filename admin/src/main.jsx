@@ -83,6 +83,12 @@ import { createRoot } from 'react-dom/client';
     function statusClass(status) {
       return STATUS_CLASS[status] || "";
     }
+    // Старі або вручну створені рядки інколи мають порожній/нестандартний статус.
+    // Не ховаємо такі замовлення з воронки: показуємо їх у «Нове» до уточнення.
+    function normalizeStatus(status) {
+      const value = String(status || "").trim();
+      return STATUSES.includes(value) ? value : "Нове";
+    }
     /** Дата замовлення: created_at (UA/ISO) або номер ORD-DDMMYY-NNN */
     function orderDate(g) {
       if (!g) return null;
@@ -749,6 +755,14 @@ import { createRoot } from 'react-dom/client';
 
             <QuickContact order={order} />
 
+            <PaymentsSection
+              token={token}
+              orderNumber={orderNumber}
+              payments={data.payments}
+              summary={data.payment_summary}
+              onChanged={async () => { await load(); onChanged && onChanged(); }}
+            />
+
             <div className="section-title" style={{ marginTop: 0 }}>Швидкі дії</div>
             <div className="quick-actions">
               {STATUSES.filter(s => s !== "Скасовано").map(s => (
@@ -919,16 +933,6 @@ import { createRoot } from 'react-dom/client';
               discount_uah: form.discount_uah === "" ? null : Number(form.discount_uah),
               revenue: form.revenue === "" ? null : Number(form.revenue),
             })}>Зберегти фінанси</button>
-
-
-            <PaymentsSection
-              token={token}
-              orderNumber={orderNumber}
-              payments={data.payments}
-              summary={data.payment_summary}
-              onChanged={async () => { await load(); onChanged && onChanged(); }}
-            />
-
             <div className="section-title">Доставка та нотатки</div>
             <div className="grid2">
               <div className="field"><label>Дата доставки</label>
@@ -1303,27 +1307,32 @@ import { createRoot } from 'react-dom/client';
 
       const byStatus = useMemo(() => {
         const map = {};
-        STATUSES.forEach(s => { map[s] = { items: [], revenue: 0, profit: 0 }; });
+        const blank = () => ({ items: [], revenue: 0, profit: 0, client_left: 0, margin_left: 0 });
+        STATUSES.forEach(s => { map[s] = blank(); });
         groups.forEach(g => {
-          if (!map[g.status]) map[g.status] = { items: [], revenue: 0, profit: 0 };
+          if (!map[g.status]) map[g.status] = blank();
           map[g.status].items.push(g);
           if (g.status !== "Скасовано") {
             map[g.status].revenue += Number(g.revenue) || 0;
             map[g.status].profit += Number(g.profit) || 0;
+            map[g.status].client_left += Number(g.client_left) || 0;
+            map[g.status].margin_left += Number(g.margin_left) || 0;
           }
         });
         return map;
       }, [groups]);
 
       const grand = useMemo(() => {
-        let revenue = 0, profit = 0, count = 0;
+        let revenue = 0, profit = 0, count = 0, clientLeft = 0, marginLeft = 0;
         groups.forEach(g => {
           if (g.status === "Скасовано") return;
           count += 1;
           revenue += Number(g.revenue) || 0;
           profit += Number(g.profit) || 0;
+          clientLeft += Number(g.client_left) || 0;
+          marginLeft += Number(g.margin_left) || 0;
         });
-        return { revenue, profit, count };
+        return { revenue, profit, count, clientLeft, marginLeft };
       }, [groups]);
 
       return (
@@ -1366,6 +1375,12 @@ import { createRoot } from 'react-dom/client';
                 <div className="ot-label">Загальна сума замовлень</div>
                 <div className="ot-value">{money(grand.revenue)}</div>
                 <div className="ot-sub">Маржа: {money(grand.profit)}</div>
+                {grand.clientLeft > 0 && (
+                  <div className="ot-sub" style={{ color: "#b54842" }}>Борг клієнтів: {money(grand.clientLeft)}</div>
+                )}
+                {grand.marginLeft > 0 && (
+                  <div className="ot-sub" style={{ color: "#8f7340" }}>Маржа до отримання: {money(grand.marginLeft)}</div>
+                )}
               </div>
               {view === "kanban" && (
                 <div style={{ marginLeft: "auto", alignSelf: "flex-start" }}>
@@ -1400,6 +1415,12 @@ import { createRoot } from 'react-dom/client';
                     </div>
                     <div className="col-sum">{s === "Скасовано" ? "—" : money(byStatus[s].revenue)}</div>
                     <div className="col-margin">{s === "Скасовано" ? "" : ("Маржа: " + money(byStatus[s].profit))}</div>
+                    {s !== "Скасовано" && byStatus[s].client_left > 0 && (
+                      <div className="col-margin" style={{ color: "#b54842" }}>Борг клієнтів: {money(byStatus[s].client_left)}</div>
+                    )}
+                    {s !== "Скасовано" && byStatus[s].margin_left > 0 && (
+                      <div className="col-margin" style={{ color: "#8f7340" }}>Маржа до отримання: {money(byStatus[s].margin_left)}</div>
+                    )}
                   </h3>
                   <div className={"col-body" + (dragOver === s ? " drag-over" : "")}>
                     {byStatus[s].items.map(g => (
@@ -2168,7 +2189,7 @@ import { createRoot } from 'react-dom/client';
           if (filters.status) qs.set("status", filters.status);
           const suffix = qs.toString() ? ("?" + qs.toString()) : "";
           const data = await api("/api/admin/orders" + suffix, { token });
-          setGroups(data.groups || []);
+          setGroups((data.groups || []).map(g => ({ ...g, status: normalizeStatus(g.status) })));
         } catch (e) {
           setOrdersError(e.message);
           throw e;
