@@ -13,6 +13,7 @@ module.exports = async function handler(req, res) {
     }
     if (req.method === "POST") {
       const body = req.body || {};
+      if (!(Number(body.amount) > 0)) return res.status(400).json({ error: "Сума виплати мусить бути більшою за нуль" });
       const data = await callAdminSheets("add_payout", { payout: body });
       return res.status(200).json(data);
     }

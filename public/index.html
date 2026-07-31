@@ -1427,8 +1427,9 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(order),
       });
-      if (!res.ok) throw new Error("Server error: " + res.status);
-      return await res.json();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error((data && data.error) || "Server error: " + res.status);
+      return data;
     }
 
     const MAX_PATTERN_FILE_BYTES = 4 * 1024 * 1024;
@@ -1578,6 +1579,7 @@
       const [showErrors, setShowErrors] = useState(false);
       const [submitting, setSubmitting] = useState(false);
       const submittingRef = useRef(false);
+      const pendingOrderRef = useRef({ fingerprint: "", requestId: "" });
       const [submitted, setSubmitted] = useState(false);
       const [toast, setToast] = useState(null);
 
@@ -1826,7 +1828,7 @@
           const itemComments = items.filter(item => item.model_comment).map(item => `${item.basket_model}: ${item.model_comment}`).join("\n");
           const acModelLinks = items.filter(item => item.ac_model_url).map(item => `${item.basket_model}: посилання на кондиціонер ${item.ac_model_url}`).join("\n");
           const contactDetails = form.contact_method === "telegram" ? `Telegram: @${telegramHandle(form.contact_telegram)}` : form.contact_method === "email" ? `E-mail: ${sv(form.contact_email)}` : form.contact_method === "viber" ? `Viber: ${sv(form.phone)}` : form.contact_method === "whatsapp" ? `WhatsApp: ${sv(form.phone)}` : "";
-          await submitOrder({
+          const orderPayload = {
             first_name: sv(form.first_name), last_name: sv(form.last_name), phone: sv(form.phone), city: sv(form.city),
             contact_method: form.contact_method, contact_telegram: telegramHandle(form.contact_telegram), contact_email: sv(form.contact_email),
             transport: form.transport, transport_custom: form.transport_custom, delivery_address: sv(form.delivery_address),
@@ -1843,7 +1845,16 @@
             block_w: first.block_w, block_h: first.block_h, block_d: first.block_d,
             bracket_model_from: first.bracket_model_from, bracket_model_to: first.bracket_model_to,
             model_comment: first.model_comment
-          });
+          };
+          const fingerprint = JSON.stringify(orderPayload);
+          if (pendingOrderRef.current.fingerprint !== fingerprint) {
+            const requestId = globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
+              ? globalThis.crypto.randomUUID()
+              : "order-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+            pendingOrderRef.current = { fingerprint, requestId };
+          }
+          await submitOrder({ ...orderPayload, request_id: pendingOrderRef.current.requestId });
+          pendingOrderRef.current = { fingerprint: "", requestId: "" };
           setSubmitted(true);
           clearDraft();
           localStorage.removeItem(AUTOSAVE_ITEMS_KEY);
@@ -1857,6 +1868,7 @@
       };
 
       const startNewRequest = () => {
+        pendingOrderRef.current = { fingerprint: "", requestId: "" };
         setSubmitted(false);
         setItems([]);
         setPatternFile(null);

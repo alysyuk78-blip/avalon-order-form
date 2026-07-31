@@ -2,6 +2,8 @@
 // Handles secure order submission: Telegram + Google Sheets
 // API keys are stored as Vercel Environment Variables (not in client code)
 
+const { randomUUID } = require("crypto");
+
 const config = {
   api: {
     bodyParser: {
@@ -98,11 +100,14 @@ function formatNow() {
   return `${wd} ${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
 }
 
-function generateOrderNumber() {
-  const p = kyivParts(new Date());
-  const yy = p.year.slice(-2);
-  const xxx = String(Math.floor(Math.random() * 900) + 100);
-  return `ORD-${p.day}${p.month}${yy}-${xxx}`;
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function getPatternFile(order) {
@@ -129,10 +134,10 @@ async function sendPatternFileToTelegram(token, chatId, order) {
   fd.append("document", new Blob([bytes], { type: file.type }), file.name);
   fd.append("caption", `📎 Файл візерунку до замовлення №${order.order_number || "—"}`);
 
-  const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+  const res = await fetchWithTimeout(`https://api.telegram.org/bot${token}/sendDocument`, {
     method: "POST",
     body: fd,
-  });
+  }, 15000);
   return await res.json().catch(() => null);
 }
 
@@ -362,6 +367,9 @@ module.exports = async function handler(req, res) {
     const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
     const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
     const SHEETS_URL = process.env.GOOGLE_SHEET_URL;
+    if (!SHEETS_URL) {
+      return res.status(503).json({ error: "Сервіс замовлень тимчасово не налаштований. Зателефонуйте нам або спробуйте пізніше." });
+    }
 
     const results = [];
     const patternFileForSheets = getPatternFile(order);
@@ -374,34 +382,36 @@ module.exports = async function handler(req, res) {
 
     // --- Google Sheets (першим: Apps Script присвоює послідовний № ORD-ДДММРР-NNN і повертає його) ---
     let orderNumber = null;
-    if (SHEETS_URL) {
-      try {
-        const shRes = await fetch(SHEETS_URL, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: JSON.stringify({ timestamp: new Date().toISOString(), ...order, pattern_file_meta: patternFileMeta }),
-        });
-        const shData = await shRes.json().catch(() => null);
-        if (shData && shData.order_number) orderNumber = shData.order_number;
-        results.push("gs:ok");
-      } catch (err) {
-        console.error("Google Sheets error:", err);
-        results.push("gs:err");
+    const requestId = (String(order.request_id || "").trim() || randomUUID()).slice(0, 120);
+    try {
+      const shRes = await fetchWithTimeout(SHEETS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({ timestamp: new Date().toISOString(), ...order, request_id: requestId, pattern_file_meta: patternFileMeta }),
+      }, 25000);
+      const shData = await shRes.json().catch(() => null);
+      if (!shRes.ok || !shData || shData.status !== "ok" || !shData.order_number) {
+        throw new Error((shData && shData.message) || `Sheets HTTP ${shRes.status}`);
       }
+      orderNumber = shData.order_number;
+      results.push(shData.duplicate ? "gs:duplicate" : "gs:ok");
+    } catch (err) {
+      console.error("Google Sheets error:", err);
+      return res.status(502).json({
+        error: "Не вдалося надійно записати замовлення. Спробуйте ще раз — повтор не створить дубль.",
+      });
     }
-    // Фолбек: Sheets не налаштовано/недоступний → локальний номер (без гарантії послідовності).
-    if (!orderNumber) orderNumber = generateOrderNumber();
     const orderWithNumber = { ...order, order_number: orderNumber };
 
     // --- Telegram ---
     if (TG_TOKEN && TG_CHAT_ID) {
       try {
         const text = formatTelegramMessage(orderWithNumber);
-        const tgRes = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+        const tgRes = await fetchWithTimeout(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chat_id: TG_CHAT_ID, text, parse_mode: "HTML" }),
-        });
+        }, 15000);
         const tgData = await tgRes.json();
         results.push(tgData.ok ? "tg:ok" : "tg:err");
 
@@ -420,15 +430,11 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    if (results.includes("tg:ok") || results.includes("gs:ok")) {
+    if (results.includes("gs:ok") || results.includes("gs:duplicate")) {
       return res.status(200).json({ ok: true, order_number: orderNumber, results });
     }
 
-    if (results.length === 0) {
-      return res.status(500).json({ error: "No integrations configured. Set environment variables." });
-    }
-
-    return res.status(500).json({ error: "All integrations failed", results });
+    return res.status(500).json({ error: "Замовлення не записано", results });
   } catch (err) {
     console.error("Handler error:", err);
     return res.status(500).json({ error: "Internal server error" });

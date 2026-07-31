@@ -14,11 +14,13 @@ module.exports = async function handler(req, res) {
     }
     if (req.method === "POST") {
       const body = req.body || {};
+      if (!(Number(body.amount) > 0)) return res.status(400).json({ error: "Сума витрати мусить бути більшою за нуль" });
       const data = await callAdminSheets("add_expense", { expense: body });
       return res.status(200).json(data);
     }
     if (req.method === "PATCH") {
       const body = req.body || {};
+      if (body.amount != null && !(Number(body.amount) > 0)) return res.status(400).json({ error: "Сума витрати мусить бути більшою за нуль" });
       const data = await callAdminSheets("update_expense", { expense: body });
       return res.status(200).json(data);
     }

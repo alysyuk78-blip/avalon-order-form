@@ -27,6 +27,7 @@ jobs:
         run: |
           npm ci
           npm run check:admin
+          npm run test:quick
 
       - name: Check server JavaScript
         run: |
@@ -36,7 +37,6 @@ jobs:
           node --check api/admin/login.js
           node --check api/admin/orders.js
           node --check api/admin/order.js
-          node --check api/admin/dashboard.js
           node --check api/admin/partners.js
           node --check api/admin/expenses.js
           node --check api/admin/payouts.js
