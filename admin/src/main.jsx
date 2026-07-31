@@ -519,6 +519,25 @@ import { createRoot } from 'react-dom/client';
           notes: item.notes || "",
           delivery_date: (res.order && res.order.delivery_date) || item.delivery_date || "",
           payment_method: item.payment_method || "",
+          // Дані клієнта й товару — щоб усе правилось у CRM, а не в таблиці.
+          client: (res.order && res.order.client) || item.client || "",
+          phone: (res.order && res.order.phone) || item.phone || "",
+          city: (res.order && res.order.city) || item.city || "",
+          contact_method: (res.order && res.order.contact_method) || item.contact_method || "",
+          contact_telegram: (res.order && res.order.contact_telegram) || item.contact_telegram || "",
+          contact_email: (res.order && res.order.contact_email) || item.contact_email || "",
+          source: (res.order && res.order.source) || item.source || "",
+          transport: (res.order && res.order.transport) || item.transport || "",
+          address: (res.order && res.order.address) || item.address || "",
+          basket_model: item.basket_model || "",
+          basket_type: item.basket_type || "",
+          construction: item.construction || "",
+          color: item.color || "",
+          pattern: item.pattern || "",
+          size_w: item.size_w ?? "",
+          size_h: item.size_h ?? "",
+          size_d: item.size_d ?? "",
+          quantity: item.quantity ?? 1,
         });
       }
 
@@ -582,6 +601,15 @@ import { createRoot } from 'react-dom/client';
           revenue: item.revenue ?? "",
           notes: item.notes || "",
           payment_method: item.payment_method || "",
+          basket_model: item.basket_model || "",
+          basket_type: item.basket_type || "",
+          construction: item.construction || "",
+          color: item.color || "",
+          pattern: item.pattern || "",
+          size_w: item.size_w ?? "",
+          size_h: item.size_h ?? "",
+          size_d: item.size_d ?? "",
+          quantity: item.quantity ?? 1,
         }));
       }
 
@@ -643,6 +671,75 @@ import { createRoot } from 'react-dom/client';
                 {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
+
+            <div className="section-title">Клієнт і контакти</div>
+            <div className="grid2">
+              <div className="field"><label>Клієнт</label>
+                <input value={form.client} onChange={e => setForm({ ...form, client: e.target.value })} /></div>
+              <div className="field"><label>Телефон</label>
+                <input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></div>
+              <div className="field"><label>Місто</label>
+                <input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} /></div>
+              <div className="field"><label>Спосіб зв'язку</label>
+                <select value={form.contact_method} onChange={e => setForm({ ...form, contact_method: e.target.value })}>
+                  <option value="">— не вказано —</option>
+                  <option value="phone">Телефон</option>
+                  <option value="viber">Viber</option>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="telegram">Telegram</option>
+                  <option value="email">E-mail</option>
+                </select>
+              </div>
+              <div className="field"><label>Telegram</label>
+                <input value={form.contact_telegram} onChange={e => setForm({ ...form, contact_telegram: e.target.value })} placeholder="@username" /></div>
+              <div className="field"><label>E-mail</label>
+                <input value={form.contact_email} onChange={e => setForm({ ...form, contact_email: e.target.value })} /></div>
+              <div className="field"><label>Джерело</label>
+                <input list="manual-sources" value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} />
+                <datalist id="manual-sources">{MANUAL_SOURCES.map(s => <option key={s} value={s} />)}</datalist>
+              </div>
+            </div>
+            <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy} onClick={() => save({
+              client: form.client, phone: form.phone, city: form.city,
+              contact_method: form.contact_method, contact_telegram: form.contact_telegram,
+              contact_email: form.contact_email, source: form.source,
+            })}>Зберегти клієнта</button>
+
+            <div className="section-title">Товар{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</div>
+            <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
+              Зміна розмірів, типу або візерунка перерахує гроші за стандартною формулою.
+              Щоб залишити свою ціну — впишіть її нижче в «Фінансах» після збереження.
+            </p>
+            <div className="grid2">
+              <div className="field"><label>Модель</label>
+                <input list="crm-models" value={form.basket_model} onChange={e => setForm({ ...form, basket_model: e.target.value })} />
+                <datalist id="crm-models">{CATALOG_MODELS_CRM.map(m => <option key={m.id} value={m.name} />)}</datalist>
+              </div>
+              <div className="field"><label>Конструкція</label>
+                <input value={form.construction} onChange={e => setForm({ ...form, construction: e.target.value })} /></div>
+              <div className="field"><label>Тип</label>
+                <input value={form.basket_type} onChange={e => setForm({ ...form, basket_type: e.target.value })} /></div>
+              <div className="field"><label>Колір</label>
+                <input value={form.color} onChange={e => setForm({ ...form, color: e.target.value })} /></div>
+              <div className="field"><label>Візерунок</label>
+                <input value={form.pattern} onChange={e => setForm({ ...form, pattern: e.target.value })} /></div>
+              <div className="field"><label>Кількість</label>
+                <input type="number" min="1" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} /></div>
+              <div className="field"><label>Ширина, мм</label>
+                <input type="number" value={form.size_w} onChange={e => setForm({ ...form, size_w: e.target.value })} /></div>
+              <div className="field"><label>Висота, мм</label>
+                <input type="number" value={form.size_h} onChange={e => setForm({ ...form, size_h: e.target.value })} /></div>
+              <div className="field"><label>Глибина, мм</label>
+                <input type="number" value={form.size_d} onChange={e => setForm({ ...form, size_d: e.target.value })} /></div>
+            </div>
+            <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy} onClick={() => save({
+              basket_model: form.basket_model, construction: form.construction,
+              basket_type: form.basket_type, color: form.color, pattern: form.pattern,
+              quantity: Number(form.quantity) || 1,
+              size_w: form.size_w === "" ? 0 : Number(form.size_w),
+              size_h: form.size_h === "" ? 0 : Number(form.size_h),
+              size_d: form.size_d === "" ? 0 : Number(form.size_d),
+            })}>Зберегти товар</button>
 
             <div className="section-title">Фінанси{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</div>
             {items.length > 1 && (
@@ -706,12 +803,18 @@ import { createRoot } from 'react-dom/client';
                 <input type="date" value={(form.delivery_date || "").slice(0, 10)} onChange={e => setForm({ ...form, delivery_date: e.target.value })} /></div>
               <div className="field"><label>Оплата</label>
                 <input value={form.payment_method} onChange={e => setForm({ ...form, payment_method: e.target.value })} /></div>
+              <div className="field"><label>Спосіб доставки</label>
+                <input value={form.transport} onChange={e => setForm({ ...form, transport: e.target.value })} placeholder="Нова пошта / Самовивіз" /></div>
+              <div className="field"><label>Адреса / відділення</label>
+                <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></div>
             </div>
             <div className="field"><label>Примітки</label>
               <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
             <button className="btn secondary" disabled={busy} onClick={() => save({
               delivery_date: form.delivery_date,
               payment_method: form.payment_method,
+              transport: form.transport,
+              address: form.address,
               notes: form.notes,
             })}>Зберегти деталі</button>
 

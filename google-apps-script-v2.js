@@ -399,7 +399,8 @@ function recalcRow_(sh, row) {
   var hasCover = String(construction || "").toLowerCase().indexOf("кришка") >= 0;
   var coverAreaM2 = hasCover ? (w * d) / 1000000 : 0;
   var areaM2 = basketAreaM2 + coverAreaM2;
-  var basketCostRate = String(construction || "").toLowerCase().indexOf("розбірний") >= 0 ? 2170 : 2030;
+  // «розбір» (не «розбірний») — щоб ловити й «Розбірна» (AVL-02), і «Розбірний (з 3-х частин)».
+  var basketCostRate = String(construction || "").toLowerCase().indexOf("розбір") >= 0 ? 2170 : 2030;
   if (String(basket_type || "").toLowerCase().indexOf("антивандал") >= 0) basketCostRate = Math.round(basketCostRate * 1.35);
   if (pattern && ["K3", "K4", "K6", "K8", "K9"].indexOf(pattern) >= 0) basketCostRate = Math.round(basketCostRate * 1.15);
   var basketPriceRate = Math.round(basketCostRate * MARKUP);
@@ -1968,6 +1969,44 @@ function adminUpdateOrder_(data) {
   if (targetRows.indexOf(row) < 0) row = targetRows[0];
 
   var oldStatus = String(sh.getRange(row, 3).getValue() || "");
+
+  // ── Дані клієнта й замовлення: спільні для всіх позицій, тож пишемо в усі рядки ──
+  var ORDER_FIELDS = { source: 4, client: 5, city: 7, transport: 27, address: 28,
+                       contact_method: 38, contact_telegram: 39, contact_email: 40 };
+  Object.keys(ORDER_FIELDS).forEach(function (key) {
+    if (patch[key] == null) return;
+    var val = String(patch[key]);
+    if (key === "contact_telegram") val = val.replace(/^@/, "").trim();
+    targetRows.forEach(function (r) { sh.getRange(r, ORDER_FIELDS[key]).setValue(val); });
+  });
+  if (patch.phone != null) {
+    // Апостроф — щоб Google не зʼїв «+» і не перетворив номер у число.
+    var ph = String(patch.phone).trim();
+    targetRows.forEach(function (r) { sh.getRange(r, 6).setValue(ph ? "'" + ph : ""); });
+  }
+
+  // ── Характеристики позиції: лише цей рядок ──
+  var itemTouched = false;
+  var ITEM_TEXT = { basket_type: 8, construction: 9, color: 10, pattern: 11,
+                    ac_brand: 12, ac_model: 13, basket_model: 41 };
+  Object.keys(ITEM_TEXT).forEach(function (key) {
+    if (patch[key] == null) return;
+    sh.getRange(row, ITEM_TEXT[key]).setValue(String(patch[key]));
+    itemTouched = true;
+  });
+  var ITEM_NUM = { size_w: 14, size_h: 15, size_d: 16, quantity: 17 };
+  Object.keys(ITEM_NUM).forEach(function (key) {
+    if (patch[key] == null) return;
+    var num = Number(patch[key]);
+    if (key === "quantity") num = (num >= 1) ? Math.round(num) : 1;
+    else if (!(num > 0)) num = "";
+    sh.getRange(row, ITEM_NUM[key]).setValue(num);
+    itemTouched = true;
+  });
+  // Зміна розмірів/типу/візерунка перераховує гроші тією ж логікою, що й правка руками
+  // в таблиці. Якщо в цьому ж запиті задана ціна — applyFinanceToRow_ нижче переважить.
+  if (itemTouched) recalcRow_(sh, row);
+
   var financeTouched = ["cost_total", "list_price", "discount_pct", "discount_uah", "revenue"].some(function (k) {
     return patch[k] != null;
   });
