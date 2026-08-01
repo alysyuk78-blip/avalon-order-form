@@ -39,6 +39,145 @@ import finance from '../../lib/admin-finance.js';
     const PAYMENT_TYPES = ["Передоплата","Доплата","Оплата повністю","Маржа від підрядника","Повернення клієнту"];
     const PAYMENT_METHODS = ["Готівка","На карту","На рахунок ФО-П","На рахунок ТОВ","Накладений платіж","Інше"];
     const TOKEN_KEY = "avalon_admin_token";
+    const ICON_PATHS = {
+      search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>,
+      filter: <path d="M4 5h16l-6.5 7.2V18l-3 1.5v-7.3L4 5Z" />,
+      refresh: <><path d="M20 7v5h-5" /><path d="M4 17v-5h5" /><path d="M6.1 8.5A7 7 0 0 1 18.8 7L20 12" /><path d="M17.9 15.5A7 7 0 0 1 5.2 17L4 12" /></>,
+      plus: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
+      board: <><rect x="3" y="4" width="5" height="16" rx="1.5" /><rect x="9.5" y="4" width="5" height="16" rx="1.5" /><rect x="16" y="4" width="5" height="16" rx="1.5" /></>,
+      list: <><path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /></>,
+      orders: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4.5V3h6v1.5" /><path d="M9 9h6" /><path d="M9 13h6" /><path d="M9 17h4" /></>,
+      clients: <><circle cx="9" cy="8" r="3" /><path d="M3.5 19a5.5 5.5 0 0 1 11 0" /><circle cx="17" cy="9" r="2.5" /><path d="M16 14a5 5 0 0 1 4.5 5" /></>,
+      dashboard: <><path d="M4 20V10" /><path d="M10 20V4" /><path d="M16 20v-7" /><path d="M22 20H2" /></>,
+      partners: <><path d="M9 12.5 11.5 15a2 2 0 0 0 3 0l4.5-4.5" /><path d="m3 10 4-4 4 2-4.5 4.5a2 2 0 0 0 3 3L12 13" /><path d="m21 10-4-4-4 2" /><path d="m3 10 3 3" /></>,
+      expenses: <><path d="M4 7.5h16v11A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5v-13A1.5 1.5 0 0 1 5.5 4H18" /><path d="M15 12h5" /><circle cx="15" cy="12" r=".5" /></>,
+      form: <><path d="M7 3h8l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /><path d="M15 3v5h5" /><path d="M9 13h6" /><path d="M9 17h4" /></>,
+      logout: <><path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4" /><path d="m15 8 4 4-4 4" /><path d="M19 12H9" /></>,
+      info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 8h.01" /></>,
+      close: <><path d="m6 6 12 12" /><path d="m18 6-12 12" /></>,
+      check: <path d="m5 12 4 4L19 6" />,
+    };
+    const NAV_ITEMS = [
+      { id: "orders", label: "Замовлення", icon: "orders" },
+      { id: "clients", label: "Клієнти", icon: "clients" },
+      { id: "dash", label: "Зведення", icon: "dashboard" },
+      { id: "partners", label: "Партнери", icon: "partners" },
+      { id: "expenses", label: "Витрати", icon: "expenses" },
+    ];
+
+    function Icon({ name, size = 20 }) {
+      return (
+        <svg className="ui-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          {ICON_PATHS[name]}
+        </svg>
+      );
+    }
+
+    function IconButton({ icon, label, active = false, className = "", ...props }) {
+      return (
+        <button
+          type="button"
+          className={"icon-button" + (active ? " active" : "") + (className ? " " + className : "")}
+          aria-label={label}
+          title={label}
+          data-tooltip={label}
+          {...props}
+        >
+          <Icon name={icon} />
+        </button>
+      );
+    }
+
+    function IconLink({ icon, label, className = "", ...props }) {
+      return (
+        <a
+          className={"icon-button" + (className ? " " + className : "")}
+          aria-label={label}
+          title={label}
+          data-tooltip={label}
+          {...props}
+        >
+          <Icon name={icon} />
+        </a>
+      );
+    }
+
+    function useDismissablePopover(open, setOpen, wrapRef) {
+      useEffect(() => {
+        if (!open) return;
+        function dismiss(e) {
+          if (e.type === "keydown" && e.key !== "Escape") return;
+          if (e.type === "mousedown" && wrapRef.current?.contains(e.target)) return;
+          setOpen(false);
+        }
+        document.addEventListener("keydown", dismiss);
+        document.addEventListener("mousedown", dismiss);
+        return () => {
+          document.removeEventListener("keydown", dismiss);
+          document.removeEventListener("mousedown", dismiss);
+        };
+      }, [open, setOpen, wrapRef]);
+    }
+
+    function SearchControl({ value, onChange }) {
+      const [open, setOpen] = useState(false);
+      const wrapRef = useRef(null);
+      const inputRef = useRef(null);
+      useDismissablePopover(open, setOpen, wrapRef);
+      useEffect(() => {
+        if (open) inputRef.current?.focus();
+      }, [open]);
+      const label = value ? "Пошук: " + value : "Пошук за імʼям, телефоном або номером";
+      return (
+        <div className="tool-control" ref={wrapRef}>
+          <IconButton icon="search" label={label} active={open || !!value} aria-expanded={open} onClick={() => setOpen(v => !v)} />
+          {open && (
+            <div className="tool-popover search-popover">
+              <Icon name="search" size={18} />
+              <input
+                ref={inputRef}
+                type="search"
+                aria-label="Пошук замовлень"
+                placeholder="Імʼя, телефон або ORD-…"
+                value={value}
+                onChange={e => onChange(e.target.value)}
+              />
+              {value && <IconButton icon="close" label="Очистити пошук" className="popover-clear" onClick={() => { onChange(""); inputRef.current?.focus(); }} />}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function StatusControl({ value, onChange, includeMissing }) {
+      const [open, setOpen] = useState(false);
+      const wrapRef = useRef(null);
+      useDismissablePopover(open, setOpen, wrapRef);
+      const options = includeMissing ? [...STATUSES, MISSING_STATUS] : STATUSES;
+      const label = value ? "Статус: " + value : "Фільтр за статусом";
+      return (
+        <div className="tool-control" ref={wrapRef}>
+          <IconButton icon="filter" label={label} active={open || !!value} aria-expanded={open} onClick={() => setOpen(v => !v)} />
+          {open && (
+            <div className="tool-popover status-popover" role="menu" aria-label="Фільтр за статусом">
+              {[{ value: "", label: "Усі статуси" }, ...options.map(s => ({ value: s, label: s }))].map(option => (
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={value === option.value}
+                  className={value === option.value ? "selected" : ""}
+                  key={option.value || "all"}
+                  onClick={() => { onChange(option.value); setOpen(false); }}
+                >
+                  <span>{option.label}</span>
+                  {value === option.value && <Icon name="check" size={17} />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
 
     function money(v) {
       if (v == null || v === "") return "—";
@@ -529,7 +668,7 @@ import finance from '../../lib/admin-finance.js';
             aria-expanded={open}
             title="Підказка"
             onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
-          >i</button>
+          ><Icon name="info" size={17} /></button>
           {open && (
             <div className="info-tip" role="note" onClick={e => e.stopPropagation()}>
               {text ? text : (
@@ -1420,18 +1559,25 @@ import finance from '../../lib/admin-finance.js';
 
       return (
         <div>
-          <div className="toolbar">
-            <input type="search" placeholder="Пошук: імʼя, телефон, ORD-…" value={q} onChange={e => setQ(e.target.value)} />
-            <select value={status} onChange={e => setStatus(e.target.value)}>
-              <option value="">Усі статуси</option>
-              {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              {hasMissingStatus && <option value={MISSING_STATUS}>{MISSING_STATUS}</option>}
-            </select>
-            <button className="btn secondary" onClick={load} disabled={!!moving}>Оновити</button>
-            <button className="btn" onClick={() => setCreating(true)}>+ Нове замовлення</button>
-            <div className="view-toggle" style={{ marginLeft: "auto" }}>
-              <button className={view === "kanban" ? "active" : ""} onClick={() => setView("kanban")}>Воронка</button>
-              <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}>Список</button>
+          <div className="toolbar orders-toolbar">
+            <div className="toolbar-primary">
+              <SearchControl value={q} onChange={setQ} />
+              <StatusControl value={status} onChange={setStatus} includeMissing={hasMissingStatus} />
+              <IconButton
+                icon="refresh"
+                label="Оновити замовлення"
+                className={loading ? "is-spinning" : ""}
+                onClick={load}
+                disabled={loading || !!moving}
+              />
+              <button className="btn new-order-button" onClick={() => setCreating(true)}>
+                <Icon name="plus" size={18} />
+                <span>Нове замовлення</span>
+              </button>
+            </div>
+            <div className="view-toggle icon-toggle" aria-label="Вигляд замовлень">
+              <IconButton icon="board" label="Воронка" active={view === "kanban"} onClick={() => setView("kanban")} />
+              <IconButton icon="list" label="Список" active={view === "list"} onClick={() => setView("list")} />
             </div>
           </div>
           {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
@@ -1450,24 +1596,21 @@ import finance from '../../lib/admin-finance.js';
           {!loading && !filteredGroups.length && <div className="empty">Замовлень не знайдено</div>}
 
           {!loading && filteredGroups.length > 0 && (
-            <div className="orders-totals">
-              <div className="ot-item">
-                <div className="ot-label">Замовлень (без скасованих)</div>
-                <div className="ot-value">{grand.count}</div>
+            <div className="orders-totals" role="group" aria-label="Підсумок замовлень">
+              <div className="summary-metric summary-count" title="Кількість замовлень без скасованих">
+                <span>Замовлень</span>
+                <strong>{grand.count}</strong>
               </div>
-              <div className="ot-item">
-                <div className="ot-label">Загальна сума замовлень</div>
-                <div className="ot-value">{money(grand.revenue)}</div>
-                <div className="ot-sub">Маржа: {money(grand.profit)}</div>
-                {grand.clientLeft > 0 && (
-                  <div className="ot-sub" style={{ color: "#b54842" }}>Борг клієнтів: {money(grand.clientLeft)}</div>
-                )}
-                {grand.marginLeft > 0 && (
-                  <div className="ot-sub" style={{ color: "#8f7340" }}>Маржа до отримання: {money(grand.marginLeft)}</div>
-                )}
+              <div className="summary-divider" aria-hidden="true" />
+              <div className="summary-metric summary-total">
+                <span>Загальна сума</span>
+                <strong>{money(grand.revenue)}</strong>
               </div>
+              <div className="summary-stat"><span>Маржа</span><strong>{money(grand.profit)}</strong></div>
+              {grand.clientLeft > 0 && <div className="summary-stat debt"><span>Борг клієнтів</span><strong>{money(grand.clientLeft)}</strong></div>}
+              {grand.marginLeft > 0 && <div className="summary-stat margin"><span>Маржа до отримання</span><strong>{money(grand.marginLeft)}</strong></div>}
               {view === "kanban" && (
-                <div style={{ marginLeft: "auto", alignSelf: "flex-start" }}>
+                <div className="summary-info">
                   <InfoTip
                     desktopText="Перетягніть картку в інший стовпчик, щоб змінити статус."
                     mobileText="Гортайте стовпчики вбік. Статус змінюйте списком на картці."
@@ -1501,13 +1644,19 @@ import finance from '../../lib/admin-finance.js';
                       <span>{s}</span>
                       <span>{byStatus[s].items.length}</span>
                     </div>
-                    <div className="col-sum">{s === "Скасовано" ? "—" : money(byStatus[s].revenue)}</div>
-                    <div className="col-margin">{s === "Скасовано" ? "" : ("Маржа: " + money(byStatus[s].profit))}</div>
-                    {s !== "Скасовано" && byStatus[s].client_left > 0 && (
-                      <div className="col-margin" style={{ color: "#b54842" }}>Борг клієнтів: {money(byStatus[s].client_left)}</div>
-                    )}
-                    {s !== "Скасовано" && byStatus[s].margin_left > 0 && (
-                      <div className="col-margin" style={{ color: "#8f7340" }}>Маржа до отримання: {money(byStatus[s].margin_left)}</div>
+                    {s === "Скасовано" ? <div className="col-finance"><strong>—</strong></div> : (
+                      <>
+                        <div className="col-finance">
+                          <strong>{money(byStatus[s].revenue)}</strong>
+                          <span>Маржа {money(byStatus[s].profit)}</span>
+                        </div>
+                        {(byStatus[s].client_left > 0 || byStatus[s].margin_left > 0) && (
+                          <div className="col-alerts">
+                            {byStatus[s].client_left > 0 && <span className="debt">Борг {money(byStatus[s].client_left)}</span>}
+                            {byStatus[s].margin_left > 0 && <span className="margin">До отримання {money(byStatus[s].margin_left)}</span>}
+                          </div>
+                        )}
+                      </>
                     )}
                   </h3>
                   <div className={"col-body" + (dragOver === s ? " drag-over" : "")}>
@@ -1541,21 +1690,30 @@ import finance from '../../lib/admin-finance.js';
                           onOpenOrder(g.order_number);
                         }}
                       >
-                        <div className="num">{g.order_number}</div>
+                        <div className="card-head">
+                          <div className="num">{g.order_number}</div>
+                          <span>{formatDateShort(g.created_at).split(" ")[0]}</span>
+                        </div>
                         {g.status === MISSING_STATUS && <div className="meta" style={{ color: "#b54842" }}>{g.status_issue}</div>}
-                        <div className="meta">{g.client}<br /><ContactLinks order={g} onClickStop /><br />{g.city || "—"}</div>
-                        <div className="money">{money(g.revenue)}</div>
-                        <div className="meta">Маржа: {money(g.profit)}</div>
+                        <div className="card-client">{g.client || "Клієнт не вказаний"}</div>
+                        <div className="card-contact">
+                          <ContactLinks order={g} onClickStop />
+                          {g.city && <span>{g.city}</span>}
+                        </div>
+                        <div className="card-finance">
+                          <div><span>Сума</span><strong>{money(g.revenue)}</strong></div>
+                          <div><span>Маржа</span><strong>{money(g.profit)}</strong></div>
+                        </div>
                         {/* Оплати клієнта: видно борг просто на картці, без відкриття замовлення. */}
                         {(g.client_paid_sum > 0 || g.client_left > 0) && (
-                          <div className="meta" style={{ color: g.client_left > 0 ? "#b54842" : "#16A34A" }}>
+                          <div className={"card-payment " + (g.client_left > 0 ? "debt" : "paid")}>
                             {g.client_left > 0
                               ? "Сплачено " + money(g.client_paid_sum) + " · борг " + money(g.client_left)
                               : "Сплачено повністю"}
                           </div>
                         )}
                         {g.margin_left > 0 && g.client_left === 0 && (
-                          <div className="meta" style={{ color: "#8f7340" }}>Маржа до отримання: {money(g.margin_left)}</div>
+                          <div className="card-payment margin">Маржа до отримання: {money(g.margin_left)}</div>
                         )}
                         <select
                           className="card-status mobile-only"
@@ -1583,7 +1741,19 @@ import finance from '../../lib/admin-finance.js';
           {!loading && view === "list" && (
             <div className="list">
               {filteredGroups.map(g => (
-                <div key={g.order_number} className="row-card" onClick={() => onOpenOrder(g.order_number)}>
+                <div
+                  key={g.order_number}
+                  className="row-card"
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onOpenOrder(g.order_number);
+                    }
+                  }}
+                  onClick={() => onOpenOrder(g.order_number)}
+                >
                   <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
                   <div>{g.client}<div style={{ marginTop: 4 }}><ContactLinks order={g} onClickStop /></div></div>
                   <div><StatusChip status={g.status} /></div>
@@ -2334,16 +2504,21 @@ import finance from '../../lib/admin-finance.js';
                 <span>внутрішній кабінет</span>
               </div>
             </div>
-            <nav className="nav">
-              <button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}>Замовлення</button>
-              <button className={tab === "clients" ? "active" : ""} onClick={() => setTab("clients")}>Клієнти</button>
-              <button className={tab === "dash" ? "active" : ""} onClick={() => setTab("dash")}>Зведення</button>
-              <button className={tab === "partners" ? "active" : ""} onClick={() => setTab("partners")}>Партнери</button>
-              <button className={tab === "expenses" ? "active" : ""} onClick={() => setTab("expenses")}>Витрати</button>
+            <nav className="nav" aria-label="Розділи CRM">
+              {NAV_ITEMS.map(item => (
+                <IconButton
+                  key={item.id}
+                  icon={item.icon}
+                  label={item.label}
+                  active={tab === item.id}
+                  aria-current={tab === item.id ? "page" : undefined}
+                  onClick={() => setTab(item.id)}
+                />
+              ))}
             </nav>
             <div className="top-actions">
-              <a className="btn ghost" href="/" style={{ textDecoration: "none" }}>Форма</a>
-              <button className="btn secondary" onClick={() => logout()}>Вийти</button>
+              <IconLink icon="form" label="Форма замовлення" href="/" />
+              <IconButton icon="logout" label="Вийти" onClick={() => logout()} />
             </div>
           </div>
           <main className="main">
