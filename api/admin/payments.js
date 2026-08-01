@@ -34,8 +34,10 @@ module.exports = async function handler(req, res) {
 
     if (req.method === "DELETE") {
       const row = Number((req.query && req.query.row) || (req.body && req.body.row) || 0);
+      const orderNumber = (req.query && req.query.order_number) || (req.body && req.body.order_number) || "";
       if (!(row >= 2)) return res.status(400).json({ error: "row required" });
-      const data = await callAdminSheets("delete_payment", { row });
+      if (!String(orderNumber).trim()) return res.status(400).json({ error: "order_number required" });
+      const data = await callAdminSheets("delete_payment", { row, order_number: orderNumber });
       console.log(JSON.stringify({ level: "info", msg: "done", route: "/api/admin/payments", method: req.method, ms: Date.now() - startedAt, requestId }));
       return res.status(200).json(data);
     }

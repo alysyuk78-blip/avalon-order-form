@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 
     const STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
+    const MISSING_STATUS = "Без статусу";
+    const DISPLAY_STATUSES = [...STATUSES, MISSING_STATUS];
     const STATUS_CLASS = {
       "Нове": "st-new",
       "В роботі": "st-work",
@@ -9,6 +11,7 @@ import { createRoot } from 'react-dom/client';
       "Відправлено": "st-ship",
       "Завершено": "st-done",
       "Скасовано": "st-cancel",
+      [MISSING_STATUS]: "st-missing",
     };
     const EXPENSE_CATS = ["Реклама / маркетинг","Доставка","Пакування / матеріали","Підряд / зарплати","Інше"];
     // Каталог для ручного внесення (дзеркалить CATALOG_MODELS у public/index.html).
@@ -84,11 +87,30 @@ import { createRoot } from 'react-dom/client';
     function statusClass(status) {
       return STATUS_CLASS[status] || "";
     }
-    // Старі або вручну створені рядки інколи мають порожній/нестандартний статус.
-    // Не ховаємо такі замовлення з воронки: показуємо їх у «Нове» до уточнення.
-    function normalizeStatus(status) {
-      const value = String(status || "").trim();
-      return STATUSES.includes(value) ? value : "Нове";
+    // Порожній, нестандартний або різний у рядках одного замовлення статус не можна
+    // мовчки вважати «Новим»: це окремий стан якості даних, який менеджер виправляє явно.
+    function resolveOrderStatus(values) {
+      const raw = [...new Set((values || []).map(v => String(v || "").trim()))];
+      if (raw.length === 1 && STATUSES.includes(raw[0])) {
+        return { status: raw[0], raw_statuses: raw, status_issue: "" };
+      }
+      return {
+        status: MISSING_STATUS,
+        raw_statuses: raw,
+        status_issue: raw.length > 1 ? "У позицій замовлення різні статуси" : "У замовлення не вказано коректний статус",
+      };
+    }
+    function normalizeOrderGroups(data) {
+      const statusesByOrder = {};
+      (data.orders || []).forEach(item => {
+        const key = String(item.order_number || "");
+        if (!statusesByOrder[key]) statusesByOrder[key] = [];
+        statusesByOrder[key].push(item.status);
+      });
+      return (data.groups || []).map(group => ({
+        ...group,
+        ...resolveOrderStatus(statusesByOrder[group.order_number] || [group.status]),
+      }));
     }
     function newRequestId() {
       if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
@@ -162,11 +184,19 @@ import { createRoot } from 'react-dom/client';
         let priority = 99;
         let tag = "";
         let tagClass = "";
+        if (g.status === MISSING_STATUS) {
+          reasons.push(g.status_issue || "Потрібно вказати статус");
+          priority = 0;
+          tag = "Статус";
+          tagClass = "data";
+        }
         if (g.client_paid && !g.margin_paid && profit > 0) {
           reasons.push("Маржа до отримання: " + money(profit));
-          priority = Math.min(priority, 1);
-          tag = "Борг маржі";
-          tagClass = "debt";
+          if (priority > 1) {
+            priority = 1;
+            tag = "Борг маржі";
+            tagClass = "debt";
+          }
         }
         if (g.status === "В роботі") {
           reasons.push("Статус «В роботі» · " + money(g.revenue));
@@ -194,7 +224,7 @@ import { createRoot } from 'react-dom/client';
     }
     function totalsFromGroups(groups, expensesTotal) {
       const by_status = {};
-      STATUSES.forEach(s => { by_status[s] = 0; });
+      DISPLAY_STATUSES.forEach(s => { by_status[s] = 0; });
       let revenue = 0, cost = 0, profit = 0, commission = 0;
       let margin_ready = 0, margin_received = 0, margin_debt = 0;
       (groups || []).forEach(g => {
@@ -545,11 +575,12 @@ import { createRoot } from 'react-dom/client';
         finally { setBusy(false); }
       }
 
-      async function remove(row) {
+      async function remove(payment) {
         if (!window.confirm("Видалити цей платіж?")) return;
         setBusy(true); setError("");
         try {
-          await api("/api/admin/payments?row=" + row, { method: "DELETE", token });
+          const qs = new URLSearchParams({ row: String(payment.row), order_number: orderNumber });
+          await api("/api/admin/payments?" + qs.toString(), { method: "DELETE", token });
           onChanged && onChanged();
         } catch (e) { setError(e.message || "Не вдалося видалити платіж"); }
         finally { setBusy(false); }
@@ -569,6 +600,12 @@ import { createRoot } from 'react-dom/client';
                   : marginOverreceived > 0 ? " · понад нову маржу " + money(marginOverreceived) : " · повністю")} /></div>
           </div>
 
+          {s.legacy && (
+            <div style={{ margin: "8px 0 10px", padding: "10px 12px", borderRadius: 10, background: "#fff7e6", color: "#7a5410", fontSize: 12, lineHeight: 1.45 }}>
+              У журналі ще немає платежів. Якщо клієнт уже платив, спочатку внесіть фактичну отриману суму — тоді доплата після зміни ціни порахується точно.
+            </div>
+          )}
+
           {list.length > 0 && (
             <div className="table-scroll" style={{ marginTop: 8 }}>
               <table>
@@ -581,7 +618,7 @@ import { createRoot } from 'react-dom/client';
                       <td><b>{money(p.amount)}</b></td>
                       <td>{p.method || "—"}</td>
                       <td>{p.note || "—"}</td>
-                      <td><button className="btn ghost" disabled={busy} onClick={() => remove(p.row)}>Видалити</button></td>
+                      <td><button className="btn ghost" disabled={busy} onClick={() => remove(p)}>Видалити</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -619,13 +656,13 @@ import { createRoot } from 'react-dom/client';
       const [error, setError] = useState("");
       const [form, setForm] = useState(null);
       const [itemIdx, setItemIdx] = useState(0);
-      const pendingQuickPaymentRef = useRef({ fingerprint: "", requestId: "" });
 
       function applyItemToForm(res, idx) {
         const item = (res.items && res.items[idx]) || {};
+        const resolvedStatus = resolveOrderStatus((res.items || []).map(x => x.status));
         setForm({
           row: item.row,
-          status: (res.order && res.order.status) || item.status || "Нове",
+          status: resolvedStatus.status,
           cost_total: item.cost_total ?? "",
           list_price: item.list_price ?? "",
           discount_pct: item.discount_pct ?? "",
@@ -697,33 +734,6 @@ import { createRoot } from 'react-dom/client';
             </div>
           </div>
         );
-      }
-
-      // Підсумок оплат: із журналу платежів, а для давніх замовлень — зі старих галочок.
-      const paySummary = data.payment_summary || { revenue: 0, profit: 0, client_paid: 0, client_left: 0, margin_received: 0, margin_left: 0 };
-
-      // Внести залишок одним платежем (замість прямої галочки — щоб суми не розходились).
-      async function payRest(which) {
-        const amount = which === "client" ? paySummary.client_left : paySummary.margin_left;
-        if (!(amount > 0)) return;
-        const type = which === "client" ? "Оплата повністю" : "Маржа від підрядника";
-        if (!window.confirm("Внести платіж «" + type + "» на " + money(amount) + "?")) return;
-        const payment = { order_number: orderNumber, type, amount, method: "" };
-        const fingerprint = JSON.stringify(payment);
-        if (pendingQuickPaymentRef.current.fingerprint !== fingerprint) {
-          pendingQuickPaymentRef.current = { fingerprint, requestId: newRequestId() };
-        }
-        setBusy(true); setError("");
-        try {
-          await api("/api/admin/payments", {
-            method: "POST", token,
-            body: { payment: { ...payment, request_id: pendingQuickPaymentRef.current.requestId } },
-          });
-          pendingQuickPaymentRef.current = { fingerprint: "", requestId: "" };
-          await load();
-          onChanged && onChanged();
-        } catch (e) { setError(e.message || "Не вдалося внести платіж"); }
-        finally { setBusy(false); }
       }
 
       async function changeStatus(newStatus) {
@@ -801,26 +811,6 @@ import { createRoot } from 'react-dom/client';
                   onClick={() => changeStatus(s)}
                 >{s}</button>
               ))}
-            </div>
-            <div className="quick-actions">
-              {/* Ці кнопки НЕ ставлять галочку напряму, а вносять платіж на залишок —
-                  інакше журнал платежів і галочки AG/AH суперечили б одне одному. */}
-              <button
-                type="button"
-                className={paySummary.client_left > 0 ? "" : "ok"}
-                disabled={busy || paySummary.client_left <= 0}
-                onClick={() => payRest("client")}
-              >{paySummary.client_left > 0
-                ? "Клієнт заплатив (" + money(paySummary.client_left) + ")"
-                : "✓ Клієнт заплатив"}</button>
-              <button
-                type="button"
-                className={paySummary.margin_left > 0 ? "" : "ok"}
-                disabled={busy || paySummary.margin_left <= 0}
-                onClick={() => payRest("margin")}
-              >{paySummary.margin_left > 0
-                ? "Маржу отримано (" + money(paySummary.margin_left) + ")"
-                : "✓ Маржу отримано"}</button>
               <button
                 type="button"
                 className="warn"
@@ -829,9 +819,16 @@ import { createRoot } from 'react-dom/client';
               >Скасувати</button>
             </div>
 
+            {form.status === MISSING_STATUS && (
+              <div className="error" style={{ marginBottom: 10 }}>
+                У таблиці не задано коректний статус. Оберіть фактичний статус замовлення.
+              </div>
+            )}
+
             <div className="field">
               <label>Статус</label>
               <select value={form.status} onChange={e => changeStatus(e.target.value)}>
+                {form.status === MISSING_STATUS && <option value={MISSING_STATUS} disabled>{MISSING_STATUS}</option>}
                 {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
@@ -944,13 +941,28 @@ import { createRoot } from 'react-dom/client';
               <div className="field"><label>Собівартість (разом)</label>
                 <input type="number" value={form.cost_total} onChange={e => setForm({ ...form, cost_total: e.target.value })} /></div>
               <div className="field"><label>Роздрібна ціна (разом)</label>
-                <input type="number" value={form.list_price} onChange={e => setForm({ ...form, list_price: e.target.value })} /></div>
+                <input type="number" value={form.list_price} onChange={e => {
+                  const raw = e.target.value;
+                  const list = Number(raw) || 0;
+                  const pctValue = Number(form.discount_pct) || 0;
+                  const uahValue = Number(form.discount_uah) || 0;
+                  const revenue = pctValue > 0 ? Math.round(list * (1 - pctValue / 100)) : Math.max(0, Math.round(list - uahValue));
+                  setForm({ ...form, list_price: raw, revenue: raw === "" ? form.revenue : String(revenue) });
+                }} /></div>
               <div className="field"><label>Знижка %</label>
-                <input type="number" step="0.1" value={form.discount_pct} onChange={e => setForm({ ...form, discount_pct: e.target.value })} /></div>
+                <input type="number" step="0.1" value={form.discount_pct} onChange={e => {
+                  const pctValue = Number(e.target.value) || 0;
+                  const list = Number(form.list_price) || 0;
+                  setForm({ ...form, discount_pct: e.target.value, discount_uah: "", revenue: list ? String(Math.max(0, Math.round(list * (1 - pctValue / 100)))) : form.revenue });
+                }} /></div>
               <div className="field"><label>Знижка ₴</label>
-                <input type="number" value={form.discount_uah} onChange={e => setForm({ ...form, discount_uah: e.target.value })} /></div>
+                <input type="number" value={form.discount_uah} onChange={e => {
+                  const discount = Number(e.target.value) || 0;
+                  const list = Number(form.list_price) || 0;
+                  setForm({ ...form, discount_uah: e.target.value, discount_pct: "", revenue: list ? String(Math.max(0, Math.round(list - discount))) : form.revenue });
+                }} /></div>
               <div className="field"><label>Ціна продажу / виручка (разом)</label>
-                <input type="number" value={form.revenue} onChange={e => setForm({ ...form, revenue: e.target.value })} /></div>
+                <input type="number" value={form.revenue} onChange={e => setForm({ ...form, revenue: e.target.value, discount_pct: "", discount_uah: "" })} /></div>
               <div className="field"><label>Маржа (авто)</label>
                 <input disabled value={money(profit) + " · " + pct(marginPct)} /></div>
             </div>
@@ -961,8 +973,8 @@ import { createRoot } from 'react-dom/client';
             <button className="btn" style={{ marginTop: 8 }} disabled={busy} onClick={() => save({
               cost_total: form.cost_total === "" ? null : Number(form.cost_total),
               list_price: form.list_price === "" ? null : Number(form.list_price),
-              discount_pct: form.discount_pct === "" ? null : Number(form.discount_pct),
-              discount_uah: form.discount_uah === "" ? null : Number(form.discount_uah),
+              discount_pct: form.discount_pct === "" ? 0 : Number(form.discount_pct),
+              discount_uah: form.discount_uah === "" ? 0 : Number(form.discount_uah),
               revenue: form.revenue === "" ? null : Number(form.revenue),
             })}>Зберегти фінанси</button>
             <div className="section-title">Доставка та нотатки</div>
@@ -1018,6 +1030,7 @@ import { createRoot } from 'react-dom/client';
       });
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
+      const pendingCreateRef = useRef({ fingerprint: "", requestId: "" });
 
       const model = CATALOG_MODELS_CRM.find(m => m.id === form.basket_model);
       const isOther = kind === "other";
@@ -1079,28 +1092,33 @@ import { createRoot } from 'react-dom/client';
         }
         if (isOther && !form.product_name.trim()) return setError("Вкажіть назву виробу");
         if (!form.unit.trim()) return setError("Вкажіть одиницю виміру");
+        const order = {
+          ...form,
+          product_type: isOther ? "other" : (isBracket ? "bracket" : "basket"),
+          basket_model_name: isOther ? form.product_name : (model ? model.name : form.basket_model),
+          construction_type: isOther ? form.product_name : form.construction_type,
+          quantity: qtyNum,
+          unit: form.unit.trim(),
+          // Колонки таблиці зберігають ПІДСУМКИ по позиції, тож множимо на кількість.
+          cost_total: costTotalCalc || "",
+          list_price: priceUnitOverride ? "" : (listTotal || ""),
+          discount_pct: priceUnitOverride ? "" : (form.discount_pct || ""),
+          discount_uah: priceUnitOverride ? "" : (discountTotal || ""),
+          price_total: revenueTotal || "",
+        };
+        const fingerprint = JSON.stringify(order);
+        if (pendingCreateRef.current.fingerprint !== fingerprint) {
+          pendingCreateRef.current = { fingerprint, requestId: newRequestId() };
+        }
+        order.request_id = pendingCreateRef.current.requestId;
         setBusy(true);
         try {
           const res = await api("/api/admin/orders", {
             method: "POST",
             token,
-            body: {
-              order: {
-                ...form,
-                product_type: isOther ? "other" : (isBracket ? "bracket" : "basket"),
-                basket_model_name: isOther ? form.product_name : (model ? model.name : form.basket_model),
-                construction_type: isOther ? form.product_name : form.construction_type,
-                quantity: qtyNum,
-                unit: form.unit.trim(),
-                // Колонки таблиці зберігають ПІДСУМКИ по позиції, тож множимо на кількість.
-                cost_total: costTotalCalc || "",
-                list_price: priceUnitOverride ? "" : (listTotal || ""),
-                discount_pct: priceUnitOverride ? "" : (form.discount_pct || ""),
-                discount_uah: priceUnitOverride ? "" : (discountTotal || ""),
-                price_total: revenueTotal || "",
-              },
-            },
+            body: { order },
           });
+          pendingCreateRef.current = { fingerprint: "", requestId: "" };
           onCreated(res.order_number || "");
         } catch (e) {
           setError(e.message || "Не вдалося створити замовлення");
@@ -1317,16 +1335,24 @@ import { createRoot } from 'react-dom/client';
       async function load() {
         setError("");
         try {
-          await refreshOrders({ q, status });
+          await refreshOrders();
         } catch (e) {
           setError(e.message);
         }
       }
 
-      useEffect(() => {
-        const t = setTimeout(() => load(), 300);
-        return () => clearTimeout(t);
-      }, [token, q, status]);
+      const hasMissingStatus = groups.some(g => g.status === MISSING_STATUS);
+      const funnelStatuses = hasMissingStatus ? DISPLAY_STATUSES : STATUSES;
+      const filteredGroups = useMemo(() => {
+        const needle = q.trim().toLowerCase();
+        return groups.filter(g => {
+          if (status && g.status !== status) return false;
+          if (!needle) return true;
+          const haystack = [g.order_number, g.client, g.phone, g.city, g.contact_telegram, g.contact_email, g.source]
+            .map(v => String(v || "").toLowerCase()).join(" ");
+          return haystack.includes(needle);
+        });
+      }, [groups, q, status]);
 
       async function moveToStatus(orderNumber, newStatus) {
         const current = groups.find(g => g.order_number === orderNumber);
@@ -1334,7 +1360,9 @@ import { createRoot } from 'react-dom/client';
         if (!confirmStatusChange(current.status, newStatus)) return;
         const prev = groups;
         setMoving(orderNumber);
-        setGroups(list => list.map(g => g.order_number === orderNumber ? { ...g, status: newStatus } : g));
+        setGroups(list => list.map(g => g.order_number === orderNumber
+          ? { ...g, status: newStatus, raw_statuses: [newStatus], status_issue: "" }
+          : g));
         try {
           await api("/api/admin/order", {
             method: "PATCH",
@@ -1352,8 +1380,8 @@ import { createRoot } from 'react-dom/client';
       const byStatus = useMemo(() => {
         const map = {};
         const blank = () => ({ items: [], revenue: 0, profit: 0, client_left: 0, margin_left: 0 });
-        STATUSES.forEach(s => { map[s] = blank(); });
-        groups.forEach(g => {
+        funnelStatuses.forEach(s => { map[s] = blank(); });
+        filteredGroups.forEach(g => {
           if (!map[g.status]) map[g.status] = blank();
           map[g.status].items.push(g);
           if (g.status !== "Скасовано") {
@@ -1364,11 +1392,11 @@ import { createRoot } from 'react-dom/client';
           }
         });
         return map;
-      }, [groups]);
+      }, [filteredGroups, funnelStatuses]);
 
       const grand = useMemo(() => {
         let revenue = 0, profit = 0, count = 0, clientLeft = 0, marginLeft = 0;
-        groups.forEach(g => {
+        filteredGroups.forEach(g => {
           if (g.status === "Скасовано") return;
           count += 1;
           revenue += Number(g.revenue) || 0;
@@ -1377,7 +1405,7 @@ import { createRoot } from 'react-dom/client';
           marginLeft += Number(g.margin_left) || 0;
         });
         return { revenue, profit, count, clientLeft, marginLeft };
-      }, [groups]);
+      }, [filteredGroups]);
 
       return (
         <div>
@@ -1386,6 +1414,7 @@ import { createRoot } from 'react-dom/client';
             <select value={status} onChange={e => setStatus(e.target.value)}>
               <option value="">Усі статуси</option>
               {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              {hasMissingStatus && <option value={MISSING_STATUS}>{MISSING_STATUS}</option>}
             </select>
             <button className="btn secondary" onClick={load} disabled={!!moving}>Оновити</button>
             <button className="btn" onClick={() => setCreating(true)}>+ Нове замовлення</button>
@@ -1407,9 +1436,9 @@ import { createRoot } from 'react-dom/client';
             />
           )}
           {loading && <div className="empty">Завантаження замовлень…</div>}
-          {!loading && !groups.length && <div className="empty">Замовлень не знайдено</div>}
+          {!loading && !filteredGroups.length && <div className="empty">Замовлень не знайдено</div>}
 
-          {!loading && groups.length > 0 && (
+          {!loading && filteredGroups.length > 0 && (
             <div className="orders-totals">
               <div className="ot-item">
                 <div className="ot-label">Замовлень (без скасованих)</div>
@@ -1439,17 +1468,21 @@ import { createRoot } from 'react-dom/client';
 
           {!loading && view === "kanban" && (
             <div className="kanban">
-              {STATUSES.map(s => (
+              {funnelStatuses.map(s => (
                 <div
                   className={"col " + statusClass(s) + (dragOver === s ? " drag-over" : "")}
                   key={s}
-                  onDragOver={e => { e.preventDefault(); setDragOver(s); }}
+                  onDragOver={e => {
+                    if (s === MISSING_STATUS) return;
+                    e.preventDefault();
+                    setDragOver(s);
+                  }}
                   onDragLeave={() => setDragOver(cur => cur === s ? "" : cur)}
                   onDrop={e => {
                     e.preventDefault();
                     setDragOver("");
                     const num = e.dataTransfer.getData("text/order") || dragOrderRef.current;
-                    if (num) moveToStatus(num, s);
+                    if (num && s !== MISSING_STATUS) moveToStatus(num, s);
                   }}
                 >
                   <h3>
@@ -1498,6 +1531,7 @@ import { createRoot } from 'react-dom/client';
                         }}
                       >
                         <div className="num">{g.order_number}</div>
+                        {g.status === MISSING_STATUS && <div className="meta" style={{ color: "#b54842" }}>{g.status_issue}</div>}
                         <div className="meta">{g.client}<br /><ContactLinks order={g} onClickStop /><br />{g.city || "—"}</div>
                         <div className="money">{money(g.revenue)}</div>
                         <div className="meta">Маржа: {money(g.profit)}</div>
@@ -1524,6 +1558,7 @@ import { createRoot } from 'react-dom/client';
                             moveToStatus(g.order_number, e.target.value);
                           }}
                         >
+                          {g.status === MISSING_STATUS && <option value={MISSING_STATUS} disabled>{MISSING_STATUS}</option>}
                           {STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
                         </select>
                       </div>
@@ -1536,7 +1571,7 @@ import { createRoot } from 'react-dom/client';
 
           {!loading && view === "list" && (
             <div className="list">
-              {groups.map(g => (
+              {filteredGroups.map(g => (
                 <div key={g.order_number} className="row-card" onClick={() => onOpenOrder(g.order_number)}>
                   <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
                   <div>{g.client}<div style={{ marginTop: 4 }}><ContactLinks order={g} onClickStop /></div></div>
@@ -1570,6 +1605,7 @@ import { createRoot } from 'react-dom/client';
       "Відправлено": "#a855f7",
       "Завершено": "#22c55e",
       "Скасовано": "#9ca3af",
+      [MISSING_STATUS]: "#dc2626",
     };
 
     function MonthlyBarsChart({ monthly }) {
@@ -1605,12 +1641,13 @@ import { createRoot } from 'react-dom/client';
     }
 
     function StatusBarsChart({ byStatus }) {
-      const max = Math.max(1, ...STATUSES.map(s => (byStatus && byStatus[s]) || 0));
-      const total = STATUSES.reduce((s, name) => s + ((byStatus && byStatus[name]) || 0), 0);
+      const statuses = (byStatus && byStatus[MISSING_STATUS]) ? DISPLAY_STATUSES : STATUSES;
+      const max = Math.max(1, ...statuses.map(s => (byStatus && byStatus[s]) || 0));
+      const total = statuses.reduce((s, name) => s + ((byStatus && byStatus[name]) || 0), 0);
       return (
         <div className="chart-wrap status-chart">
           <div className="status-list">
-            {STATUSES.map(s => {
+            {statuses.map(s => {
               const n = (byStatus && byStatus[s]) || 0;
               const pct = n ? Math.max(6, Math.round((n / max) * 100)) : 0;
               return (
@@ -2113,7 +2150,7 @@ import { createRoot } from 'react-dom/client';
             </div>
             <div className="toolbar" style={{ marginBottom: 0 }}>
               <input type="search" placeholder="Пошук: телефон або імʼя…" value={q} onChange={e => setQ(e.target.value)} />
-              <button className="btn secondary" onClick={() => refreshOrders({})}>Оновити</button>
+              <button className="btn secondary" onClick={refreshOrders}>Оновити</button>
               <span style={{ color: "var(--muted)", fontSize: 13 }}>{filtered.length} клієнтів</span>
             </div>
           </div>
@@ -2223,17 +2260,13 @@ import { createRoot } from 'react-dom/client';
         return () => window.removeEventListener("admin-unauthorized", onUnauthorized);
       }, []);
 
-      async function refreshOrders(filters = {}) {
+      async function refreshOrders() {
         if (!token) return;
         setDataLoading(true);
         setOrdersError("");
         try {
-          const qs = new URLSearchParams();
-          if (filters.q) qs.set("q", filters.q);
-          if (filters.status) qs.set("status", filters.status);
-          const suffix = qs.toString() ? ("?" + qs.toString()) : "";
-          const data = await api("/api/admin/orders" + suffix, { token });
-          setGroups((data.groups || []).map(g => ({ ...g, status: normalizeStatus(g.status) })));
+          const data = await api("/api/admin/orders", { token });
+          setGroups(normalizeOrderGroups(data));
         } catch (e) {
           setOrdersError(e.message);
           throw e;
@@ -2249,7 +2282,7 @@ import { createRoot } from 'react-dom/client';
       }
 
       async function refreshData() {
-        await Promise.all([refreshOrders({}), refreshExpenses()]);
+        await Promise.all([refreshOrders(), refreshExpenses()]);
       }
 
       function openOrder(num) {

@@ -65,12 +65,14 @@ function doPost(e) {
 
     var written = writeOrderToSheet_(data);
 
-    addDeliveryEvent(data); // подія в Google Календарі + нагадування (за 2 дні і в день о 08:30)
+    if (!written.duplicate) {
+      addDeliveryEvent(data); // подія в Google Календарі + нагадування (за 2 дні і в день о 08:30)
+    }
     // У групу підрядника замовлення НЕ йде автоматично — лише коли менеджер
     // поставить статус «В роботі» (див. onEditDelivery). Так підрядник не бачить
     // попередніх/неопрацьованих запитів.
 
-    return jsonOut({ status: "ok", order_number: written.order_number, row: written.row });
+    return jsonOut({ status: "ok", order_number: written.order_number, row: written.row, duplicate: !!written.duplicate });
   } catch (error) {
     return jsonOut({ status: "error", message: error.toString() });
   } finally {
@@ -93,7 +95,21 @@ function writeOrderToSheet_(data) {
     if (!ss.getSheetByName(SHEET_DROP)) setupDropshippers(ss);
     ensureDiscountColumns_(sheet);
 
-    data.order_number = nextOrderNumber();
+    var requestId = String(data.request_id || "").trim().substring(0, 120);
+    if (requestId && sheet.getLastRow() >= 2) {
+      var existingIds = sheet.getRange(2, 45, sheet.getLastRow() - 1, 1).getValues();
+      var existingRows = [];
+      for (var ei = 0; ei < existingIds.length; ei++) {
+        if (String(existingIds[ei][0] || "").trim() === requestId) existingRows.push(ei + 2);
+      }
+      if (existingRows.length) {
+        var existingNumber = String(sheet.getRange(existingRows[0], 1).getValue() || "").trim();
+        if (!existingNumber) throw new Error("ID запиту вже використано без номера замовлення");
+        data.order_number = existingNumber;
+        return { order_number: existingNumber, row: existingRows[0], rows: existingRows, duplicate: true };
+      }
+    }
+
     var patternFileInfo = getPatternFileInfo_(data);
 
     var MARKUP = 1 / (1 - 0.2593);
@@ -113,6 +129,25 @@ function writeOrderToSheet_(data) {
     var dateStr = Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm");
     var lastRow = sheet.getLastRow();
     var writtenRows = [];   // номери рядків по позиціях — потрібні CRM для фінансів кожної позиції
+
+    // Перевіряємо весь набір до першого запису, щоб помилка в одній позиції не
+    // залишила в таблиці частково створене багатопозиційне замовлення.
+    itemsIn.forEach(function (it) {
+      var qty = Number(it.quantity == null || it.quantity === "" ? 1 : it.quantity);
+      if (!isFinite(qty) || qty < 1) throw new Error("Кількість мусить бути не меншою за 1");
+      ["price_total", "cost_total", "list_price", "discount_pct", "discount_uah"].forEach(function (key) {
+        if (it[key] == null || it[key] === "") return;
+        var value = Number(it[key]);
+        if (!isFinite(value) || value < 0) throw new Error(key + " мусить бути невідʼємним числом");
+        if (key === "discount_pct" && value > 100) throw new Error("Знижка не може перевищувати 100%");
+      });
+      if (it.list_price != null && it.list_price !== "" && it.discount_uah != null && it.discount_uah !== "" && Number(it.discount_uah) > Number(it.list_price)) {
+        throw new Error("Знижка ₴ не може перевищувати роздрібну ціну");
+      }
+    });
+
+    // Номер резервуємо лише після успішної перевірки всіх позицій.
+    data.order_number = nextOrderNumber();
 
     itemsIn.forEach(function (it) {
       var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
@@ -198,7 +233,7 @@ function writeOrderToSheet_(data) {
         cm === "telegram" ? String(data.contact_telegram || "").replace(/^@/, "") : "",
         cm === "email" ? String(data.contact_email || "").trim() : ""
       ]]);
-      // AO–AR (41–44): виріб, його вид, характеристики та одиниця виміру.
+      // AO–AS (41–45): виріб, вид, характеристики, одиниця та ID запиту.
       // Вид пишемо явно, щоб підрядник і CRM не вгадували його з тексту конструкції.
       var kind = it.product_type === "bracket" ? "Кронштейни"
                : it.product_type === "other" ? "Інший виріб" : "Кошик";
@@ -209,6 +244,7 @@ function writeOrderToSheet_(data) {
         String(it.specs || ""),
         unit || "шт."
       ]]);
+      sheet.getRange(lastRow, 45).setValue(requestId);
       writtenRows.push(lastRow);
       var rr = sheet.getRange(lastRow, 1, 1, row.length);
       rr.setVerticalAlignment("middle").setWrap(true);
@@ -227,9 +263,9 @@ function writeOrderToSheet_(data) {
 }
 
 function findLastRealOrderRow_(sheet) {
-  var last = Math.max(sheet.getLastRow(), 2);
+  var last = sheet.getLastRow();
   if (last < 2) return 1;
-  var values = sheet.getRange(2, 1, last, 1).getValues();
+  var values = sheet.getRange(2, 1, last - 1, 1).getValues();
   for (var i = values.length - 1; i >= 0; i--) {
     if (/^ORD-\d{6}-\d{3}$/.test(String(values[i][0] || "").trim())) {
       return i + 2;
@@ -727,7 +763,7 @@ function buildOrderFromRows_(sh, orderNumber) {
   var last = sh.getLastRow();
   if (last < 2) return null;
   var ncol = Math.min(44, sh.getMaxColumns()); // 44 = AR «Одиниця виміру»
-  var vals = sh.getRange(2, 1, last, ncol).getValues();
+  var vals = sh.getRange(2, 1, last - 1, ncol).getValues();
   var order = null;
   for (var i = 0; i < vals.length; i++) {
     var r = vals[i];
@@ -1218,12 +1254,13 @@ function setupOrders(sheet) {
     "Модель / виріб",    // AO (41): модель кошика (AVL-0X) або назва довільного виробу
     "Вид виробу",        // AP (42): Кошик / Кронштейни / Інший виріб
     "Характеристики",    // AQ (43): опис довільного виробу (пергола, стенд тощо)
-    "Одиниця виміру"     // AR (44): шт. / комп. / довільне значення
+    "Одиниця виміру",    // AR (44): шт. / комп. / довільне значення
+    "ID запиту"          // AS (45): захист від дублювання після мережевого тайм-ауту
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -1798,34 +1835,21 @@ function adminAddPayment_(data) {
 function adminDeletePayment_(data) {
   var row = Number((data && data.row) || 0);
   if (!(row >= 2)) throw new Error("Вкажіть рядок платежу");
+  var expectedOrder = String((data && data.order_number) || "").trim();
+  if (!expectedOrder) throw new Error("Вкажіть номер замовлення платежу");
   var sh = paymentsSheet_();
+  if (row > sh.getLastRow()) throw new Error("Платіж уже видалено або список змінився");
   var num = String(sh.getRange(row, 2).getValue() || "").trim();
+  if (num !== expectedOrder) throw new Error("Список платежів змінився. Оновіть картку й повторіть видалення");
   sh.deleteRow(row);
   var summary = num ? syncOrderPaymentState_(num) : null;
   SpreadsheetApp.flush();
   return { status: "ok", summary: summary, payments: num ? readPayments_(num) : [] };
 }
 
-/** Коротке повідомлення власнику про внесений платіж (не валить операцію при збої). */
-function notifyPaymentAdded_(num, type, amount, summary) {
-  try {
-    var msg = "💵 <b>Платіж</b> · " + esc_(num) + "\n" + esc_(type) + ": <b>" + money_(amount) + " ₴</b>";
-    if (summary) {
-      if (type === "Маржа від підрядника") {
-        msg += "\nМаржа: отримано " + money_(summary.margin_received) + " ₴ з " + money_(summary.profit) + " ₴";
-        if (summary.margin_left > 0) msg += " · залишок <b>" + money_(summary.margin_left) + " ₴</b>";
-      } else {
-        msg += "\nКлієнт: сплатив " + money_(summary.client_paid) + " ₴ з " + money_(summary.revenue) + " ₴";
-        if (summary.client_left > 0) msg += " · залишок <b>" + money_(summary.client_left) + " ₴</b>";
-      }
-    }
-    notifyOwner_(msg);
-  } catch (err) { /* сповіщення не критичне */ }
-}
-
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 44; // A–AR (контакт AL–AN; виріб AO; вид AP; характеристики AQ; одиниця AR)
+var ADMIN_ORDER_COLS = 45; // A–AS (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS)
 var STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
 
 function applyStatusSideEffects_(sh, row, newStatus) {
@@ -1882,14 +1906,13 @@ function ensureDiscountColumns_(sheet) {
 
 function ensureDiscountColumnsOnce_() {
   var props = PropertiesService.getScriptProperties();
-  // V4: після додавання AR «Одиниця виміру» заголовки треба проставити ще раз
-  // на наявній таблиці (старий прапорець V3 уже стоїть у production).
-  if (props.getProperty("ORDERS_COLS_V4_READY") === "1") return;
+  // V5: після додавання AS «ID запиту» заголовки треба проставити ще раз.
+  if (props.getProperty("ORDERS_COLS_V5_READY") === "1") return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) return;
   ensureDiscountColumns_(sheet);
-  props.setProperty("ORDERS_COLS_V4_READY", "1");
+  props.setProperty("ORDERS_COLS_V5_READY", "1");
 }
 
 /** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
@@ -1908,13 +1931,14 @@ function ensureContactColumns_(sheet) {
     sheet.setColumnWidth(39, 120);
     sheet.setColumnWidth(40, 160);
   }
-  // AO–AR (41–44): виріб, його вид, характеристики та одиниця — самозаповнюються на наявній
+  // AO–AS (41–45): виріб, вид, характеристики, одиниця та ID запиту.
   // таблиці, щоб не вимагати ручного перезапуску setupOrders після зміни схеми.
   var extra = [
     { col: 41, title: "Модель / виріб", key: "Модель", width: 170 },
     { col: 42, title: "Вид виробу", key: "Вид", width: 120 },
     { col: 43, title: "Характеристики", key: "Характеристик", width: 320 },
-    { col: 44, title: "Одиниця виміру", key: "Одиниц", width: 120 }
+    { col: 44, title: "Одиниця виміру", key: "Одиниц", width: 120 },
+    { col: 45, title: "ID запиту", key: "ID запиту", width: 210 }
   ];
   extra.forEach(function (e) {
     var head = String(sheet.getRange(1, e.col).getValue() || "");
@@ -1954,7 +1978,6 @@ function handleAdminRequest_(data) {
     if (action === "list_payments") return jsonOut(adminListPayments_(data));
     if (action === "add_payment") return jsonOut(adminAddPayment_(data));
     if (action === "delete_payment") return jsonOut(adminDeletePayment_(data));
-    if (action === "dashboard") return jsonOut(adminDashboard_());
     if (action === "list_partners") return jsonOut(adminListPartners_());
     if (action === "upsert_partner") return jsonOut(adminUpsertPartner_(data.partner || data));
     if (action === "list_expenses") return jsonOut(adminListExpenses_(data));
@@ -2054,7 +2077,8 @@ function mapOrderRow_(rowIndex, v) {
     margin_paid: cellBool_(v[33]),
     list_price: cellNum_(v[34]),
     discount_pct: cellNum_(v[35]),
-    discount_uah: cellNum_(v[36])
+    discount_uah: cellNum_(v[36]),
+    request_id: String(v[44] || "")
   };
 }
 
@@ -2062,7 +2086,7 @@ function adminListOrders_(data) {
   var sheet = adminOrdersSheet_();
   var last = sheet.getLastRow();
   if (last < 2) return { status: "ok", orders: [], groups: [] };
-  var values = sheet.getRange(2, 1, last, ADMIN_ORDER_COLS).getValues();
+  var values = sheet.getRange(2, 1, last - 1, ADMIN_ORDER_COLS).getValues();
   var q = String(data.q || "").trim().toLowerCase();
   var statusFilter = String(data.status || "").trim();
   var orders = [];
@@ -2188,6 +2212,18 @@ function applyFinanceToRow_(sh, row, patch) {
   var discountUah = patch.discount_uah != null ? Math.round(Number(patch.discount_uah)) : cellNum_(sh.getRange(row, 37).getValue());
   var revenue = patch.revenue != null ? Math.round(Number(patch.revenue)) : cellNum_(sh.getRange(row, 22).getValue());
 
+  [
+    { value: costTotal, label: "Собівартість" },
+    { value: listPrice, label: "Роздрібна ціна" },
+    { value: discountPct, label: "Знижка %" },
+    { value: discountUah, label: "Знижка ₴" },
+    { value: revenue, label: "Виручка" }
+  ].forEach(function (x) {
+    if (x.value != null && (!isFinite(x.value) || x.value < 0)) throw new Error(x.label + " не може бути відʼємною");
+  });
+  if (discountPct != null && discountPct > 100) throw new Error("Знижка не може перевищувати 100%");
+  if (listPrice != null && discountUah != null && discountUah > listPrice) throw new Error("Знижка ₴ не може перевищувати роздрібну ціну");
+
   if (listPrice != null && listPrice >= 0) {
     if (discountPct != null && discountPct > 0) {
       discountUah = Math.round(listPrice * (discountPct / 100));
@@ -2276,10 +2312,18 @@ function adminCreateOrder_(data) {
     payment_method: src.payment_method || "",
     how_found: src.how_found || "", how_found_custom: src.how_found_custom || "",
     notes: src.notes || "",
+    request_id: String(src.request_id || "").trim(),
     items: items
   };
 
   var written = writeOrderToSheet_(order);
+  if (written.duplicate) {
+    var existing = adminGetOrder_({ order_number: written.order_number });
+    existing.order_number = written.order_number;
+    existing.row = written.row;
+    existing.duplicate = true;
+    return existing;
+  }
 
   // Роздрібна ціна / знижка (колонки AI–AK) живуть окремо від запису рядка — застосовуємо
   // ТИМ САМИМ кодом, що й правка фінансів у кабінеті, щоб виручка = прайс − знижка.
@@ -2315,10 +2359,23 @@ function adminUpdateOrder_(data) {
   delete patch.admin_secret;
   delete patch.row;
 
+  if (patch.status != null && STATUSES.indexOf(String(patch.status).trim()) < 0) {
+    throw new Error("Невідомий статус");
+  }
+  ["cost_total", "list_price", "discount_pct", "discount_uah", "revenue"].forEach(function (key) {
+    if (patch[key] == null) return;
+    var value = Number(patch[key]);
+    if (!isFinite(value) || value < 0) throw new Error(key + " мусить бути невідʼємним числом");
+    if (key === "discount_pct" && value > 100) throw new Error("Знижка не може перевищувати 100%");
+  });
+  if (patch.list_price != null && patch.discount_uah != null && Number(patch.discount_uah) > Number(patch.list_price)) {
+    throw new Error("Знижка ₴ не може перевищувати роздрібну ціну");
+  }
+
   var sh = adminOrdersSheet_();
   var last = sh.getLastRow();
   if (last < 2) throw new Error("Немає замовлень");
-  var nums = sh.getRange(2, 1, last, 1).getValues();
+  var nums = sh.getRange(2, 1, last - 1, 1).getValues();
   var targetRows = [];
   for (var i = 0; i < nums.length; i++) {
     if (String(nums[i][0] || "").trim() === orderNumber) targetRows.push(i + 2);
@@ -2346,15 +2403,15 @@ function adminUpdateOrder_(data) {
   }
 
   // ── Характеристики позиції: лише цей рядок ──
-  var itemTouched = false;
+  var pricingItemTouched = false;
   var ITEM_TEXT = { basket_type: 8, construction: 9, color: 10, pattern: 11,
                     ac_brand: 12, ac_model: 13, basket_model: 41,
                     product_kind: 42, specs: 43, unit: 44 };
   Object.keys(ITEM_TEXT).forEach(function (key) {
     if (patch[key] == null) return;
     sh.getRange(row, ITEM_TEXT[key]).setValue(String(patch[key]));
-    // Одиниця — лише підпис кількості; її зміна не повинна перетирати ручні фінанси.
-    if (key !== "unit") itemTouched = true;
+    // Назва, колір, характеристики та одиниця не змінюють формулу ціни.
+    if (["basket_type", "construction", "pattern", "product_kind"].indexOf(key) >= 0) pricingItemTouched = true;
   });
   var ITEM_NUM = { size_w: 14, size_h: 15, size_d: 16, quantity: 17 };
   Object.keys(ITEM_NUM).forEach(function (key) {
@@ -2363,11 +2420,11 @@ function adminUpdateOrder_(data) {
     if (key === "quantity") num = (num >= 1) ? Math.round(num) : 1;
     else if (!(num > 0)) num = "";
     sh.getRange(row, ITEM_NUM[key]).setValue(num);
-    itemTouched = true;
+    pricingItemTouched = true;
   });
   // Зміна розмірів/типу/візерунка перераховує гроші тією ж логікою, що й правка руками
   // в таблиці. Якщо в цьому ж запиті задана ціна — applyFinanceToRow_ нижче переважить.
-  if (itemTouched) recalcRow_(sh, row);
+  if (pricingItemTouched) recalcRow_(sh, row);
 
   var financeTouched = ["cost_total", "list_price", "discount_pct", "discount_uah", "revenue"].some(function (k) {
     return patch[k] != null;
@@ -2375,13 +2432,12 @@ function adminUpdateOrder_(data) {
   if (financeTouched) applyFinanceToRow_(sh, row, patch);
   // Виручка/прибуток змінились → пороги «оплачено повністю» інші, тож галочки
   // AG/AH треба перерахувати за фактичними платежами (їх читає і зведення).
-  if (financeTouched || itemTouched) {
+  if (financeTouched || pricingItemTouched) {
     try { syncOrderPaymentState_(orderNumber); } catch (syncErr) { /* не валимо правку */ }
   }
 
   if (patch.status != null) {
     var st = String(patch.status).trim();
-    if (STATUSES.indexOf(st) < 0) throw new Error("Невідомий статус");
     // Оновлюємо статус у всіх рядках цього замовлення.
     targetRows.forEach(function (r) { sh.getRange(r, 3).setValue(st); });
     if (st !== oldStatus) applyStatusSideEffects_(sh, row, st);
@@ -2409,111 +2465,13 @@ function adminUpdateOrder_(data) {
   return adminGetOrder_({ order_number: orderNumber });
 }
 
-function adminDashboard_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sh = adminOrdersSheet_();
-  var last = sh.getLastRow();
-  var totals = {
-    revenue: 0, cost: 0, profit: 0, commission: 0,
-    margin_ready: 0, margin_received: 0, margin_debt: 0,
-    by_status: {}
-  };
-  STATUSES.forEach(function (s) { totals.by_status[s] = 0; });
-
-  if (last >= 2) {
-    var values = sh.getRange(2, 1, last, ADMIN_ORDER_COLS).getValues();
-    var seenOrders = {};
-    for (var i = 0; i < values.length; i++) {
-      var num = String(values[i][0] || "");
-      if (!/^ORD-\d{6}-\d{3}$/.test(num)) continue;
-      var status = String(values[i][2] || "");
-      // Рахуємо замовлення (картки), а не рядки-позиції.
-      if (!seenOrders[num]) {
-        seenOrders[num] = true;
-        if (totals.by_status[status] != null) totals.by_status[status] += 1;
-      }
-      if (status === "Скасовано") continue;
-      var cost = Number(values[i][19]) || 0;
-      var revenue = Number(values[i][21]) || 0;
-      var profit = Number(values[i][22]) || 0;
-      var commission = Number(values[i][24]) || 0;
-      var clientPaid = cellBool_(values[i][32]);
-      var marginPaid = cellBool_(values[i][33]);
-      totals.revenue += revenue;
-      totals.cost += cost;
-      totals.profit += profit;
-      totals.commission += commission;
-      if (clientPaid) totals.margin_ready += profit;
-      if (marginPaid) totals.margin_received += profit;
-      if (clientPaid && !marginPaid) totals.margin_debt += profit;
-    }
-  }
-
-  var expensesTotal = 0;
-  var expSh = ss.getSheetByName(SHEET_EXPENSES);
-  if (expSh && expSh.getLastRow() >= 2) {
-    var expLast = expSh.getLastRow();
-    var exp = expSh.getRange(2, 4, expLast, 1).getValues();
-    for (var e = 0; e < exp.length; e++) expensesTotal += Number(exp[e][0]) || 0;
-  }
-
-  totals.expenses = expensesTotal;
-  totals.margin_pct = totals.revenue ? Math.round((totals.profit / totals.revenue) * 1000) / 10 : 0;
-  totals.net_fact = totals.margin_received - totals.commission - expensesTotal;
-
-  // Помісячно (останні 6 ключів з номерів замовлень).
-  var monthlyMap = {};
-  if (last >= 2) {
-    var vals = sh.getRange(2, 1, last, ADMIN_ORDER_COLS).getValues();
-    for (var j = 0; j < vals.length; j++) {
-      var n = String(vals[j][0] || "");
-      if (!/^ORD-\d{6}-\d{3}$/.test(n)) continue;
-      if (String(vals[j][2] || "") === "Скасовано") continue;
-      var mk = n.slice(6, 8) + ".20" + n.slice(8, 10); // MM.YYYY
-      if (!monthlyMap[mk]) monthlyMap[mk] = { month: mk, revenue: 0, cost: 0, profit: 0, commission: 0, margin_received: 0, margin_debt: 0, expenses: 0 };
-      var m = monthlyMap[mk];
-      m.revenue += Number(vals[j][21]) || 0;
-      m.cost += Number(vals[j][19]) || 0;
-      m.profit += Number(vals[j][22]) || 0;
-      m.commission += Number(vals[j][24]) || 0;
-      if (cellBool_(vals[j][33])) m.margin_received += Number(vals[j][22]) || 0;
-      if (cellBool_(vals[j][32]) && !cellBool_(vals[j][33])) m.margin_debt += Number(vals[j][22]) || 0;
-    }
-  }
-  if (expSh && expSh.getLastRow() >= 2) {
-    var erows = expSh.getRange(2, 1, expSh.getLastRow(), 4).getValues();
-    for (var x = 0; x < erows.length; x++) {
-      var iso = toISODate(erows[x][0]);
-      if (!iso) continue;
-      var parts = iso.split("-");
-      var key = parts[1] + "." + parts[0];
-      if (!monthlyMap[key]) monthlyMap[key] = { month: key, revenue: 0, cost: 0, profit: 0, commission: 0, margin_received: 0, margin_debt: 0, expenses: 0 };
-      monthlyMap[key].expenses += Number(erows[x][3]) || 0;
-    }
-  }
-  var monthly = Object.keys(monthlyMap).map(function (k) {
-    var row = monthlyMap[k];
-    row.margin_pct = row.revenue ? Math.round((row.profit / row.revenue) * 1000) / 10 : 0;
-    row.net_fact = row.margin_received - row.commission - row.expenses;
-    return row;
-  }).sort(function (a, b) {
-    var ap = String(a.month).split(".");
-    var bp = String(b.month).split(".");
-    var ay = Number(ap[1]) || 0, by = Number(bp[1]) || 0;
-    var am = Number(ap[0]) || 0, bm = Number(bp[0]) || 0;
-    return (by - ay) || (bm - am);
-  }).slice(0, 6);
-
-  return { status: "ok", totals: totals, monthly: monthly };
-}
-
 function adminListPartners_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(SHEET_DROP);
   if (!sh) return { status: "ok", partners: [] };
   var last = sh.getLastRow();
   if (last < 2) return { status: "ok", partners: [] };
-  var values = sh.getRange(2, 1, last, 10).getValues();
+  var values = sh.getRange(2, 1, last - 1, 10).getValues();
   var partners = [];
   for (var i = 0; i < values.length; i++) {
     var code = String(values[i][0] || "").trim();
@@ -2543,7 +2501,7 @@ function adminUpsertPartner_(p) {
   var code = String(p.code).trim();
   var target = 0;
   if (last >= 2) {
-    var codes = sh.getRange(2, 1, last, 1).getValues();
+    var codes = sh.getRange(2, 1, last - 1, 1).getValues();
     for (var i = 0; i < codes.length; i++) {
       if (String(codes[i][0] || "").trim() === code) { target = i + 2; break; }
     }
@@ -2570,7 +2528,7 @@ function adminListExpenses_(data) {
   var last = sh.getLastRow();
   if (last < 2) return { status: "ok", expenses: [] };
   var month = String(data.month || "").trim(); // MM.YYYY
-  var values = sh.getRange(2, 1, last, 5).getValues();
+  var values = sh.getRange(2, 1, last - 1, 5).getValues();
   var expenses = [];
   for (var i = 0; i < values.length; i++) {
     var iso = toISODate(values[i][0]);
@@ -2595,6 +2553,7 @@ function adminListExpenses_(data) {
 
 function adminAddExpense_(ex) {
   if (!ex || ex.amount == null) throw new Error("amount required");
+  if (!(Number(ex.amount) > 0)) throw new Error("Сума витрати мусить бути більшою за нуль");
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(SHEET_EXPENSES) || setupExpenses(ss);
   var last = Math.max(sh.getLastRow(), 1);
@@ -2618,7 +2577,8 @@ function adminUpdateExpense_(ex) {
   var sh = ss.getSheetByName(SHEET_EXPENSES);
   if (!sh) throw new Error("Аркуш витрат не знайдено");
   var row = Number(ex.row);
-  if (row < 2) throw new Error("invalid row");
+  if (row < 2 || row > sh.getLastRow()) throw new Error("invalid row");
+  if (ex.amount != null && !(Number(ex.amount) > 0)) throw new Error("Сума витрати мусить бути більшою за нуль");
   var dateVal = ex.date != null ? (toISODate(ex.date) || String(ex.date)) : null;
   if (dateVal) {
     var parts = String(dateVal).slice(0, 10).split("-");
@@ -2638,7 +2598,7 @@ function adminListPayouts_() {
   if (!sh) return { status: "ok", payouts: [] };
   var last = sh.getLastRow();
   if (last < 2) return { status: "ok", payouts: [] };
-  var values = sh.getRange(2, 1, last, 6).getValues();
+  var values = sh.getRange(2, 1, last - 1, 6).getValues();
   var payouts = [];
   for (var i = 0; i < values.length; i++) {
     var code = String(values[i][1] || "").trim();
@@ -2659,6 +2619,7 @@ function adminListPayouts_() {
 
 function adminAddPayout_(p) {
   if (!p || !p.code || p.amount == null) throw new Error("code and amount required");
+  if (!(Number(p.amount) > 0)) throw new Error("Сума виплати мусить бути більшою за нуль");
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(SHEET_PAYOUTS) || setupPayouts(ss);
   var last = Math.max(sh.getLastRow(), 1);

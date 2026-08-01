@@ -30,6 +30,7 @@
       --st-ship-bg: rgba(168, 85, 247, 0.08); --st-ship-fg: #6b21a8;
       --st-done-bg: rgba(34, 197, 94, 0.08); --st-done-fg: #1b7a4a;
       --st-cancel-bg: rgba(156, 163, 175, 0.10); --st-cancel-fg: #6b7280;
+      --st-missing-bg: rgba(220, 38, 38, 0.08); --st-missing-fg: #b42318;
       /* Бейджі трохи насиченіші за колонки, щоб читались */
       --st-new-chip: rgba(230, 184, 0, 0.20);
       --st-work-chip: rgba(59, 130, 246, 0.18);
@@ -37,6 +38,7 @@
       --st-ship-chip: rgba(168, 85, 247, 0.18);
       --st-done-chip: rgba(34, 197, 94, 0.18);
       --st-cancel-chip: rgba(156, 163, 175, 0.22);
+      --st-missing-chip: rgba(220, 38, 38, 0.16);
     }
     * {
       box-sizing: border-box;
@@ -281,7 +283,6 @@
       font-size: 12px; font-weight: 650; background: #eef1f3; color: var(--ink);
     }
     .quick-actions button.active { background: var(--brand); color: #fff; }
-    .quick-actions button.ok { background: rgba(27, 122, 74, 0.14); color: var(--ok); }
     .quick-actions button.warn { background: rgba(154, 103, 0, 0.14); color: var(--warn); }
     .remind-list { display: grid; gap: 8px; }
     .remind-item {
@@ -297,6 +298,7 @@
     .remind-item .tag.debt { color: var(--warn); background: rgba(154, 103, 0, 0.12); }
     .remind-item .tag.stuck { color: var(--st-work-fg); background: var(--st-work-chip); }
     .remind-item .tag.ship { color: var(--st-ship-fg); background: var(--st-ship-chip); }
+    .remind-item .tag.data { color: var(--st-missing-fg); background: var(--st-missing-chip); }
     .col.st-new { background: var(--st-new-bg); }
     .col.st-new h3 { color: var(--st-new-fg); }
     .col.st-work { background: var(--st-work-bg); }
@@ -309,6 +311,8 @@
     .col.st-done h3 { color: var(--st-done-fg); }
     .col.st-cancel { background: var(--st-cancel-bg); }
     .col.st-cancel h3 { color: var(--st-cancel-fg); }
+    .col.st-missing { background: var(--st-missing-bg); }
+    .col.st-missing h3 { color: var(--st-missing-fg); }
     .card {
       background: var(--panel); border: 0; border-radius: 12px;
       padding: 12px; box-shadow: var(--shadow); cursor: pointer; text-align: left;
@@ -365,6 +369,7 @@
     .badge.st-ship { background: var(--st-ship-chip); color: var(--st-ship-fg); }
     .badge.st-done { background: var(--st-done-chip); color: var(--st-done-fg); }
     .badge.st-cancel { background: var(--st-cancel-chip); color: var(--st-cancel-fg); }
+    .badge.st-missing { background: var(--st-missing-chip); color: var(--st-missing-fg); }
     .section-title { margin: 18px 0 10px; font-size: 13px; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
     .empty { color: var(--muted); font-size: 14px; padding: 24px; text-align: center; }
     .alias { color: var(--muted); font-size: 12px; }
