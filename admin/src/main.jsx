@@ -12,6 +12,8 @@ import {
   List,
   ListFilter,
   LogOut,
+  PanelTopClose,
+  PanelTopOpen,
   Plus,
   RefreshCw,
   Search,
@@ -58,6 +60,7 @@ import finance from '../../lib/admin-finance.js';
     const PAYMENT_TYPES = ["Передоплата","Доплата","Оплата повністю","Маржа від підрядника","Повернення клієнту"];
     const PAYMENT_METHODS = ["Готівка","На карту","На рахунок ФО-П","На рахунок ТОВ","Накладений платіж","Інше"];
     const TOKEN_KEY = "avalon_admin_token";
+    const CARDS_COLLAPSED_KEY = "avalon_admin_cards_collapsed_v1";
     const ICON_COMPONENTS = {
       search: Search,
       filter: ListFilter,
@@ -75,6 +78,8 @@ import finance from '../../lib/admin-finance.js';
       info: Info,
       close: X,
       check: Check,
+      collapseCards: PanelTopClose,
+      expandCards: PanelTopOpen,
     };
     const NAV_ITEMS = [
       { id: "orders", label: "Замовлення", icon: "orders" },
@@ -570,12 +575,13 @@ import finance from '../../lib/admin-finance.js';
       return d;
     }
     function formatPhoneDisplay(key, raw) {
-      if (raw && String(raw).trim()) return String(raw).trim();
-      if (!key) return "—";
-      if (key.length === 12 && key.indexOf("380") === 0) {
-        return "+" + key.slice(0, 3) + " " + key.slice(3, 5) + " " + key.slice(5, 8) + " " + key.slice(8);
+      const normalized = normalizePhone(key || raw);
+      if (!normalized) return "—";
+      if (normalized.length === 12 && normalized.indexOf("380") === 0) {
+        return "+380 " + normalized.slice(3, 5) + " " + normalized.slice(5, 8) + " "
+          + normalized.slice(8, 10) + " " + normalized.slice(10, 12);
       }
-      return key;
+      return String(raw || key || normalized).trim();
     }
     function telegramHandle(v) {
       return String(v || "").trim().replace(/^https?:\/\/(?:www\.)?t\.me\//i, "").replace(/^@/, "").replace(/\?.*$/, "");
@@ -597,6 +603,7 @@ import finance from '../../lib/admin-finance.js';
       const method = resolveContactMethod(order);
       const phone = String(order?.phone || "").trim();
       const dial = telHref(phone);
+      const phoneLabel = formatPhoneDisplay(normalizePhone(phone), phone);
       const tg = telegramHandle(order?.contact_telegram);
       const email = String(order?.contact_email || "").trim();
       const actions = [];
@@ -605,11 +612,11 @@ import finance from '../../lib/admin-finance.js';
       };
       if (method === "telegram" && tg) push("https://t.me/" + encodeURIComponent(tg), "@" + tg, true);
       else if (method === "email" && email) push("mailto:" + email, email, false);
-      else if (method === "viber" && dial) push("viber://chat?number=%2B" + normalizePhone(phone), phone || "Viber", false);
-      else if (method === "whatsapp" && dial) push("https://wa.me/" + normalizePhone(phone), phone || "WhatsApp", true);
-      else if (dial) push(dial, phone || "Дзвінок", false);
+      else if (method === "viber" && dial) push("viber://chat?number=%2B" + normalizePhone(phone), phoneLabel, false);
+      else if (method === "whatsapp" && dial) push("https://wa.me/" + normalizePhone(phone), phoneLabel, true);
+      else if (dial) push(dial, phoneLabel, false);
       if (dial && method && !["phone", "viber", "whatsapp"].includes(method)) {
-        push(dial, phone || "Телефон", false);
+        push(dial, phoneLabel, false);
       }
       return actions;
     }
@@ -678,9 +685,6 @@ import finance from '../../lib/admin-finance.js';
         if (g.status !== "Скасовано") {
           c.revenue += Number(g.revenue) || 0;
           c.profit += Number(g.profit) || 0;
-        }
-        if (g.phone && String(g.phone).trim().length > String(c.phone_display || "").length) {
-          c.phone_display = String(g.phone).trim();
         }
       });
       return Object.keys(byPhone).map((key) => {
@@ -1605,8 +1609,25 @@ import finance from '../../lib/admin-finance.js';
       const [dragOver, setDragOver] = useState("");
       const [moving, setMoving] = useState("");
       const [creating, setCreating] = useState(false);
+      const [cardsCollapsed, setCardsCollapsed] = useState(() => {
+        try {
+          return localStorage.getItem(CARDS_COLLAPSED_KEY) === "1";
+        } catch (_) {
+          return false;
+        }
+      });
       const dragOrderRef = useRef("");
       const skipClickRef = useRef(false);
+
+      function toggleCardsCollapsed() {
+        setCardsCollapsed(current => {
+          const next = !current;
+          try {
+            localStorage.setItem(CARDS_COLLAPSED_KEY, next ? "1" : "0");
+          } catch (_) {}
+          return next;
+        });
+      }
 
       async function load() {
         setError("");
@@ -1624,7 +1645,11 @@ import finance from '../../lib/admin-finance.js';
         return groups.filter(g => {
           if (status && g.status !== status) return false;
           if (!needle) return true;
-          const haystack = [g.order_number, g.client, g.phone, g.city, g.contact_telegram, g.contact_email, g.source]
+          const phoneKey = normalizePhone(g.phone);
+          const haystack = [
+            g.order_number, g.client, g.phone, phoneKey, formatPhoneDisplay(phoneKey, g.phone),
+            g.city, g.contact_telegram, g.contact_email, g.source,
+          ]
             .map(v => String(v || "").toLowerCase()).join(" ");
           return haystack.includes(needle);
         });
@@ -1701,9 +1726,20 @@ import finance from '../../lib/admin-finance.js';
                 <span>Нове замовлення</span>
               </button>
             </div>
-            <div className="view-toggle icon-toggle" aria-label="Вигляд замовлень">
-              <IconButton icon="board" label="Воронка" active={view === "kanban"} onClick={() => setView("kanban")} />
-              <IconButton icon="list" label="Список" active={view === "list"} onClick={() => setView("list")} />
+            <div className="orders-view-actions">
+              {view === "kanban" && (
+                <IconButton
+                  icon={cardsCollapsed ? "expandCards" : "collapseCards"}
+                  label={cardsCollapsed ? "Розгорнути картки" : "Згорнути картки"}
+                  active={cardsCollapsed}
+                  aria-pressed={cardsCollapsed}
+                  onClick={toggleCardsCollapsed}
+                />
+              )}
+              <div className="view-toggle icon-toggle" aria-label="Вигляд замовлень">
+                <IconButton icon="board" label="Воронка" active={view === "kanban"} aria-pressed={view === "kanban"} onClick={() => setView("kanban")} />
+                <IconButton icon="list" label="Список" active={view === "list"} aria-pressed={view === "list"} onClick={() => setView("list")} />
+              </div>
             </div>
           </div>
           {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
@@ -1795,7 +1831,9 @@ import finance from '../../lib/admin-finance.js';
                         role="button"
                         tabIndex={0}
                         draggable
-                        className={"card " + statusClass(g.status) + (moving === g.order_number ? " dragging" : "")}
+                        className={"card " + statusClass(g.status)
+                          + (cardsCollapsed ? " is-collapsed" : "")
+                          + (moving === g.order_number ? " dragging" : "")}
                         onDragStart={e => {
                           dragOrderRef.current = g.order_number;
                           e.dataTransfer.setData("text/order", g.order_number);
@@ -1829,36 +1867,42 @@ import finance from '../../lib/admin-finance.js';
                           <ContactLinks order={g} onClickStop />
                           {g.city && <span className="card-city">{g.city}</span>}
                         </div>
-                        <div className="card-finance">
-                          <div><span>Сума</span><strong>{money(g.revenue)}</strong></div>
-                          <div><span>Маржа</span><strong>{money(g.profit)}</strong></div>
-                        </div>
-                        {/* Оплати клієнта: видно борг просто на картці, без відкриття замовлення. */}
-                        {(g.client_paid_sum > 0 || g.client_left > 0) && (
-                          <div className={"card-payment " + (g.client_left > 0 ? "debt" : "paid")}>
-                            {g.client_left > 0
-                              ? "Сплачено " + money(g.client_paid_sum) + " · борг " + money(g.client_left)
-                              : "Сплачено повністю"}
+                        <div className="card-collapse-divider" aria-hidden="true" />
+                        {!cardsCollapsed && (
+                          <div className="card-details">
+                            <div className="card-finance">
+                              <div><span>Сума</span><strong>{money(g.revenue)}</strong></div>
+                              <div><span>Маржа</span><strong>{money(g.profit)}</strong></div>
+                            </div>
+                            {/* Оплати клієнта: видно борг просто на картці, без відкриття замовлення. */}
+                            {(g.client_paid_sum > 0 || g.client_left > 0) && (
+                              <div className={"card-payment " + (g.client_left > 0 ? "debt" : "paid")}>
+                                {g.client_left > 0
+                                  ? "Сплачено " + money(g.client_paid_sum) + " · борг " + money(g.client_left)
+                                  : "Сплачено повністю"}
+                              </div>
+                            )}
+                            {g.margin_left > 0 && g.client_left === 0 && (
+                              <div className="card-payment margin">Маржа до отримання: {money(g.margin_left)}</div>
+                            )}
+                            <select
+                              className="card-status mobile-only"
+                              value={g.status}
+                              aria-label={"Змінити статус " + g.order_number}
+                              disabled={moving === g.order_number}
+                              onClick={e => e.stopPropagation()}
+                              onMouseDown={e => e.stopPropagation()}
+                              onTouchStart={e => e.stopPropagation()}
+                              onChange={e => {
+                                e.stopPropagation();
+                                moveToStatus(g.order_number, e.target.value);
+                              }}
+                            >
+                              {g.status === MISSING_STATUS && <option value={MISSING_STATUS} disabled>{MISSING_STATUS}</option>}
+                              {STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
+                            </select>
                           </div>
                         )}
-                        {g.margin_left > 0 && g.client_left === 0 && (
-                          <div className="card-payment margin">Маржа до отримання: {money(g.margin_left)}</div>
-                        )}
-                        <select
-                          className="card-status mobile-only"
-                          value={g.status}
-                          disabled={moving === g.order_number}
-                          onClick={e => e.stopPropagation()}
-                          onMouseDown={e => e.stopPropagation()}
-                          onTouchStart={e => e.stopPropagation()}
-                          onChange={e => {
-                            e.stopPropagation();
-                            moveToStatus(g.order_number, e.target.value);
-                          }}
-                        >
-                          {g.status === MISSING_STATUS && <option value={MISSING_STATUS} disabled>{MISSING_STATUS}</option>}
-                          {STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
-                        </select>
                       </div>
                     ))}
                   </div>
@@ -2623,6 +2667,7 @@ import finance from '../../lib/admin-finance.js';
       const [ordersError, setOrdersError] = useState("");
       const [sessionMsg, setSessionMsg] = useState("");
       const [selectedOrder, setSelectedOrder] = useState(null);
+      const topRef = useRef(null);
 
       function login(t) {
         sessionStorage.setItem(TOKEN_KEY, t);
@@ -2708,6 +2753,22 @@ import finance from '../../lib/admin-finance.js';
         }
       }, [token]);
 
+      useEffect(() => {
+        const header = topRef.current;
+        if (!token || !header) return;
+        const syncStickyOffset = () => {
+          document.documentElement.style.setProperty("--app-header-height", Math.ceil(header.getBoundingClientRect().height) + "px");
+        };
+        syncStickyOffset();
+        const observer = window.ResizeObserver ? new ResizeObserver(syncStickyOffset) : null;
+        observer?.observe(header);
+        window.addEventListener("resize", syncStickyOffset);
+        return () => {
+          observer?.disconnect();
+          window.removeEventListener("resize", syncStickyOffset);
+        };
+      }, [token]);
+
       if (!token) return (
         <>
           {sessionMsg && <div className="error" style={{ textAlign: "center", padding: 12 }}>{sessionMsg}</div>}
@@ -2719,7 +2780,7 @@ import finance from '../../lib/admin-finance.js';
         <>
         <TooltipLayer />
         <div className="app">
-          <div className="top">
+          <div className="top" ref={topRef}>
             <div className="brand">
               <img src="/images/avalon-logo-7016.svg" alt="Avalon" />
               <div>
