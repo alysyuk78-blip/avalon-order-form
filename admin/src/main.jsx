@@ -822,12 +822,12 @@ import finance from '../../lib/admin-finance.js';
         <section className="payments-section" aria-labelledby="payments-section-title">
           <div className="section-title" id="payments-section-title">Платежі</div>
           <div className="grid2">
-            <div className="field"><label>Клієнт сплатив</label>
-              <input disabled value={money(s.client_paid || 0) + " з " + money(s.revenue || 0)
+            <div className="field"><label htmlFor="payment-client-summary">Клієнт сплатив</label>
+              <input id="payment-client-summary" disabled value={money(s.client_paid || 0) + " / " + money(s.revenue || 0)
                 + ((s.client_left || 0) > 0 ? " · борг " + money(s.client_left)
                   : clientOverpaid > 0 ? " · переплата " + money(clientOverpaid) : " · повністю")} /></div>
-            <div className="field"><label>Маржа отримана</label>
-              <input disabled value={money(s.margin_received || 0) + " з " + money(s.profit || 0)
+            <div className="field"><label htmlFor="payment-margin-summary">Маржа отримана</label>
+              <input id="payment-margin-summary" disabled value={money(s.margin_received || 0) + " / " + money(s.profit || 0)
                 + ((s.margin_left || 0) > 0 ? " · до отримання " + money(s.margin_left)
                   : marginOverreceived > 0 ? " · понад нову маржу " + money(marginOverreceived) : " · повністю")} /></div>
           </div>
@@ -859,23 +859,23 @@ import finance from '../../lib/admin-finance.js';
           )}
 
           <div className="grid2" style={{ marginTop: 8 }}>
-            <div className="field"><label>Тип платежу</label>
-              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
+            <div className="field"><label htmlFor="payment-type">Тип платежу</label>
+              <select id="payment-type" value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
                 {PAYMENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
-            <div className="field"><label>Сума, ₴</label>
-              <input type="number" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
-            <div className="field"><label>Спосіб</label>
-              <select value={form.method} onChange={e => setForm({ ...form, method: e.target.value })}>
+            <div className="field"><label htmlFor="payment-amount">Сума, ₴</label>
+              <input id="payment-amount" type="number" inputMode="decimal" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
+            <div className="field"><label htmlFor="payment-method">Спосіб</label>
+              <select id="payment-method" value={form.method} onChange={e => setForm({ ...form, method: e.target.value })}>
                 {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
-            <div className="field"><label>Дата (порожньо = сьогодні)</label>
-              <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
+            <div className="field"><label htmlFor="payment-date">Дата (порожньо = сьогодні)</label>
+              <input id="payment-date" type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
           </div>
-          <div className="field"><label>Примітка</label>
-            <input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="Напр. квитанція №, хто передав" /></div>
+          <div className="field"><label htmlFor="payment-note">Примітка</label>
+            <input id="payment-note" value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="Напр. квитанція №, хто передав" /></div>
           {error && <div className="error">{error}</div>}
           <button className="btn" disabled={busy} onClick={add}>{busy ? "Внесення…" : "Внести платіж"}</button>
         </section>
@@ -1104,12 +1104,12 @@ import finance from '../../lib/admin-finance.js';
               Щоб залишити свою ціну — впишіть її нижче в «Фінансах» після збереження.
             </p>
             <div className="grid2">
-              <div className="field"><label>Модель / виріб</label>
-                <input list="crm-models" value={form.basket_model} onChange={e => setForm({ ...form, basket_model: e.target.value })} />
+              <div className="field"><label htmlFor="order-product-model">Модель / виріб</label>
+                <input id="order-product-model" list="crm-models" value={form.basket_model} onChange={e => setForm({ ...form, basket_model: e.target.value })} />
                 <datalist id="crm-models">{CATALOG_MODELS_CRM.map(m => <option key={m.id} value={m.name} />)}</datalist>
               </div>
-              <div className="field"><label>Вид виробу</label>
-                <select value={form.product_kind} onChange={e => setForm({ ...form, product_kind: e.target.value })}>
+              <div className="field"><label htmlFor="order-product-kind">Вид виробу</label>
+                <select id="order-product-kind" value={form.product_kind} onChange={e => setForm({ ...form, product_kind: e.target.value })}>
                   <option value="">— не вказано —</option>
                   <option value="Кошик">Кошик</option>
                   <option value="Кронштейни">Кронштейни</option>
@@ -1779,7 +1779,7 @@ import finance from '../../lib/admin-finance.js';
                         <div className="card-client">{g.client || "Клієнт не вказаний"}</div>
                         <div className="card-contact">
                           <ContactLinks order={g} onClickStop />
-                          {g.city && <span>{g.city}</span>}
+                          {g.city && <span className="card-city">{g.city}</span>}
                         </div>
                         <div className="card-finance">
                           <div><span>Сума</span><strong>{money(g.revenue)}</strong></div>
