@@ -12,11 +12,22 @@ async function run() {
   let calls = 0;
   global.fetch = async () => {
     calls += 1;
-    if (calls === 1) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    if (calls === 1) throw new TypeError("temporary network error");
     return jsonResponse({ status: "ok", payouts: [] });
   };
   await callAdminSheets("list_payouts", {});
-  assert.equal(calls, 2, "безпечне читання має повторюватись після тайм-ауту");
+  assert.equal(calls, 2, "безпечне читання має повторюватись після мережевого збою");
+
+  calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    throw Object.assign(new Error("aborted"), { name: "AbortError" });
+  };
+  await assert.rejects(
+    () => callAdminSheets("list_payouts", {}),
+    err => err.code === "SHEETS_TIMEOUT" && /40 секунд/.test(err.message)
+  );
+  assert.equal(calls, 1, "читання не повинно створювати другий довгий запит після тайм-ауту");
 
   calls = 0;
   global.fetch = async () => {
