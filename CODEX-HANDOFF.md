@@ -1054,8 +1054,8 @@ PR #94 злитий у `main` (`9adc565`), Vercel production READY. Apps Script 
 admin API без сесії 401; invalid public order 400; GET public order 405; CORS платежів
 дозволяє DELETE; у новому Vercel deployment немає runtime errors.
 
-Після релізу знайдено окремі фінансові неточності; вони виправляються у гілці
-`codex/postdeploy-finance-audit` і ще НЕ розгорнуті:
+Після релізу знайдено окремі фінансові неточності; вони виправлені в ready PR #95
+(`codex/postdeploy-finance-audit`) і ще НЕ розгорнуті:
 - dashboard/помісячне зведення та нагадування використовують точні
   `margin_received`/`margin_left`, тому часткова маржа більше не рахується «все або нічого»;
 - після стандартного перерахунку розмірів/кількості прайс стає рівним новій виручці,
@@ -1067,4 +1067,5 @@ admin API без сесії 401; invalid public order 400; GET public order 405;
 
 Швидкі тести: `npm run test:quick`, `npm run check:admin`, syntax checks і
 `git diff --check` — PASS. Додано окремі регресійні тести часткової маржі,
-перерахунку прайсу/знижки та безпечного видалення платежу.
+перерахунку прайсу/знижки та безпечного видалення платежу. Браузерний сценарій
+`1000 маржі / 400 отримано / 600 борг` також PASS; GitHub validate і Vercel preview зелені.
