@@ -1051,7 +1051,7 @@ import finance from '../../lib/admin-finance.js';
           });
           setData(res);
           applyItemToForm(res, itemIdx);
-          onChanged && onChanged();
+          onChanged && onChanged(res);
         } catch (e) {
           setError(e.message);
         } finally {
@@ -1137,7 +1137,7 @@ import finance from '../../lib/admin-finance.js';
                   payment_summary: result?.summary || data.payment_summary,
                 };
                 setData(next);
-                onChanged && onChanged();
+                onChanged && onChanged(next);
               }}
             />
 
@@ -1660,7 +1660,7 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
-    function OrdersView({ token, groups, setGroups, loading, error, setError, refreshOrders, onOpenOrder }) {
+    function OrdersView({ token, groups, setGroups, loading, error, setError, refreshOrders, onOrderChanged, onOpenOrder }) {
       const [q, setQ] = useState("");
       const [status, setStatus] = useState("");
       const [view, setView] = useState("kanban");
@@ -1723,11 +1723,12 @@ import finance from '../../lib/admin-finance.js';
           ? { ...g, status: newStatus, raw_statuses: [newStatus], status_issue: "" }
           : g));
         try {
-          await api("/api/admin/order", {
+          const result = await api("/api/admin/order", {
             method: "PATCH",
             token,
             body: { order_number: orderNumber, patch: { status: newStatus } },
           });
+          onOrderChanged && onOrderChanged(result);
         } catch (e) {
           setGroups(prev);
           setError(e.message || "Не вдалося змінити статус");
@@ -2744,6 +2745,9 @@ import finance from '../../lib/admin-finance.js';
       const topRef = useRef(null);
       const ordersRefreshRef = useRef(null);
       const dataRefreshRef = useRef(null);
+      // Запит, розпочатий до успішної зміни, не має права повернути старий snapshot
+      // поверх щойно збереженого замовлення.
+      const mutationRevisionRef = useRef(0);
 
       function login(t) {
         sessionStorage.setItem(TOKEN_KEY, t);
@@ -2773,16 +2777,19 @@ import finance from '../../lib/admin-finance.js';
         if (!token) return;
         if (ordersRefreshRef.current) return ordersRefreshRef.current;
         const request = (async () => {
+          const requestRevision = mutationRevisionRef.current;
           setDataLoading(true);
           setOrdersError("");
           try {
             const data = await api("/api/admin/orders", { token });
+            if (requestRevision !== mutationRevisionRef.current) return data;
             const nextGroups = normalizeOrderGroups(data);
             setGroups(nextGroups);
             const nextOrders = Array.isArray(data.orders) ? data.orders : [];
             setOrderItems(nextOrders);
             writeAdminCache({ groups: nextGroups, orders: nextOrders });
           } catch (e) {
+            if (requestRevision !== mutationRevisionRef.current) return;
             const cached = readAdminCache();
             if (Array.isArray(cached?.groups) && cached.groups.length) {
               const savedAt = Number(cached.savedAt) || 0;
@@ -2834,12 +2841,14 @@ import finance from '../../lib/admin-finance.js';
         if (!token) return;
         if (dataRefreshRef.current) return dataRefreshRef.current;
         const request = (async () => {
+          const requestRevision = mutationRevisionRef.current;
           setDataLoading(true);
           setOrdersError("");
           try {
             // Один запуск Apps Script замість чотирьох послідовних: замовлення,
             // позиції, платежі, витрати й виплати повертаються одним snapshot.
             const data = await api("/api/admin/bootstrap", { token });
+            if (requestRevision !== mutationRevisionRef.current) return data;
             const nextGroups = normalizeOrderGroups(data);
             const nextOrders = Array.isArray(data.orders) ? data.orders : [];
             const nextExpenses = Array.isArray(data.expenses) ? data.expenses : [];
@@ -2858,6 +2867,7 @@ import finance from '../../lib/admin-finance.js';
               payouts: nextPayouts,
             });
           } catch (e) {
+            if (requestRevision !== mutationRevisionRef.current) return;
             const cached = readAdminCache();
             if (Array.isArray(cached.groups) && cached.groups.length) {
               const savedAt = Number(cached.savedAt) || 0;
@@ -2879,6 +2889,67 @@ import finance from '../../lib/admin-finance.js';
         } finally {
           if (dataRefreshRef.current === request) dataRefreshRef.current = null;
         }
+      }
+
+      function applyOrderUpdate(detail) {
+        const orderNumber = String(
+          detail?.order?.order_number || detail?.items?.[0]?.order_number || ""
+        ).trim();
+        if (!orderNumber || !detail?.order) return;
+
+        mutationRevisionRef.current += 1;
+        const nextItems = Array.isArray(detail.items) ? detail.items : [];
+        const resolved = resolveOrderStatus(
+          nextItems.length ? nextItems.map(item => item.status) : [detail.order.status]
+        );
+        const summary = detail.payment_summary || {};
+        const nextOrder = {
+          ...detail.order,
+          ...resolved,
+          client_paid_sum: summary.client_paid ?? detail.order.client_paid_sum,
+          client_left: summary.client_left ?? detail.order.client_left,
+          margin_received: summary.margin_received ?? detail.order.margin_received,
+          margin_left: summary.margin_left ?? detail.order.margin_left,
+        };
+
+        setGroups(current => {
+          const found = current.some(group => group.order_number === orderNumber);
+          const next = found
+            ? current.map(group => group.order_number === orderNumber ? nextOrder : group)
+            : [nextOrder, ...current];
+          writeAdminCache({ groups: next });
+          return next;
+        });
+
+        if (nextItems.length) {
+          setOrderItems(current => {
+            const next = [];
+            let inserted = false;
+            current.forEach(item => {
+              if (item.order_number === orderNumber) {
+                if (!inserted) {
+                  next.push(...nextItems);
+                  inserted = true;
+                }
+              } else {
+                next.push(item);
+              }
+            });
+            if (!inserted) next.push(...nextItems);
+            writeAdminCache({ orders: next });
+            return next;
+          });
+        }
+
+        if (Array.isArray(detail.payments)) {
+          setPayments(current => {
+            const next = current.filter(payment => payment.order_number !== orderNumber)
+              .concat(detail.payments);
+            writeAdminCache({ payments: next });
+            return next;
+          });
+        }
+        setOrdersError("");
       }
 
       function openOrder(num) {
@@ -2969,6 +3040,7 @@ import finance from '../../lib/admin-finance.js';
                 error={ordersError}
                 setError={setOrdersError}
                 refreshOrders={refreshOrders}
+                onOrderChanged={applyOrderUpdate}
                 onOpenOrder={openOrder}
               />
             </div>
@@ -3011,7 +3083,7 @@ import finance from '../../lib/admin-finance.js';
               initialData={selectedOrderData}
               snapshotLoading={dataLoading}
               onClose={closeOrder}
-              onChanged={refreshData}
+              onChanged={applyOrderUpdate}
             />
           )}
         </div>
