@@ -1769,20 +1769,24 @@ import finance from '../../lib/admin-finance.js';
                       <span>{s}</span>
                       <span>{byStatus[s].items.length}</span>
                     </div>
-                    {s === "Скасовано" ? <div className="col-finance"><strong>—</strong></div> : (
-                      <>
-                        <div className="col-finance">
-                          <strong>{money(byStatus[s].revenue)}</strong>
-                          <span>Маржа {money(byStatus[s].profit)}</span>
-                        </div>
-                        {(byStatus[s].client_left > 0 || byStatus[s].margin_left > 0) && (
-                          <div className="col-alerts">
-                            {byStatus[s].client_left > 0 && <span className="debt">Борг {money(byStatus[s].client_left)}</span>}
-                            {byStatus[s].margin_left > 0 && <span className="margin">До отримання {money(byStatus[s].margin_left)}</span>}
-                          </div>
-                        )}
-                      </>
-                    )}
+                    <div className={"col-metrics" + (s === "Скасовано" ? " is-cancelled" : "")}>
+                      <div className="col-metric">
+                        <span>Сума</span>
+                        <strong>{s === "Скасовано" ? "—" : money(byStatus[s].revenue)}</strong>
+                      </div>
+                      <div className="col-metric profit">
+                        <span>Маржа</span>
+                        <strong>{s === "Скасовано" ? "—" : money(byStatus[s].profit)}</strong>
+                      </div>
+                      <div className="col-metric debt">
+                        <span>Борг клієнта</span>
+                        <strong>{s === "Скасовано" ? "—" : money(byStatus[s].client_left)}</strong>
+                      </div>
+                      <div className="col-metric margin">
+                        <span>До отримання</span>
+                        <strong>{s === "Скасовано" ? "—" : money(byStatus[s].margin_left)}</strong>
+                      </div>
+                    </div>
                   </h3>
                   <div className={"col-body" + (dragOver === s ? " drag-over" : "")}>
                     {byStatus[s].items.map(g => (
@@ -2194,7 +2198,13 @@ import finance from '../../lib/admin-finance.js';
                 </button>
               ))}
             </div>
-            <button className="btn secondary" onClick={refreshData}>Оновити</button>
+            <IconButton
+              icon="refresh"
+              label="Оновити зведення"
+              className={loading ? "is-spinning" : ""}
+              onClick={refreshData}
+              disabled={loading}
+            />
           </div>
           <div className="dashboard-basis">
             Виручка, собівартість і валова маржа — за датою замовлення. Надходження, виплати та витрати — за датою операції.
@@ -2516,7 +2526,13 @@ import finance from '../../lib/admin-finance.js';
             </div>
             <div className="toolbar" style={{ marginBottom: 0 }}>
               <input type="search" placeholder="Пошук: телефон або імʼя…" value={q} onChange={e => setQ(e.target.value)} />
-              <button className="btn secondary" onClick={refreshOrders}>Оновити</button>
+              <IconButton
+                icon="refresh"
+                label="Оновити клієнтів"
+                className={loading ? "is-spinning" : ""}
+                onClick={refreshOrders}
+                disabled={loading}
+              />
               <span style={{ color: "var(--muted)", fontSize: 13 }}>{filtered.length} клієнтів</span>
             </div>
           </div>

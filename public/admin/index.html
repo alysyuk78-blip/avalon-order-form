@@ -208,13 +208,23 @@
       background: transparent;
     }
     .col h3 .col-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-    .col-finance { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; text-transform: none; letter-spacing: 0; }
-    .col-finance strong { font-size: 12px; font-weight: 750; }
-    .col-finance span { font-size: 10px; font-weight: 650; opacity: .74; white-space: nowrap; }
-    .col-alerts { display: flex; flex-wrap: wrap; gap: 4px 8px; text-transform: none; letter-spacing: 0; }
-    .col-alerts span { font-size: 9.5px; font-weight: 700; }
-    .col-alerts .debt { color: #b54842; }
-    .col-alerts .margin { color: #8f7340; }
+    .col-metrics {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px;
+      min-height: 66px; padding-top: 2px; text-transform: none; letter-spacing: 0;
+    }
+    .col-metric { min-width: 0; display: grid; align-content: start; gap: 1px; }
+    .col-metric span {
+      font-size: 8.5px; line-height: 1.2; font-weight: 650; opacity: .68;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .col-metric strong {
+      min-width: 0; font-size: 11px; line-height: 1.25; font-weight: 750;
+      white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    .col-metric.profit { color: inherit; }
+    .col-metric.debt { color: #b54842; }
+    .col-metric.margin { color: #8f7340; }
+    .col-metrics.is-cancelled .col-metric { color: var(--muted); }
     .col-body { padding: 8px; display: grid; gap: 8px; }
     .orders-totals {
       display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center;
