@@ -353,6 +353,45 @@ import finance from '../../lib/admin-finance.js';
         ...resolveOrderStatus(statusesByOrder[group.order_number] || [group.status]),
       }));
     }
+    function readAdminCache() {
+      try {
+        const cached = JSON.parse(sessionStorage.getItem(ORDERS_CACHE_KEY) || "null");
+        return cached && typeof cached === "object" ? cached : {};
+      } catch (_) {
+        return {};
+      }
+    }
+    function writeAdminCache(patch) {
+      try {
+        sessionStorage.setItem(ORDERS_CACHE_KEY, JSON.stringify({
+          ...readAdminCache(),
+          ...patch,
+          savedAt: Date.now(),
+        }));
+      } catch (_) {}
+    }
+    function orderDetailFromSnapshot(orderNumber, groups, orderItems, payments) {
+      if (!orderNumber) return null;
+      const order = (groups || []).find(g => g.order_number === orderNumber);
+      const items = (orderItems || []).filter(item => item.order_number === orderNumber);
+      if (!order || !items.length) return null;
+      const orderPayments = (payments || []).filter(payment => payment.order_number === orderNumber);
+      return {
+        status: "ok",
+        order,
+        items,
+        payments: orderPayments,
+        payment_summary: {
+          revenue: Number(order.revenue) || 0,
+          profit: Number(order.profit) || 0,
+          client_paid: Number(order.client_paid_sum) || 0,
+          client_left: Number(order.client_left) || 0,
+          margin_received: Number(order.margin_received) || 0,
+          margin_left: Number(order.margin_left) || 0,
+          legacy: !(Number(order.payments_count) > 0),
+        },
+      };
+    }
     function newRequestId() {
       if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
         return globalThis.crypto.randomUUID();
@@ -842,13 +881,13 @@ import finance from '../../lib/admin-finance.js';
         }
         setBusy(true);
         try {
-          await api("/api/admin/payments", {
+          const result = await api("/api/admin/payments", {
             method: "POST", token,
             body: { payment: { ...payment, request_id: pendingRef.current.requestId } },
           });
           pendingRef.current = { fingerprint: "", requestId: "" };
           setForm(f => ({ ...f, amount: "", note: "" }));
-          onChanged && onChanged();
+          onChanged && onChanged(result);
         } catch (e) { setError(e.message || "Не вдалося внести платіж"); }
         finally { setBusy(false); }
       }
@@ -864,8 +903,8 @@ import finance from '../../lib/admin-finance.js';
             payment_type: payment.type || "",
             payment_amount: String(payment.amount || 0),
           });
-          await api("/api/admin/payments?" + qs.toString(), { method: "DELETE", token });
-          onChanged && onChanged();
+          const result = await api("/api/admin/payments?" + qs.toString(), { method: "DELETE", token });
+          onChanged && onChanged(result);
         } catch (e) { setError(e.message || "Не вдалося видалити платіж"); }
         finally { setBusy(false); }
       }
@@ -934,8 +973,8 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
-    function OrderDrawer({ token, orderNumber, onClose, onChanged }) {
-      const [data, setData] = useState(null);
+    function OrderDrawer({ token, orderNumber, initialData, snapshotLoading, onClose, onChanged }) {
+      const [data, setData] = useState(initialData || null);
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
       const [form, setForm] = useState(null);
@@ -990,7 +1029,17 @@ import finance from '../../lib/admin-finance.js';
         applyItemToForm(res, 0);
       }
 
-      useEffect(() => { load().catch(e => setError(e.message)); }, [orderNumber]);
+      useEffect(() => {
+        if (initialData) {
+          setData(initialData);
+          applyItemToForm(initialData, 0);
+          setItemIdx(0);
+          setError("");
+          return;
+        }
+        if (snapshotLoading) return;
+        load().catch(e => setError(e.message));
+      }, [orderNumber, initialData, snapshotLoading]);
 
       async function save(patch) {
         setBusy(true); setError("");
@@ -1081,7 +1130,15 @@ import finance from '../../lib/admin-finance.js';
               orderNumber={orderNumber}
               payments={data.payments}
               summary={data.payment_summary}
-              onChanged={async () => { await load(); onChanged && onChanged(); }}
+              onChanged={(result) => {
+                const next = {
+                  ...data,
+                  payments: result?.payments || data.payments || [],
+                  payment_summary: result?.summary || data.payment_summary,
+                };
+                setData(next);
+                onChanged && onChanged();
+              }}
             />
 
             <div className="section-title">Швидкі дії</div>
@@ -2661,22 +2718,32 @@ import finance from '../../lib/admin-finance.js';
       const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) || "");
       const [tab, setTab] = useState("orders");
       const [groups, setGroups] = useState(() => {
-        try {
-          const cached = JSON.parse(sessionStorage.getItem(ORDERS_CACHE_KEY) || "null");
-          return Array.isArray(cached?.groups) ? cached.groups : [];
-        } catch (_) {
-          return [];
-        }
+        const cached = readAdminCache();
+        return Array.isArray(cached.groups) ? cached.groups : [];
       });
-      const [expenses, setExpenses] = useState([]);
-      const [payments, setPayments] = useState([]);
-      const [payouts, setPayouts] = useState([]);
+      const [orderItems, setOrderItems] = useState(() => {
+        const cached = readAdminCache();
+        return Array.isArray(cached.orders) ? cached.orders : [];
+      });
+      const [expenses, setExpenses] = useState(() => {
+        const cached = readAdminCache();
+        return Array.isArray(cached.expenses) ? cached.expenses : [];
+      });
+      const [payments, setPayments] = useState(() => {
+        const cached = readAdminCache();
+        return Array.isArray(cached.payments) ? cached.payments : [];
+      });
+      const [payouts, setPayouts] = useState(() => {
+        const cached = readAdminCache();
+        return Array.isArray(cached.payouts) ? cached.payouts : [];
+      });
       const [dataLoading, setDataLoading] = useState(false);
       const [ordersError, setOrdersError] = useState("");
       const [sessionMsg, setSessionMsg] = useState("");
       const [selectedOrder, setSelectedOrder] = useState(null);
       const topRef = useRef(null);
       const ordersRefreshRef = useRef(null);
+      const dataRefreshRef = useRef(null);
 
       function login(t) {
         sessionStorage.setItem(TOKEN_KEY, t);
@@ -2688,6 +2755,7 @@ import finance from '../../lib/admin-finance.js';
         sessionStorage.removeItem(ORDERS_CACHE_KEY);
         setToken("");
         setGroups([]);
+        setOrderItems([]);
         setExpenses([]);
         setPayments([]);
         setPayouts([]);
@@ -2711,17 +2779,11 @@ import finance from '../../lib/admin-finance.js';
             const data = await api("/api/admin/orders", { token });
             const nextGroups = normalizeOrderGroups(data);
             setGroups(nextGroups);
-            try {
-              sessionStorage.setItem(ORDERS_CACHE_KEY, JSON.stringify({
-                savedAt: Date.now(),
-                groups: nextGroups,
-              }));
-            } catch (_) {}
+            const nextOrders = Array.isArray(data.orders) ? data.orders : [];
+            setOrderItems(nextOrders);
+            writeAdminCache({ groups: nextGroups, orders: nextOrders });
           } catch (e) {
-            let cached = null;
-            try {
-              cached = JSON.parse(sessionStorage.getItem(ORDERS_CACHE_KEY) || "null");
-            } catch (_) {}
+            const cached = readAdminCache();
             if (Array.isArray(cached?.groups) && cached.groups.length) {
               const savedAt = Number(cached.savedAt) || 0;
               const cacheLabel = savedAt
@@ -2747,31 +2809,75 @@ import finance from '../../lib/admin-finance.js';
       async function refreshExpenses() {
         if (!token) return;
         const data = await api("/api/admin/expenses", { token });
-        setExpenses(data.expenses || []);
+        const next = data.expenses || [];
+        setExpenses(next);
+        writeAdminCache({ expenses: next });
       }
 
       async function refreshPayments() {
         if (!token) return;
         const data = await api("/api/admin/payments", { token });
-        setPayments(data.payments || []);
+        const next = data.payments || [];
+        setPayments(next);
+        writeAdminCache({ payments: next });
       }
 
       async function refreshPayouts() {
         if (!token) return;
         const data = await api("/api/admin/payouts", { token });
-        setPayouts(data.payouts || []);
+        const next = data.payouts || [];
+        setPayouts(next);
+        writeAdminCache({ payouts: next });
       }
 
       async function refreshData() {
+        if (!token) return;
+        if (dataRefreshRef.current) return dataRefreshRef.current;
+        const request = (async () => {
+          setDataLoading(true);
+          setOrdersError("");
+          try {
+            // Один запуск Apps Script замість чотирьох послідовних: замовлення,
+            // позиції, платежі, витрати й виплати повертаються одним snapshot.
+            const data = await api("/api/admin/bootstrap", { token });
+            const nextGroups = normalizeOrderGroups(data);
+            const nextOrders = Array.isArray(data.orders) ? data.orders : [];
+            const nextExpenses = Array.isArray(data.expenses) ? data.expenses : [];
+            const nextPayments = Array.isArray(data.payments) ? data.payments : [];
+            const nextPayouts = Array.isArray(data.payouts) ? data.payouts : [];
+            setGroups(nextGroups);
+            setOrderItems(nextOrders);
+            setExpenses(nextExpenses);
+            setPayments(nextPayments);
+            setPayouts(nextPayouts);
+            writeAdminCache({
+              groups: nextGroups,
+              orders: nextOrders,
+              expenses: nextExpenses,
+              payments: nextPayments,
+              payouts: nextPayouts,
+            });
+          } catch (e) {
+            const cached = readAdminCache();
+            if (Array.isArray(cached.groups) && cached.groups.length) {
+              const savedAt = Number(cached.savedAt) || 0;
+              const cacheLabel = savedAt
+                ? new Date(savedAt).toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" })
+                : "попереднього оновлення";
+              setOrdersError(`${e.message}. Показано останні дані станом на ${cacheLabel}.`);
+            } else {
+              setOrdersError(e.message || "Не вдалося оновити дані CRM");
+            }
+            throw e;
+          } finally {
+            setDataLoading(false);
+          }
+        })();
+        dataRefreshRef.current = request;
         try {
-          // Замовлення завантажуємо першими. Послідовне читання не створює
-          // одночасну хвилю запитів до Apps Script під час входу або оновлення.
-          await refreshOrders();
-          await refreshExpenses();
-          await refreshPayments();
-          await refreshPayouts();
-        } catch (e) {
-          setOrdersError(current => current || e.message || "Не вдалося оновити дані CRM");
+          return await request;
+        } finally {
+          if (dataRefreshRef.current === request) dataRefreshRef.current = null;
         }
       }
 
@@ -2785,6 +2891,11 @@ import finance from '../../lib/admin-finance.js';
           history.replaceState(null, "", window.location.pathname + window.location.search);
         }
       }
+
+      const selectedOrderData = useMemo(
+        () => orderDetailFromSnapshot(selectedOrder, groups, orderItems, payments),
+        [selectedOrder, groups, orderItems, payments]
+      );
 
       useEffect(() => {
         if (!token) return;
@@ -2897,6 +3008,8 @@ import finance from '../../lib/admin-finance.js';
             <OrderDrawer
               token={token}
               orderNumber={selectedOrder}
+              initialData={selectedOrderData}
+              snapshotLoading={dataLoading}
               onClose={closeOrder}
               onChanged={refreshData}
             />
