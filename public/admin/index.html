@@ -292,7 +292,16 @@
     .dual-stem.rev { background: #526058; }
     .dual-stem.mar { background: #1b7a4a; }
     .dual-lbl { font-size: 11px; font-weight: 650; color: var(--muted); text-align: center; }
-    .dual-tip { font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; line-height: 1.2; }
+    .dual-tip {
+      display: flex; justify-content: center; gap: 7px; flex-wrap: wrap;
+      font-size: 10px; font-weight: 700; color: var(--ink); text-align: center; line-height: 1.2;
+    }
+    .dual-tip .rev::before, .dual-tip .mar::before {
+      content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 4px;
+      border-radius: 2px; vertical-align: 1px;
+    }
+    .dual-tip .rev::before { background: #526058; }
+    .dual-tip .mar::before { background: #1b7a4a; }
     .status-list { display: grid; gap: 7px; width: 100%; }
     .status-row {
       display: grid; grid-template-columns: minmax(84px, 110px) 1fr auto;
@@ -309,9 +318,11 @@
       height: 100%; border-radius: 999px; min-width: 0; transition: width .28s ease;
     }
     .status-row .count {
-      font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums;
-      min-width: 1.5em; text-align: right;
+      display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 5px;
+      font-size: 13px; font-variant-numeric: tabular-nums; min-width: 4.4em; text-align: right;
     }
+    .status-row .count strong { font-weight: 750; }
+    .status-row .count span { color: var(--muted); font-size: 11px; font-weight: 650; }
     .status-chart { min-height: 0; width: 100%; }
     .status-chart .chart-legend { margin-top: 8px; }
     .stack-block { display: grid; gap: 12px; }
@@ -347,6 +358,7 @@
     .donut-stat {
       background: #f3f5f6; border-radius: 10px; padding: 10px 12px; min-width: 0;
     }
+    .donut-stat.total { background: #e8ebed; }
     .donut-stat .lab { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
     .donut-stat .num { margin-top: 4px; font-size: 16px; font-weight: 750; overflow-wrap: anywhere; }
     .period-toggle { display: flex; gap: 4px; background: #e8ebed; padding: 4px; border-radius: 12px; flex-wrap: wrap; }
@@ -355,6 +367,11 @@
       font-weight: 650; font-size: 12px; color: var(--muted);
     }
     .period-toggle button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .dashboard-basis, .panel-subtitle {
+      color: var(--muted); font-size: 12px; line-height: 1.45;
+    }
+    .dashboard-basis { margin: -4px 0 14px; }
+    .panel-subtitle { margin: -5px 0 12px; }
     .col.drag-over { background: rgba(56, 62, 66, 0.10) !important; }
     .col-body.drag-over { background: rgba(255,255,255,0.35); border-radius: 10px; }
     .card { touch-action: manipulation; }
