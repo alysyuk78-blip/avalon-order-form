@@ -2194,7 +2194,13 @@ import finance from '../../lib/admin-finance.js';
                 </button>
               ))}
             </div>
-            <button className="btn secondary" onClick={refreshData}>Оновити</button>
+            <IconButton
+              icon="refresh"
+              label="Оновити зведення"
+              className={loading ? "is-spinning" : ""}
+              onClick={refreshData}
+              disabled={loading}
+            />
           </div>
           <div className="dashboard-basis">
             Виручка, собівартість і валова маржа — за датою замовлення. Надходження, виплати та витрати — за датою операції.
@@ -2516,7 +2522,13 @@ import finance from '../../lib/admin-finance.js';
             </div>
             <div className="toolbar" style={{ marginBottom: 0 }}>
               <input type="search" placeholder="Пошук: телефон або імʼя…" value={q} onChange={e => setQ(e.target.value)} />
-              <button className="btn secondary" onClick={refreshOrders}>Оновити</button>
+              <IconButton
+                icon="refresh"
+                label="Оновити клієнтів"
+                className={loading ? "is-spinning" : ""}
+                onClick={refreshOrders}
+                disabled={loading}
+              />
               <span style={{ color: "var(--muted)", fontSize: 13 }}>{filtered.length} клієнтів</span>
             </div>
           </div>
