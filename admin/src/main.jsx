@@ -263,7 +263,7 @@ import finance from '../../lib/admin-finance.js';
 
     function money(v) {
       if (v == null || v === "") return "—";
-      return Number(v).toLocaleString("uk-UA") + " ₴";
+      return Number(v).toLocaleString("uk-UA") + "\u00A0₴";
     }
     function pct(v) {
       if (v == null || v === "") return "—";
@@ -819,8 +819,8 @@ import finance from '../../lib/admin-finance.js';
       }
 
       return (
-        <>
-          <div className="section-title">Платежі</div>
+        <section className="payments-section" aria-labelledby="payments-section-title">
+          <div className="section-title" id="payments-section-title">Платежі</div>
           <div className="grid2">
             <div className="field"><label>Клієнт сплатив</label>
               <input disabled value={money(s.client_paid || 0) + " з " + money(s.revenue || 0)
@@ -878,7 +878,7 @@ import finance from '../../lib/admin-finance.js';
             <input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="Напр. квитанція №, хто передав" /></div>
           {error && <div className="error">{error}</div>}
           <button className="btn" disabled={busy} onClick={add}>{busy ? "Внесення…" : "Внести платіж"}</button>
-        </>
+        </section>
       );
     }
 
@@ -1683,14 +1683,13 @@ import finance from '../../lib/admin-finance.js';
                 <span>Замовлень</span>
                 <strong>{grand.count}</strong>
               </div>
-              <div className="summary-divider" aria-hidden="true" />
               <div className="summary-metric summary-total">
                 <span>Загальна сума</span>
                 <strong>{money(grand.revenue)}</strong>
               </div>
               <div className="summary-stat"><span>Маржа</span><strong>{money(grand.profit)}</strong></div>
-              {grand.clientLeft > 0 && <div className="summary-stat debt"><span>Борг клієнтів</span><strong>{money(grand.clientLeft)}</strong></div>}
-              {grand.marginLeft > 0 && <div className="summary-stat margin"><span>Маржа до отримання</span><strong>{money(grand.marginLeft)}</strong></div>}
+              <div className="summary-stat debt"><span>Борг клієнтів</span><strong>{money(grand.clientLeft)}</strong></div>
+              <div className="summary-stat margin"><span>Маржа до отримання</span><strong>{money(grand.marginLeft)}</strong></div>
               {view === "kanban" && (
                 <div className="summary-info">
                   <InfoTip
