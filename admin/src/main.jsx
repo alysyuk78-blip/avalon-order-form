@@ -1,5 +1,24 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
+import {
+  ChartNoAxesColumnIncreasing,
+  Check,
+  ClipboardList,
+  Columns3,
+  FilePenLine,
+  Handshake,
+  Info,
+  List,
+  ListFilter,
+  LogOut,
+  Plus,
+  RefreshCw,
+  Search,
+  UsersRound,
+  WalletCards,
+  X,
+} from 'lucide-react';
 import finance from '../../lib/admin-finance.js';
 
     const { groupPaymentMetrics } = finance;
@@ -39,23 +58,23 @@ import finance from '../../lib/admin-finance.js';
     const PAYMENT_TYPES = ["Передоплата","Доплата","Оплата повністю","Маржа від підрядника","Повернення клієнту"];
     const PAYMENT_METHODS = ["Готівка","На карту","На рахунок ФО-П","На рахунок ТОВ","Накладений платіж","Інше"];
     const TOKEN_KEY = "avalon_admin_token";
-    const ICON_PATHS = {
-      search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>,
-      filter: <path d="M4 5h16l-6.5 7.2V18l-3 1.5v-7.3L4 5Z" />,
-      refresh: <><path d="M20 7v5h-5" /><path d="M4 17v-5h5" /><path d="M6.1 8.5A7 7 0 0 1 18.8 7L20 12" /><path d="M17.9 15.5A7 7 0 0 1 5.2 17L4 12" /></>,
-      plus: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
-      board: <><rect x="3" y="4" width="5" height="16" rx="1.5" /><rect x="9.5" y="4" width="5" height="16" rx="1.5" /><rect x="16" y="4" width="5" height="16" rx="1.5" /></>,
-      list: <><path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /></>,
-      orders: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4.5V3h6v1.5" /><path d="M9 9h6" /><path d="M9 13h6" /><path d="M9 17h4" /></>,
-      clients: <><circle cx="9" cy="8" r="3" /><path d="M3.5 19a5.5 5.5 0 0 1 11 0" /><circle cx="17" cy="9" r="2.5" /><path d="M16 14a5 5 0 0 1 4.5 5" /></>,
-      dashboard: <><path d="M4 20V10" /><path d="M10 20V4" /><path d="M16 20v-7" /><path d="M22 20H2" /></>,
-      partners: <><path d="M9 12.5 11.5 15a2 2 0 0 0 3 0l4.5-4.5" /><path d="m3 10 4-4 4 2-4.5 4.5a2 2 0 0 0 3 3L12 13" /><path d="m21 10-4-4-4 2" /><path d="m3 10 3 3" /></>,
-      expenses: <><path d="M4 7.5h16v11A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5v-13A1.5 1.5 0 0 1 5.5 4H18" /><path d="M15 12h5" /><circle cx="15" cy="12" r=".5" /></>,
-      form: <><path d="M7 3h8l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /><path d="M15 3v5h5" /><path d="M9 13h6" /><path d="M9 17h4" /></>,
-      logout: <><path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4" /><path d="m15 8 4 4-4 4" /><path d="M19 12H9" /></>,
-      info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 8h.01" /></>,
-      close: <><path d="m6 6 12 12" /><path d="m18 6-12 12" /></>,
-      check: <path d="m5 12 4 4L19 6" />,
+    const ICON_COMPONENTS = {
+      search: Search,
+      filter: ListFilter,
+      refresh: RefreshCw,
+      plus: Plus,
+      board: Columns3,
+      list: List,
+      orders: ClipboardList,
+      clients: UsersRound,
+      dashboard: ChartNoAxesColumnIncreasing,
+      partners: Handshake,
+      expenses: WalletCards,
+      form: FilePenLine,
+      logout: LogOut,
+      info: Info,
+      close: X,
+      check: Check,
     };
     const NAV_ITEMS = [
       { id: "orders", label: "Замовлення", icon: "orders" },
@@ -66,11 +85,8 @@ import finance from '../../lib/admin-finance.js';
     ];
 
     function Icon({ name, size = 20 }) {
-      return (
-        <svg className="ui-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          {ICON_PATHS[name]}
-        </svg>
-      );
+      const IconComponent = ICON_COMPONENTS[name];
+      return IconComponent ? <IconComponent className="ui-icon" size={size} strokeWidth={1.75} aria-hidden="true" /> : null;
     }
 
     function IconButton({ icon, label, active = false, className = "", ...props }) {
@@ -79,7 +95,6 @@ import finance from '../../lib/admin-finance.js';
           type="button"
           className={"icon-button" + (active ? " active" : "") + (className ? " " + className : "")}
           aria-label={label}
-          title={label}
           data-tooltip={label}
           {...props}
         >
@@ -93,12 +108,79 @@ import finance from '../../lib/admin-finance.js';
         <a
           className={"icon-button" + (className ? " " + className : "")}
           aria-label={label}
-          title={label}
           data-tooltip={label}
           {...props}
         >
           <Icon name={icon} />
         </a>
+      );
+    }
+
+    function TooltipLayer() {
+      const [tooltip, setTooltip] = useState(null);
+
+      useEffect(() => {
+        function findAnchor(node) {
+          return node instanceof Element ? node.closest("[data-tooltip]") : null;
+        }
+        function show(e) {
+          if (e.type === "pointerover" && e.pointerType === "touch") return;
+          if (e.type === "focusin" && window.matchMedia("(hover: none)").matches) return;
+          const anchor = findAnchor(e.target);
+          if (!anchor || anchor.getAttribute("aria-expanded") === "true") return;
+          const label = anchor.dataset.tooltip;
+          if (!label) return;
+          const rect = anchor.getBoundingClientRect();
+          const estimatedWidth = Math.min(280, Math.max(76, label.length * 7.2 + 24));
+          const half = estimatedWidth / 2;
+          const left = Math.max(half + 10, Math.min(window.innerWidth - half - 10, rect.left + rect.width / 2));
+          const showBelow = rect.bottom + 52 < window.innerHeight;
+          setTooltip({
+            label,
+            left,
+            top: showBelow ? rect.bottom + 9 : rect.top - 9,
+            placement: showBelow ? "below" : "above",
+          });
+        }
+        function hide(e) {
+          const anchor = findAnchor(e.target);
+          if (e.type === "pointerout" && anchor?.contains(e.relatedTarget)) return;
+          setTooltip(null);
+        }
+        function onKeyDown(e) {
+          if (e.key === "Escape") setTooltip(null);
+        }
+
+        document.addEventListener("pointerover", show);
+        document.addEventListener("pointerout", hide);
+        document.addEventListener("focusin", show);
+        document.addEventListener("focusout", hide);
+        document.addEventListener("pointerdown", hide);
+        document.addEventListener("keydown", onKeyDown);
+        window.addEventListener("scroll", hide, true);
+        window.addEventListener("resize", hide);
+        return () => {
+          document.removeEventListener("pointerover", show);
+          document.removeEventListener("pointerout", hide);
+          document.removeEventListener("focusin", show);
+          document.removeEventListener("focusout", hide);
+          document.removeEventListener("pointerdown", hide);
+          document.removeEventListener("keydown", onKeyDown);
+          window.removeEventListener("scroll", hide, true);
+          window.removeEventListener("resize", hide);
+        };
+      }, []);
+
+      if (!tooltip) return null;
+      return createPortal(
+        <div
+          className={"app-tooltip " + tooltip.placement}
+          role="tooltip"
+          style={{ left: tooltip.left, top: tooltip.top }}
+        >
+          {tooltip.label}
+        </div>,
+        document.body
       );
     }
 
@@ -666,7 +748,7 @@ import finance from '../../lib/admin-finance.js';
             className="info-btn"
             aria-label="Підказка"
             aria-expanded={open}
-            title="Підказка"
+            data-tooltip="Підказка"
             onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
           ><Icon name="info" size={17} /></button>
           {open && (
@@ -2495,6 +2577,8 @@ import finance from '../../lib/admin-finance.js';
       );
 
       return (
+        <>
+        <TooltipLayer />
         <div className="app">
           <div className="top">
             <div className="brand">
@@ -2571,6 +2655,7 @@ import finance from '../../lib/admin-finance.js';
             />
           )}
         </div>
+        </>
       );
     }
 
