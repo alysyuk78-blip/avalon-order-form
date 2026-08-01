@@ -489,6 +489,9 @@ function recalcRow_(sh, row) {
   var margin = total ? Math.round((total - costTotal) / total * 1000) / 10 : "";
   // Один setValues на діапазон R..X — щоб не плодити зайвих спрацювань тригера.
   sh.getRange(row, 18, 1, 7).setValues([[Number(areaM2.toFixed(2)), costUnit, costTotal, priceUnit, total, total - costTotal, margin]]);
+  // Після стандартного перерахунку старий ручний прайс/знижка вже не відповідає
+  // новій виручці. Фіксуємо нову роздрібну ціну та обнуляємо стару знижку.
+  sh.getRange(row, 35, 1, 3).setValues([[total, 0, 0]]);
 }
 
 function toISODate(v) {
@@ -1775,7 +1778,12 @@ function adminListPayments_(data) {
   var num = String((data && data.order_number) || "").trim();
   var payments = readPayments_(num);
   var res = { status: "ok", payments: payments, totals: paymentTotals_(payments) };
-  if (num) res.summary = syncOrderPaymentState_(num);
+  // Читання платежів не повинно непомітно змінювати таблицю або чекати write-lock.
+  // Узгоджені галочки оновлюються під час додавання/видалення платежу та перерахунку.
+  if (num) {
+    var detail = adminGetOrder_({ order_number: num });
+    if (detail.status === "ok") res.summary = detail.payment_summary;
+  }
   return res;
 }
 
@@ -1839,8 +1847,23 @@ function adminDeletePayment_(data) {
   if (!expectedOrder) throw new Error("Вкажіть номер замовлення платежу");
   var sh = paymentsSheet_();
   if (row > sh.getLastRow()) throw new Error("Платіж уже видалено або список змінився");
-  var num = String(sh.getRange(row, 2).getValue() || "").trim();
+  var actual = sh.getRange(row, 2, 1, 6).getValues()[0]; // B:G
+  var num = String(actual[0] || "").trim();
   if (num !== expectedOrder) throw new Error("Список платежів змінився. Оновіть картку й повторіть видалення");
+  var expectedRequestId = String((data && data.payment_request_id) || "").trim();
+  var actualRequestId = String(actual[5] || "").trim();
+  if (expectedRequestId && actualRequestId !== expectedRequestId) {
+    throw new Error("Список платежів змінився. Оновіть картку й повторіть видалення");
+  }
+  // Старі платежі не мають request_id, тому додатково звіряємо тип і суму.
+  var expectedType = String((data && data.payment_type) || "").trim();
+  if (!expectedRequestId && expectedType && String(actual[1] || "").trim() !== expectedType) {
+    throw new Error("Список платежів змінився. Оновіть картку й повторіть видалення");
+  }
+  if (!expectedRequestId && data && data.payment_amount != null &&
+      Number(actual[2]) !== Number(data.payment_amount)) {
+    throw new Error("Список платежів змінився. Оновіть картку й повторіть видалення");
+  }
   sh.deleteRow(row);
   var summary = num ? syncOrderPaymentState_(num) : null;
   SpreadsheetApp.flush();

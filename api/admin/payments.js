@@ -35,9 +35,18 @@ module.exports = async function handler(req, res) {
     if (req.method === "DELETE") {
       const row = Number((req.query && req.query.row) || (req.body && req.body.row) || 0);
       const orderNumber = (req.query && req.query.order_number) || (req.body && req.body.order_number) || "";
+      const paymentRequestId = (req.query && req.query.payment_request_id) || (req.body && req.body.payment_request_id) || "";
+      const paymentType = (req.query && req.query.payment_type) || (req.body && req.body.payment_type) || "";
+      const paymentAmount = (req.query && req.query.payment_amount) || (req.body && req.body.payment_amount);
       if (!(row >= 2)) return res.status(400).json({ error: "row required" });
       if (!String(orderNumber).trim()) return res.status(400).json({ error: "order_number required" });
-      const data = await callAdminSheets("delete_payment", { row, order_number: orderNumber });
+      const data = await callAdminSheets("delete_payment", {
+        row,
+        order_number: orderNumber,
+        payment_request_id: paymentRequestId,
+        payment_type: paymentType,
+        payment_amount: paymentAmount,
+      });
       console.log(JSON.stringify({ level: "info", msg: "done", route: "/api/admin/payments", method: req.method, ms: Date.now() - startedAt, requestId }));
       return res.status(200).json(data);
     }

@@ -255,46 +255,6 @@ function formatTelegramMessage(order) {
 }
 
 // ============================================================
-// PRODUCTION MESSAGE (чисте, для пересилання підряднику)
-// ============================================================
-function formatProductionMessage(order) {
-  const e = (v) => escHtml(v);
-  const items = (Array.isArray(order.items) && order.items.length) ? order.items : [{
-    basket_model: order.basket_model, basket_model_name: order.basket_model_name,
-    product_type: order.product_type, bracket_length: order.bracket_length, vibro_pads: order.vibro_pads,
-    basket_type: order.basket_type, construction_type: order.construction_type,
-    color: order.color, color_custom: order.color_custom, pattern: order.pattern, pattern_custom: order.pattern_custom,
-    size_w: order.size_w, size_h: order.size_h, size_d: order.size_d, quantity: order.quantity,
-    ac_brand: order.ac_brand, ac_model: order.ac_model, ac_model_url: order.ac_model_url,
-    bracket_model_from: order.bracket_model_from, bracket_model_to: order.bracket_model_to, model_comment: order.model_comment,
-  }];
-  let msg = `🏭 <b>ДЛЯ ВИРОБНИЦТВА</b> · ${e(order.order_number)}\n`;
-  items.forEach((it, i) => {
-    if (it.product_type === "bracket") {
-      const bModel = it.basket_model_name || it.basket_model;
-      const bColor = (it.color === "Інші кольори" || it.color === "Інший") ? (it.color_custom || it.color) : it.color;
-      msg += `\n${i + 1}. <b>${bModel ? e(bModel) + " · " : ""}${e(it.bracket_length) || "довжину уточнити"}</b>\n   ${e(bColor)}, віброподушки: ${it.vibro_pads ? "так" : "ні"}, <b>${it.quantity} компл.</b>\n`;
-      if (it.model_comment) msg += `   Коментар: ${e(it.model_comment)}\n`;
-      return;
-    }
-    const constr = (it.construction_type || "").split("(")[0].trim() || it.construction_type || "";
-    const color = (it.color === "Інші кольори" || it.color === "Інший") ? (it.color_custom || it.color) : it.color;
-    const pattern = it.pattern === "Інший" ? (it.pattern_custom || it.pattern) : it.pattern;
-    const size = Number(it.size_w) > 0
-      ? `${it.size_w}×${it.size_h}×${it.size_d} мм (Ш×В×Г)`
-      : (it.bracket_model_from || it.bracket_model_to)
-        ? `Потужність: ${e(it.bracket_model_from)} — ${e(it.bracket_model_to)}`
-        : `⚠️ розмір визначити${(it.ac_brand || it.ac_model) ? " — " + e([it.ac_brand, it.ac_model].filter(Boolean).join(" ")) : ""}`;
-    const model = it.basket_model_name || it.basket_model;
-    msg += `\n${i + 1}. <b>${model ? e(model) + " · " : ""}${size}</b>\n   ${e(constr)}, ${e(color)}, візерунок ${e(pattern)}${it.has_cover ? ", <b>з верхньою кришкою</b>" : ""}, <b>${it.quantity} шт.</b>\n`;
-    if (it.ac_model_url) msg += `   Посилання на кондиціонер: ${e(it.ac_model_url)}\n`;
-    if (it.model_comment) msg += `   Коментар: ${e(it.model_comment)}\n`;
-  });
-  return msg;
-}
-
-
-// ============================================================
 // MAIN HANDLER
 // ============================================================
 
