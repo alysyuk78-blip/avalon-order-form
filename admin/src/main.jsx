@@ -269,6 +269,17 @@ import finance from '../../lib/admin-finance.js';
       if (v == null || v === "") return "—";
       return Number(v).toLocaleString("uk-UA", { maximumFractionDigits: 1 }) + "%";
     }
+    function itemMarginPct(item) {
+      const source = item || {};
+      const revenue = Number(source.revenue);
+      const profit = Number(source.profit);
+      if (revenue > 0 && source.profit != null && source.profit !== "" && Number.isFinite(profit)) {
+        return Math.round((profit / revenue) * 1000) / 10;
+      }
+      const stored = Number(source.margin_pct);
+      if (!Number.isFinite(stored)) return null;
+      return stored;
+    }
     /** Парсить дати з таблиці: dd.MM.yyyy[ HH:mm] */
     function parseUaDateTime(v) {
       if (v == null || v === "") return null;
@@ -820,7 +831,7 @@ import finance from '../../lib/admin-finance.js';
 
       return (
         <section className="payments-section" aria-labelledby="payments-section-title">
-          <div className="section-title" id="payments-section-title">Платежі</div>
+          <div className="section-title section-title--first" id="payments-section-title">Платежі</div>
           <div className="grid2">
             <div className="field"><label htmlFor="payment-client-summary">Клієнт сплатив</label>
               <input id="payment-client-summary" disabled value={money(s.client_paid || 0) + " / " + money(s.revenue || 0)
@@ -1032,7 +1043,7 @@ import finance from '../../lib/admin-finance.js';
               onChanged={async () => { await load(); onChanged && onChanged(); }}
             />
 
-            <div className="section-title" style={{ marginTop: 0 }}>Швидкі дії</div>
+            <div className="section-title">Швидкі дії</div>
             <div className="quick-actions">
               {STATUSES.filter(s => s !== "Скасовано").map(s => (
                 <button
@@ -1056,14 +1067,6 @@ import finance from '../../lib/admin-finance.js';
                 У таблиці не задано коректний статус. Оберіть фактичний статус замовлення.
               </div>
             )}
-
-            <div className="field">
-              <label>Статус</label>
-              <select value={form.status} onChange={e => changeStatus(e.target.value)}>
-                {form.status === MISSING_STATUS && <option value={MISSING_STATUS} disabled>{MISSING_STATUS}</option>}
-                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
 
             <div className="section-title">Клієнт і контакти</div>
             <div className="grid2">
@@ -1231,15 +1234,20 @@ import finance from '../../lib/admin-finance.js';
             })}>Зберегти деталі</button>
 
             <div className="section-title">Позиції ({items.length})</div>
-            {items.map(it => (
-              <div key={it.row} className="panel" style={{ boxShadow: "none", padding: 12 }}>
-                <div style={{ fontWeight: 700 }}>{it.basket_model ? it.basket_model + " · " : ""}{it.basket_type || "Кошик"} · {it.construction}</div>
-                <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
-                  {it.size_w || "—"}×{it.size_h || "—"}×{it.size_d || "—"} мм · {it.quantity} {it.unit || (it.product_kind === "Кронштейни" ? "комп." : "шт.")} · {it.color} · {it.pattern}
+            <div className="order-items-list">
+              {items.map(it => (
+                <div key={it.row} className="order-item-card">
+                  <div className="order-item-title">{it.basket_model ? it.basket_model + " · " : ""}{it.basket_type || "Кошик"} · {it.construction}</div>
+                  <div className="order-item-meta">
+                    {it.size_w || "—"}×{it.size_h || "—"}×{it.size_d || "—"} мм · {it.quantity} {it.unit || (it.product_kind === "Кронштейни" ? "комп." : "шт.")} · {it.color} · {it.pattern}
+                  </div>
+                  <div className="order-item-finance">
+                    <span>{money(it.revenue)}</span>
+                    <span>Маржа {money(it.profit)} · {pct(itemMarginPct(it))}</span>
+                  </div>
                 </div>
-                <div style={{ marginTop: 6, fontSize: 13 }}>{money(it.revenue)} · маржа {pct(it.margin_pct)}</div>
-              </div>
-            ))}
+              ))}
+            </div>
             {error && <div className="error">{error}</div>}
           </div>
         </div>
@@ -1372,7 +1380,7 @@ import finance from '../../lib/admin-finance.js';
               <button className="btn ghost" onClick={onClose}>Закрити</button>
             </header>
 
-            <div className="section-title" style={{ marginTop: 0 }}>Клієнт</div>
+            <div className="section-title section-title--first">Клієнт</div>
             <div className="grid2">
               <div className="field"><label>Імʼя та прізвище *</label>
                 <input value={form.client} onChange={e => set("client", e.target.value)} placeholder="Напр. Олег Петренко" /></div>
