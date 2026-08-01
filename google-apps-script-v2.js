@@ -1994,6 +1994,7 @@ function handleAdminRequest_(data) {
   }
   try {
     var action = String(data.admin_action || "");
+    if (action === "bootstrap") return jsonOut(adminBootstrap_(data));
     if (action === "list_orders") return jsonOut(adminListOrders_(data));
     if (action === "get_order") return jsonOut(adminGetOrder_(data));
     if (action === "update_order") return jsonOut(adminUpdateOrder_(data));
@@ -2126,6 +2127,16 @@ function adminListOrders_(data) {
     orders.push(mapped);
   }
 
+  // Платежі читаємо ОДИН раз на всі замовлення — щоб не робити запит на кожну картку.
+  return {
+    status: "ok",
+    orders: orders,
+    groups: adminGroupOrders_(orders, data && Array.isArray(data._payments) ? data._payments : readPayments_(""))
+  };
+}
+
+/** Групує позиції в картки та додає фінансовий стан із уже прочитаних платежів. */
+function adminGroupOrders_(orders, payments) {
   // Групи для канбану: одне замовлення = одна картка (сума по позиціях).
   var byNum = {};
   orders.forEach(function (o) {
@@ -2171,9 +2182,8 @@ function adminListOrders_(data) {
     }
     if (o.created_at && (!g.created_at || parseCreatedAtMs_(o.created_at) < parseCreatedAtMs_(g.created_at))) g.created_at = o.created_at;
   });
-  // Платежі читаємо ОДИН раз на всі замовлення — щоб не робити запит на кожну картку.
   var payByOrder = {};
-  readPayments_("").forEach(function (pmt) {
+  (payments || []).forEach(function (pmt) {
     if (!payByOrder[pmt.order_number]) payByOrder[pmt.order_number] = [];
     payByOrder[pmt.order_number].push(pmt);
   });
@@ -2194,20 +2204,29 @@ function adminListOrders_(data) {
   groups.sort(function (a, b) {
     return parseCreatedAtMs_(b.created_at) - parseCreatedAtMs_(a.created_at);
   });
-  return { status: "ok", orders: orders, groups: groups };
+  return groups;
 }
 
 function adminGetOrder_(data) {
   var orderNumber = String(data.order_number || "").trim();
   if (!orderNumber) throw new Error("order_number required");
-  var listed = adminListOrders_({ q: orderNumber });
-  var items = listed.orders.filter(function (o) { return o.order_number === orderNumber; });
+  var sheet = adminOrdersSheet_();
+  var last = sheet.getLastRow();
+  if (last < 2) return { status: "error", message: "Order not found" };
+
+  // Картка читає лише свої рядки. Раніше тут повторно завантажувались усі
+  // 45 колонок усіх замовлень, усі платежі, а потім платежі цього замовлення ще раз.
+  var found = sheet.getRange(2, 1, last - 1, 1)
+    .createTextFinder(orderNumber)
+    .matchEntireCell(true)
+    .findAll();
+  var items = found.map(function (cell) {
+    var row = cell.getRow();
+    return mapOrderRow_(row, sheet.getRange(row, 1, 1, ADMIN_ORDER_COLS).getValues()[0]);
+  });
   if (!items.length) return { status: "error", message: "Order not found" };
-  var group = null;
-  for (var i = 0; i < listed.groups.length; i++) {
-    if (listed.groups[i].order_number === orderNumber) { group = listed.groups[i]; break; }
-  }
   var pay = readPayments_(orderNumber);
+  var group = adminGroupOrders_(items, pay)[0] || null;
   var payTotals = paymentTotals_(pay);
   return {
     status: "ok", order: group, items: items,
@@ -2224,6 +2243,29 @@ function adminGetOrder_(data) {
         legacy: !pay.length
       };
     })()
+  };
+}
+
+/**
+ * Початкові дані CRM одним Apps Script виконанням. Це прибирає чотири послідовні
+ * холодні старти Google і дає інтерфейсу позиції для миттєвого відкриття картки.
+ */
+function adminBootstrap_(data) {
+  var payments = readPayments_("");
+  var listed = adminListOrders_({
+    q: data && data.q,
+    status: data && data.status,
+    _payments: payments
+  });
+  var expenses = adminListExpenses_({});
+  var payouts = adminListPayouts_();
+  return {
+    status: "ok",
+    orders: listed.orders,
+    groups: listed.groups,
+    expenses: expenses.expenses || [],
+    payments: payments,
+    payouts: payouts.payouts || []
   };
 }
 

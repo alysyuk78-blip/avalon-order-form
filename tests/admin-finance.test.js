@@ -116,7 +116,72 @@ function testPaymentDeletionChecksStableIdentity() {
   assert.equal(deleted, true);
 }
 
+function testBootstrapReadsPaymentsOnce() {
+  const context = loadAppsScript();
+  let paymentReads = 0;
+  context.readPayments_ = () => {
+    paymentReads += 1;
+    return [{ order_number: "ORD-010126-001", type: "Передоплата", amount: 300 }];
+  };
+  context.adminListOrders_ = data => {
+    assert.equal(Array.isArray(data._payments), true, "bootstrap має передати вже прочитані платежі");
+    return { status: "ok", orders: [], groups: [] };
+  };
+  context.adminListExpenses_ = () => ({ status: "ok", expenses: [] });
+  context.adminListPayouts_ = () => ({ status: "ok", payouts: [] });
+
+  const result = context.adminBootstrap_({});
+  assert.equal(result.status, "ok");
+  assert.equal(result.payments.length, 1);
+  assert.equal(paymentReads, 1, "bootstrap не повинен повторно читати журнал платежів");
+}
+
+function testOrderDetailReadsOnlyMatchedRows() {
+  const context = loadAppsScript();
+  const row = new Array(45).fill("");
+  row[0] = "ORD-010126-001";
+  row[2] = "В роботі";
+  row[4] = "Тест";
+  row[16] = 1;
+  row[19] = 800;
+  row[21] = 1000;
+  row[22] = 200;
+  const fullReads = [];
+  const sheet = {
+    getLastRow: () => 20,
+    getRange(r, c, rows, cols) {
+      if (r === 2 && c === 1 && rows === 19 && cols === 1) {
+        return {
+          createTextFinder: value => ({
+            matchEntireCell: exact => ({
+              findAll: () => {
+                assert.equal(value, "ORD-010126-001");
+                assert.equal(exact, true);
+                return [{ getRow: () => 7 }];
+              },
+            }),
+          }),
+        };
+      }
+      if (r === 7 && c === 1 && rows === 1 && cols === 45) {
+        fullReads.push(r);
+        return { getValues: () => [row] };
+      }
+      throw new Error(`Неочікуване читання ${r}:${c}:${rows}:${cols}`);
+    },
+  };
+  context.adminOrdersSheet_ = () => sheet;
+  context.readPayments_ = () => [];
+
+  const result = context.adminGetOrder_({ order_number: "ORD-010126-001" });
+  assert.equal(result.status, "ok");
+  assert.equal(result.items.length, 1);
+  assert.deepEqual(fullReads, [7], "картка має читати лише знайдений рядок");
+}
+
 testPaymentMetrics();
 testStandardRecalculationClearsStaleDiscount();
 testPaymentDeletionChecksStableIdentity();
+testBootstrapReadsPaymentsOnce();
+testOrderDetailReadsOnlyMatchedRows();
 console.log("admin-finance tests: OK");
