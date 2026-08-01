@@ -398,6 +398,13 @@ import finance from '../../lib/admin-finance.js';
       if (!d) return false;
       return d >= range.start && d <= range.end;
     }
+    function dateInPeriod(value, period) {
+      const range = periodRange(period);
+      if (!range) return true;
+      const d = parseUaDateTime(value) || (value ? new Date(value) : null);
+      if (!d || isNaN(d.getTime())) return false;
+      return d >= range.start && d <= range.end;
+    }
     function monthKeyFromDate(d) {
       if (!d || isNaN(d.getTime())) return "";
       const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -457,7 +464,7 @@ import finance from '../../lib/admin-finance.js';
         .sort((a, b) => a.priority - b.priority || String(b.order_number).localeCompare(String(a.order_number)))
         .slice(0, 12);
     }
-    function totalsFromGroups(groups, expensesTotal) {
+    function totalsFromGroups(groups, expensesTotal, payoutsTotal, marginCashReceived) {
       const by_status = {};
       DISPLAY_STATUSES.forEach(s => { by_status[s] = 0; });
       let revenue = 0, cost = 0, profit = 0, commission = 0;
@@ -480,48 +487,77 @@ import finance from '../../lib/admin-finance.js';
         margin_debt += payment.marginDebt;
       });
       const expenses = Number(expensesTotal) || 0;
+      const payouts_paid = Number(payoutsTotal) || 0;
+      const margin_cash_received = Number.isFinite(Number(marginCashReceived))
+        ? Number(marginCashReceived)
+        : margin_received;
       return {
         revenue, cost, profit, commission, expenses,
         margin_ready, margin_received, margin_debt,
+        margin_pending: Math.max(0, profit - margin_received - margin_debt),
+        margin_cash_received, payouts_paid,
         margin_pct: revenue ? Math.round((profit / revenue) * 1000) / 10 : 0,
-        net_fact: margin_received - commission - expenses,
+        net_fact: margin_cash_received - payouts_paid - expenses,
         by_status,
       };
     }
-    function monthlyFromGroups(groups, expenses) {
+    function monthlyFromGroups(groups, expenses, payments, payouts, eligibleOrderNumbers) {
       const map = {};
+      const ensureMonth = key => {
+        if (!map[key]) {
+          map[key] = {
+            month: key, revenue: 0, cost: 0, profit: 0, commission: 0,
+            margin_received: 0, margin_debt: 0, payouts: 0, expenses: 0,
+          };
+        }
+        return map[key];
+      };
       (groups || []).forEach(g => {
         if (g.status === "Скасовано") return;
         const d = orderDate(g);
         const key = monthKeyFromDate(d);
         if (!key) return;
-        if (!map[key]) {
-          map[key] = { month: key, revenue: 0, cost: 0, profit: 0, commission: 0, margin_received: 0, margin_debt: 0, expenses: 0 };
-        }
-        const m = map[key];
+        const m = ensureMonth(key);
         m.revenue += Number(g.revenue) || 0;
         m.cost += Number(g.cost_total) || 0;
         m.profit += Number(g.profit) || 0;
         m.commission += Number(g.commission) || 0;
         const payment = groupPaymentMetrics(g);
-        m.margin_received += payment.marginReceived;
         m.margin_debt += payment.marginDebt;
+        // Для старих замовлень без журналу точна дата надходження невідома.
+        // Зберігаємо сумісність і відносимо їхню отриману маржу до місяця замовлення.
+        if (!(Number(g.payments_count) > 0)) m.margin_received += payment.marginReceived;
+      });
+      (payments || []).forEach(payment => {
+        if (payment.type !== "Маржа від підрядника") return;
+        if (eligibleOrderNumbers && !eligibleOrderNumbers.has(String(payment.order_number || ""))) return;
+        const d = parseUaDateTime(payment.date) || (payment.date ? new Date(payment.date) : null);
+        const key = monthKeyFromDate(d);
+        if (!key) return;
+        ensureMonth(key).margin_received += Number(payment.amount) || 0;
       });
       (expenses || []).forEach(ex => {
         const d = parseUaDateTime(ex.date) || (ex.date ? new Date(ex.date) : null);
         const key = monthKeyFromDate(d);
         if (!key) return;
-        if (!map[key]) {
-          map[key] = { month: key, revenue: 0, cost: 0, profit: 0, commission: 0, margin_received: 0, margin_debt: 0, expenses: 0 };
-        }
-        map[key].expenses += Number(ex.amount) || 0;
+        ensureMonth(key).expenses += Number(ex.amount) || 0;
+      });
+      (payouts || []).forEach(payout => {
+        const d = parseUaDateTime(payout.date) || (payout.date ? new Date(payout.date) : null);
+        const key = monthKeyFromDate(d);
+        if (!key) return;
+        ensureMonth(key).payouts += Number(payout.amount) || 0;
       });
       return Object.keys(map).map(k => {
         const row = map[k];
         row.margin_pct = row.revenue ? Math.round((row.profit / row.revenue) * 1000) / 10 : 0;
-        row.net_fact = row.margin_received - row.commission - row.expenses;
+        row.net_fact = row.margin_received - row.payouts - row.expenses;
         return row;
-      }).sort((a, b) => compareMonthKeyDesc(a.month, b.month)).slice(0, 6);
+      }).filter(row => [
+        row.revenue, row.cost, row.profit, row.commission, row.margin_received,
+        row.margin_debt, row.payouts, row.expenses,
+      ].some(value => Number(value) !== 0))
+        .sort((a, b) => compareMonthKeyDesc(a.month, b.month)).slice(0, 6);
     }
     /** Нормалізація телефону: ключ для довідника клієнтів. */
     function normalizePhone(phone) {
@@ -1879,7 +1915,7 @@ import finance from '../../lib/admin-finance.js';
     };
 
     function MonthlyBarsChart({ monthly }) {
-      const rows = (monthly || []).slice().reverse();
+      const rows = (monthly || []).filter(m => (Number(m.revenue) || 0) !== 0 || (Number(m.profit) || 0) !== 0).slice().reverse();
       const max = Math.max(1, ...rows.map(m => Math.max(Number(m.revenue) || 0, Number(m.profit) || 0)));
       if (!rows.length) return <div className="empty">Немає помісячних даних</div>;
       return (
@@ -1891,8 +1927,16 @@ import finance from '../../lib/admin-finance.js';
               const hRev = Math.max(3, Math.round((rev / max) * 100));
               const hMar = Math.max(3, Math.round((mar / max) * 100));
               return (
-                <div className="dual-col" key={m.month} title={"Виручка " + money(rev) + " · Маржа " + money(mar)}>
-                  <div className="dual-tip">{shortMoney(rev)}</div>
+                <div
+                  className="dual-col"
+                  key={m.month}
+                  title={"Виручка " + money(rev) + " · Маржа " + money(mar)}
+                  aria-label={m.month + ": виручка " + money(rev) + ", маржа " + money(mar)}
+                >
+                  <div className="dual-tip">
+                    <span className="rev">{shortMoney(rev)}</span>
+                    <span className="mar">{shortMoney(mar)}</span>
+                  </div>
                   <div className="dual-pair">
                     <div className="dual-stem rev" style={{ height: hRev }} />
                     <div className="dual-stem mar" style={{ height: hMar }} />
@@ -1912,44 +1956,49 @@ import finance from '../../lib/admin-finance.js';
 
     function StatusBarsChart({ byStatus }) {
       const statuses = (byStatus && byStatus[MISSING_STATUS]) ? DISPLAY_STATUSES : STATUSES;
-      const max = Math.max(1, ...statuses.map(s => (byStatus && byStatus[s]) || 0));
       const total = statuses.reduce((s, name) => s + ((byStatus && byStatus[name]) || 0), 0);
+      const cancelled = (byStatus && byStatus["Скасовано"]) || 0;
+      const financialOrders = Math.max(0, total - cancelled);
       return (
         <div className="chart-wrap status-chart">
           <div className="status-list">
             {statuses.map(s => {
               const n = (byStatus && byStatus[s]) || 0;
-              const pct = n ? Math.max(6, Math.round((n / max) * 100)) : 0;
+              const share = total ? Math.round((n / total) * 100) : 0;
               return (
                 <div className="status-row" key={s}>
                   <div className="name">{s}</div>
-                  <div className="track">
+                  <div className="track" aria-hidden="true">
                     <div className="fill" style={{
-                      width: pct + "%",
+                      width: share + "%",
                       background: n ? STATUS_CHART_COLORS[s] : "transparent",
                     }} />
                   </div>
-                  <div className="count">{n}</div>
+                  <div className="count" aria-label={n + " замовлень, " + share + "%"}>
+                    <strong>{n}</strong><span>{share}%</span>
+                  </div>
                 </div>
               );
             })}
           </div>
           <div className="chart-legend">
             <span>Усього карток: <strong style={{ color: "var(--ink)" }}>{total}</strong></span>
+            <span>У фінансах: <strong style={{ color: "var(--ink)" }}>{financialOrders}</strong> без скасованих</span>
           </div>
         </div>
       );
     }
 
-    function FinanceBarsChart({ revenue, cost, profit, commission, expenses }) {
+    function FinanceBarsChart({ revenue, cost, profit, commission, payouts, expenses }) {
       const rev = Number(revenue) || 0;
       const cst = Number(cost) || 0;
       const mar = Number(profit) || 0;
       const com = Number(commission) || 0;
+      const paid = Number(payouts) || 0;
       const exp = Number(expenses) || 0;
-      const base = rev > 0 ? rev : Math.max(cst + mar, 1);
+      const base = Math.max(rev, cst + mar, 1);
       const costPct = Math.min(100, Math.round((cst / base) * 1000) / 10);
-      const marPct = Math.min(100 - costPct, Math.round((mar / base) * 1000) / 10);
+      const marPct = Math.min(100, Math.round((mar / base) * 1000) / 10);
       return (
         <div className="chart-wrap stack-block">
           <div className="stack-bar" title={"Виручка " + money(rev)}>
@@ -1983,12 +2032,17 @@ import finance from '../../lib/admin-finance.js';
             </div>
             <div className="stack-row">
               <span className="chart-swatch" style={{ background: "#8f7340" }} />
-              <span>Комісії</span>
+              <span>Комісії нараховано</span>
               <span className="val">{money(com)}</span>
             </div>
             <div className="stack-row">
+              <span className="chart-swatch" style={{ background: "#b18a48" }} />
+              <span>Виплачено партнерам</span>
+              <span className="val">{money(paid)}</span>
+            </div>
+            <div className="stack-row">
               <span className="chart-swatch" style={{ background: "#b42318" }} />
-              <span>Витрати</span>
+              <span>Інші витрати</span>
               <span className="val">{money(exp)}</span>
             </div>
           </div>
@@ -1996,15 +2050,18 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
-    function MarginSplitChart({ received, debt }) {
+    function MarginSplitChart({ profit, received, debt }) {
+      const gross = Math.max(0, Number(profit) || 0);
       const a = Math.max(0, Number(received) || 0);
       const b = Math.max(0, Number(debt) || 0);
-      const total = a + b;
+      const pending = Math.max(0, gross - a - b);
+      const total = Math.max(gross, a + b);
       const pctReceived = total ? Math.round((a / total) * 100) : 0;
       const r = 54;
       const c = 2 * Math.PI * r;
       const aLen = total ? (a / total) * c : 0;
       const bLen = total ? (b / total) * c : 0;
+      const pendingLen = total ? (pending / total) * c : 0;
       return (
         <div className="chart-wrap donut-wrap">
           <div className="donut">
@@ -2026,6 +2083,14 @@ import finance from '../../lib/admin-finance.js';
                   strokeLinecap="butt"
                 />
               )}
+              {total > 0 && pending > 0 && (
+                <circle
+                  cx="70" cy="70" r={r} fill="none" stroke="#9ca3af" strokeWidth="16"
+                  strokeDasharray={`${pendingLen} ${c - pendingLen}`}
+                  strokeDashoffset={-(aLen + bLen)}
+                  strokeLinecap="butt"
+                />
+              )}
             </svg>
             <div className="donut-center">
               <strong>{total ? pctReceived + "%" : "—"}</strong>
@@ -2042,15 +2107,19 @@ import finance from '../../lib/admin-finance.js';
               <div className="num">{money(b)}</div>
             </div>
             <div className="donut-stat">
-              <div className="lab">Разом</div>
-              <div className="num">{money(total)}</div>
+              <div className="lab">Очікує оплати клієнта</div>
+              <div className="num">{money(pending)}</div>
+            </div>
+            <div className="donut-stat total">
+              <div className="lab">Валова маржа</div>
+              <div className="num">{money(gross)}</div>
             </div>
           </div>
         </div>
       );
     }
 
-    function DashboardView({ token, groups, expenses, loading, error, refreshData, onOpenOrder }) {
+    function DashboardView({ token, groups, expenses, payments, payouts, loading, error, refreshData, onOpenOrder }) {
       const [period, setPeriod] = useState("all");
 
       const filteredGroups = useMemo(
@@ -2058,23 +2127,49 @@ import finance from '../../lib/admin-finance.js';
         [groups, period]
       );
       const filteredExpenses = useMemo(() => {
-        if (period === "all") return expenses || [];
-        const range = periodRange(period);
-        return (expenses || []).filter(ex => {
-          const d = parseUaDateTime(ex.date);
-          if (!d) return false;
-          return d >= range.start && d <= range.end;
-        });
+        return (expenses || []).filter(ex => dateInPeriod(ex.date, period));
       }, [expenses, period]);
+      const filteredPayments = useMemo(
+        () => (payments || []).filter(payment => dateInPeriod(payment.date, period)),
+        [payments, period]
+      );
+      const filteredPayouts = useMemo(
+        () => (payouts || []).filter(payout => dateInPeriod(payout.date, period)),
+        [payouts, period]
+      );
+      const eligibleOrderNumbers = useMemo(
+        () => new Set((groups || []).filter(g => g.status !== "Скасовано").map(g => String(g.order_number || ""))),
+        [groups]
+      );
+      const marginCashReceived = useMemo(() => {
+        let total = (filteredPayments || []).reduce((sum, payment) => {
+          if (payment.type !== "Маржа від підрядника") return sum;
+          if (!eligibleOrderNumbers.has(String(payment.order_number || ""))) return sum;
+          return sum + (Number(payment.amount) || 0);
+        }, 0);
+        // У старих записів без журналу немає дати платежу: використовуємо дату замовлення.
+        (filteredGroups || []).forEach(group => {
+          if (group.status === "Скасовано" || Number(group.payments_count) > 0) return;
+          total += groupPaymentMetrics(group).marginReceived;
+        });
+        return total;
+      }, [filteredPayments, filteredGroups, eligibleOrderNumbers]);
 
       const t = useMemo(() => {
         const expSum = filteredExpenses.reduce((s, ex) => s + (Number(ex.amount) || 0), 0);
-        return totalsFromGroups(filteredGroups, expSum);
-      }, [filteredGroups, filteredExpenses]);
+        const payoutSum = filteredPayouts.reduce((s, payout) => s + (Number(payout.amount) || 0), 0);
+        return totalsFromGroups(filteredGroups, expSum, payoutSum, marginCashReceived);
+      }, [filteredGroups, filteredExpenses, filteredPayouts, marginCashReceived]);
 
       const monthly = useMemo(
-        () => monthlyFromGroups(filteredGroups, filteredExpenses),
-        [filteredGroups, filteredExpenses]
+        () => monthlyFromGroups(
+          filteredGroups,
+          filteredExpenses,
+          filteredPayments,
+          filteredPayouts,
+          eligibleOrderNumbers
+        ),
+        [filteredGroups, filteredExpenses, filteredPayments, filteredPayouts, eligibleOrderNumbers]
       );
 
       const reminders = useMemo(() => buildReminders(groups), [groups]);
@@ -2100,6 +2195,9 @@ import finance from '../../lib/admin-finance.js';
               ))}
             </div>
             <button className="btn secondary" onClick={refreshData}>Оновити</button>
+          </div>
+          <div className="dashboard-basis">
+            Виручка, собівартість і валова маржа — за датою замовлення. Надходження, виплати та витрати — за датою операції.
           </div>
 
           {reminders.length > 0 && (
@@ -2128,9 +2226,9 @@ import finance from '../../lib/admin-finance.js';
             <div className="kpi"><div className="label">Собівартість</div><div className="value">{money(t.cost)}</div></div>
             <div className="kpi"><div className="label">Валовий прибуток</div><div className="value">{money(t.profit)}</div></div>
             <div className="kpi"><div className="label">Маржа %</div><div className="value">{pct(t.margin_pct)}</div></div>
-            <div className="kpi"><div className="label">Маржа до отримання</div><div className="value">{money(t.margin_debt)}</div></div>
-            <div className="kpi"><div className="label">Маржу отримано</div><div className="value">{money(t.margin_received)}</div></div>
-            <div className="kpi"><div className="label">Комісії + витрати</div><div className="value">{money((t.commission || 0) + (t.expenses || 0))}</div></div>
+            <div className="kpi"><div className="label">Борг підрядника</div><div className="value">{money(t.margin_debt)}</div></div>
+            <div className="kpi"><div className="label">Маржа надійшла</div><div className="value">{money(t.margin_cash_received)}</div><div className="sub">За датами платежів</div></div>
+            <div className="kpi"><div className="label">Виплати + витрати</div><div className="value">{money((t.payouts_paid || 0) + (t.expenses || 0))}</div><div className="sub">Комісій нараховано: {money(t.commission)}</div></div>
             <div className="kpi"><div className="label">Чистий факт</div><div className="value">{money(t.net_fact)}</div></div>
           </div>
 
@@ -2138,47 +2236,49 @@ import finance from '../../lib/admin-finance.js';
             <div className="panel">
               <div className="panel-head">
                 <h2>Виручка і маржа по місяцях</h2>
-                <InfoTip text="Сірий стовпчик — виручка, зелений — маржа за місяць." />
+                <InfoTip text="Сірий стовпчик — виручка, зелений — валова маржа замовлень за місяць їх створення." />
               </div>
               <MonthlyBarsChart monthly={monthly} />
             </div>
             <div className="panel">
               <div className="panel-head">
                 <h2>Замовлення по статусах</h2>
-                <InfoTip text="Скільки замовлень у кожному статусі. Довша смужка — більше замовлень." />
+                <InfoTip text="Кількість і частка від усіх карток. Фінансові показники не враховують скасовані замовлення." />
               </div>
               <StatusBarsChart byStatus={t.by_status} />
             </div>
             <div className="panel">
               <div className="panel-head">
                 <h2>Структура фінансів</h2>
-                <InfoTip text="Як виручка ділиться на собівартість і маржу, плюс комісії та витрати." />
+                <InfoTip text="Смуга показує структуру виручки: собівартість і валову маржу. Нижче окремо наведені нараховані комісії, фактичні виплати партнерам та інші витрати." />
               </div>
               <FinanceBarsChart
                 revenue={t.revenue}
                 cost={t.cost}
                 profit={t.profit}
                 commission={t.commission}
+                payouts={t.payouts_paid}
                 expenses={t.expenses}
               />
             </div>
             <div className="panel">
               <div className="panel-head">
-                <h2>Маржа: отримано / борг</h2>
-                <InfoTip text="Скільки маржі вже отримано і скільки ще має надійти від підрядника." />
+                <h2>Стан маржі замовлень</h2>
+                <InfoTip text="Повна валова маржа замовлень вибраного періоду: вже отримана, борг підрядника та сума, яка очікує повної оплати клієнта." />
               </div>
-              <MarginSplitChart received={t.margin_received} debt={t.margin_debt} />
+              <MarginSplitChart profit={t.profit} received={t.margin_received} debt={t.margin_debt} />
             </div>
           </div>
 
           <div className="panel">
             <h2>Помісячно</h2>
+            <div className="panel-subtitle">Нарахування — за місяцем замовлення; рух коштів — за фактичною датою операції.</div>
             <div className="table-scroll">
             <table>
               <thead>
                 <tr>
                   <th>Місяць</th><th>Виручка</th><th>Собівартість</th><th>Валовий</th><th>Маржа %</th>
-                  <th>Отримано</th><th>Борг</th><th>Комісії</th><th>Витрати</th><th>Чистий</th>
+                  <th>Надійшло маржі</th><th>Борг підрядника</th><th>Комісії нараховано</th><th>Виплати партнерам</th><th>Витрати</th><th>Чистий факт</th>
                 </tr>
               </thead>
               <tbody>
@@ -2192,6 +2292,7 @@ import finance from '../../lib/admin-finance.js';
                     <td>{money(m.margin_received)}</td>
                     <td>{money(m.margin_debt)}</td>
                     <td>{money(m.commission)}</td>
+                    <td>{money(m.payouts)}</td>
                     <td>{money(m.expenses)}</td>
                     <td>{money(m.net_fact)}</td>
                   </tr>
@@ -2204,22 +2305,17 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
-    function PartnersView({ token }) {
+    function PartnersView({ token, payouts, refreshPayouts }) {
       const [partners, setPartners] = useState([]);
-      const [payouts, setPayouts] = useState([]);
       const [error, setError] = useState("");
       const [form, setForm] = useState({ code: "", name: "", type: "ОСББ", contact: "", rate: 150 });
       const [payout, setPayout] = useState({ code: "", amount: "", method: "Переказ", note: "" });
 
-      async function load() {
-        const [p, pay] = await Promise.all([
-          api("/api/admin/partners", { token }),
-          api("/api/admin/payouts", { token }),
-        ]);
+      async function loadPartners() {
+        const p = await api("/api/admin/partners", { token });
         setPartners(p.partners || []);
-        setPayouts(pay.payouts || []);
       }
-      useEffect(() => { load().catch(e => setError(e.message)); }, [token]);
+      useEffect(() => { loadPartners().catch(e => setError(e.message)); }, [token]);
 
       return (
         <div>
@@ -2237,7 +2333,7 @@ import finance from '../../lib/admin-finance.js';
               try {
                 await api("/api/admin/partners", { method: "POST", token, body: { ...form, rate: Number(form.rate) || 0 } });
                 setForm({ code: "", name: "", type: "ОСББ", contact: "", rate: 150 });
-                await load();
+                await loadPartners();
               } catch (e) { setError(e.message); }
             }}>Зберегти партнера</button>
             <div className="table-scroll">
@@ -2272,7 +2368,7 @@ import finance from '../../lib/admin-finance.js';
               try {
                 await api("/api/admin/payouts", { method: "POST", token, body: { ...payout, amount: Number(payout.amount) } });
                 setPayout({ code: "", amount: "", method: "Переказ", note: "" });
-                await load();
+                await refreshPayouts();
               } catch (e) { setError(e.message); }
             }}>Записати виплату</button>
             <div className="table-scroll">
@@ -2505,6 +2601,8 @@ import finance from '../../lib/admin-finance.js';
       const [tab, setTab] = useState("orders");
       const [groups, setGroups] = useState([]);
       const [expenses, setExpenses] = useState([]);
+      const [payments, setPayments] = useState([]);
+      const [payouts, setPayouts] = useState([]);
       const [dataLoading, setDataLoading] = useState(false);
       const [ordersError, setOrdersError] = useState("");
       const [sessionMsg, setSessionMsg] = useState("");
@@ -2520,6 +2618,8 @@ import finance from '../../lib/admin-finance.js';
         setToken("");
         setGroups([]);
         setExpenses([]);
+        setPayments([]);
+        setPayouts([]);
         setSelectedOrder(null);
         if (msg) setSessionMsg(msg);
       }
@@ -2551,8 +2651,24 @@ import finance from '../../lib/admin-finance.js';
         setExpenses(data.expenses || []);
       }
 
+      async function refreshPayments() {
+        if (!token) return;
+        const data = await api("/api/admin/payments", { token });
+        setPayments(data.payments || []);
+      }
+
+      async function refreshPayouts() {
+        if (!token) return;
+        const data = await api("/api/admin/payouts", { token });
+        setPayouts(data.payouts || []);
+      }
+
       async function refreshData() {
-        await Promise.all([refreshOrders(), refreshExpenses()]);
+        try {
+          await Promise.all([refreshOrders(), refreshExpenses(), refreshPayments(), refreshPayouts()]);
+        } catch (e) {
+          setOrdersError(e.message || "Не вдалося оновити дані CRM");
+        }
       }
 
       function openOrder(num) {
@@ -2640,6 +2756,8 @@ import finance from '../../lib/admin-finance.js';
                 token={token}
                 groups={groups}
                 expenses={expenses}
+                payments={payments}
+                payouts={payouts}
                 loading={dataLoading}
                 error={ordersError}
                 refreshData={refreshData}
@@ -2647,7 +2765,7 @@ import finance from '../../lib/admin-finance.js';
               />
             </div>
             <div style={{ display: tab === "partners" ? "block" : "none" }}>
-              <PartnersView token={token} />
+              <PartnersView token={token} payouts={payouts} refreshPayouts={refreshPayouts} />
             </div>
             <div style={{ display: tab === "expenses" ? "block" : "none" }}>
               <ExpensesView token={token} expenses={expenses} refreshExpenses={refreshExpenses} />
