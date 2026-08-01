@@ -6,7 +6,7 @@
   "scripts": {
     "build:admin": "esbuild admin/src/main.jsx --bundle --outfile=public/admin/assets/admin.js --minify --loader:.jsx=jsx",
     "check:admin": "esbuild admin/src/main.jsx --bundle --outfile=/tmp/admin-check.js --loader:.jsx=jsx",
-    "test:quick": "node tests/admin-sheets.test.js && node tests/api-order.test.js"
+    "test:quick": "node tests/admin-finance.test.js && node tests/admin-sheets.test.js && node tests/api-order.test.js"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

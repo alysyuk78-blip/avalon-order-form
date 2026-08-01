@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
+import finance from '../../lib/admin-finance.js';
+
+    const { groupPaymentMetrics } = finance;
 
     const STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
     const MISSING_STATUS = "Без статусу";
@@ -179,7 +182,7 @@ import { createRoot } from 'react-dom/client';
       const byOrder = {};
       (groups || []).forEach(g => {
         if (g.status === "Скасовано") return;
-        const profit = Number(g.profit) || 0;
+        const payment = groupPaymentMetrics(g);
         const reasons = [];
         let priority = 99;
         let tag = "";
@@ -190,8 +193,8 @@ import { createRoot } from 'react-dom/client';
           tag = "Статус";
           tagClass = "data";
         }
-        if (g.client_paid && !g.margin_paid && profit > 0) {
-          reasons.push("Маржа до отримання: " + money(profit));
+        if (payment.marginDebt > 0) {
+          reasons.push("Маржа до отримання: " + money(payment.marginDebt));
           if (priority > 1) {
             priority = 1;
             tag = "Борг маржі";
@@ -235,13 +238,14 @@ import { createRoot } from 'react-dom/client';
         const cst = Number(g.cost_total) || 0;
         const pr = Number(g.profit) || 0;
         const com = Number(g.commission) || 0;
+        const payment = groupPaymentMetrics(g);
         revenue += rev;
         cost += cst;
         profit += pr;
         commission += com;
-        if (g.client_paid) margin_ready += pr;
-        if (g.margin_paid) margin_received += pr;
-        if (g.client_paid && !g.margin_paid) margin_debt += pr;
+        margin_ready += payment.marginReady;
+        margin_received += payment.marginReceived;
+        margin_debt += payment.marginDebt;
       });
       const expenses = Number(expensesTotal) || 0;
       return {
@@ -267,8 +271,9 @@ import { createRoot } from 'react-dom/client';
         m.cost += Number(g.cost_total) || 0;
         m.profit += Number(g.profit) || 0;
         m.commission += Number(g.commission) || 0;
-        if (g.margin_paid) m.margin_received += Number(g.profit) || 0;
-        if (g.client_paid && !g.margin_paid) m.margin_debt += Number(g.profit) || 0;
+        const payment = groupPaymentMetrics(g);
+        m.margin_received += payment.marginReceived;
+        m.margin_debt += payment.marginDebt;
       });
       (expenses || []).forEach(ex => {
         const d = parseUaDateTime(ex.date) || (ex.date ? new Date(ex.date) : null);
@@ -579,7 +584,13 @@ import { createRoot } from 'react-dom/client';
         if (!window.confirm("Видалити цей платіж?")) return;
         setBusy(true); setError("");
         try {
-          const qs = new URLSearchParams({ row: String(payment.row), order_number: orderNumber });
+          const qs = new URLSearchParams({
+            row: String(payment.row),
+            order_number: orderNumber,
+            payment_request_id: payment.request_id || "",
+            payment_type: payment.type || "",
+            payment_amount: String(payment.amount || 0),
+          });
           await api("/api/admin/payments?" + qs.toString(), { method: "DELETE", token });
           onChanged && onChanged();
         } catch (e) { setError(e.message || "Не вдалося видалити платіж"); }
@@ -1272,7 +1283,7 @@ import { createRoot } from 'react-dom/client';
             </div>
             {(revenueTotal > 0 || costTotalCalc > 0) && (
               <div className="panel" style={{ boxShadow: "none", padding: 12, marginTop: 10 }}>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>Разом за позицію ({qtyNum} шт.)</div>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Разом за позицію ({qtyNum} {form.unit.trim() || "шт."})</div>
                 <div style={{ fontSize: 13, lineHeight: 1.7, color: "var(--muted)" }}>
                   {listTotal > 0 && !priceUnitOverride && (
                     <div>Роздрібна: {money(listUnit)} × {qtyNum} = <b>{money(listTotal)}</b>
