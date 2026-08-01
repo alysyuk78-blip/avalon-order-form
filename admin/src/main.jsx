@@ -61,6 +61,7 @@ import finance from '../../lib/admin-finance.js';
     const PAYMENT_METHODS = ["Готівка","На карту","На рахунок ФО-П","На рахунок ТОВ","Накладений платіж","Інше"];
     const TOKEN_KEY = "avalon_admin_token";
     const CARDS_COLLAPSED_KEY = "avalon_admin_cards_collapsed_v1";
+    const ORDERS_CACHE_KEY = "avalon_admin_orders_cache_v1";
     const ICON_COMPONENTS = {
       search: Search,
       filter: ListFilter,
@@ -1755,9 +1756,9 @@ import finance from '../../lib/admin-finance.js';
             />
           )}
           {loading && <div className="empty">Завантаження замовлень…</div>}
-          {!loading && !filteredGroups.length && <div className="empty">Замовлень не знайдено</div>}
+          {!loading && !error && !filteredGroups.length && <div className="empty">Замовлень не знайдено</div>}
 
-          {!loading && filteredGroups.length > 0 && (
+          {(!loading || filteredGroups.length > 0) && filteredGroups.length > 0 && (
             <div className="orders-totals" role="group" aria-label="Підсумок замовлень">
               <div className="summary-metric summary-count" title="Кількість замовлень без скасованих">
                 <span>Замовлень</span>
@@ -1781,7 +1782,7 @@ import finance from '../../lib/admin-finance.js';
             </div>
           )}
 
-          {!loading && view === "kanban" && (
+          {filteredGroups.length > 0 && view === "kanban" && (
             <div className="kanban">
               {funnelStatuses.map(s => (
                 <div
@@ -1911,7 +1912,7 @@ import finance from '../../lib/admin-finance.js';
             </div>
           )}
 
-          {!loading && view === "list" && (
+          {filteredGroups.length > 0 && view === "list" && (
             <div className="list">
               {filteredGroups.map(g => (
                 <div
@@ -2659,7 +2660,14 @@ import finance from '../../lib/admin-finance.js';
     function App() {
       const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) || "");
       const [tab, setTab] = useState("orders");
-      const [groups, setGroups] = useState([]);
+      const [groups, setGroups] = useState(() => {
+        try {
+          const cached = JSON.parse(sessionStorage.getItem(ORDERS_CACHE_KEY) || "null");
+          return Array.isArray(cached?.groups) ? cached.groups : [];
+        } catch (_) {
+          return [];
+        }
+      });
       const [expenses, setExpenses] = useState([]);
       const [payments, setPayments] = useState([]);
       const [payouts, setPayouts] = useState([]);
@@ -2668,6 +2676,7 @@ import finance from '../../lib/admin-finance.js';
       const [sessionMsg, setSessionMsg] = useState("");
       const [selectedOrder, setSelectedOrder] = useState(null);
       const topRef = useRef(null);
+      const ordersRefreshRef = useRef(null);
 
       function login(t) {
         sessionStorage.setItem(TOKEN_KEY, t);
@@ -2676,6 +2685,7 @@ import finance from '../../lib/admin-finance.js';
       }
       function logout(msg) {
         sessionStorage.removeItem(TOKEN_KEY);
+        sessionStorage.removeItem(ORDERS_CACHE_KEY);
         setToken("");
         setGroups([]);
         setExpenses([]);
@@ -2693,16 +2703,44 @@ import finance from '../../lib/admin-finance.js';
 
       async function refreshOrders() {
         if (!token) return;
-        setDataLoading(true);
-        setOrdersError("");
+        if (ordersRefreshRef.current) return ordersRefreshRef.current;
+        const request = (async () => {
+          setDataLoading(true);
+          setOrdersError("");
+          try {
+            const data = await api("/api/admin/orders", { token });
+            const nextGroups = normalizeOrderGroups(data);
+            setGroups(nextGroups);
+            try {
+              sessionStorage.setItem(ORDERS_CACHE_KEY, JSON.stringify({
+                savedAt: Date.now(),
+                groups: nextGroups,
+              }));
+            } catch (_) {}
+          } catch (e) {
+            let cached = null;
+            try {
+              cached = JSON.parse(sessionStorage.getItem(ORDERS_CACHE_KEY) || "null");
+            } catch (_) {}
+            if (Array.isArray(cached?.groups) && cached.groups.length) {
+              const savedAt = Number(cached.savedAt) || 0;
+              const cacheLabel = savedAt
+                ? new Date(savedAt).toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" })
+                : "попереднього оновлення";
+              setOrdersError(`${e.message}. Показано останні дані станом на ${cacheLabel}.`);
+            } else {
+              setOrdersError(e.message);
+            }
+            throw e;
+          } finally {
+            setDataLoading(false);
+          }
+        })();
+        ordersRefreshRef.current = request;
         try {
-          const data = await api("/api/admin/orders", { token });
-          setGroups(normalizeOrderGroups(data));
-        } catch (e) {
-          setOrdersError(e.message);
-          throw e;
+          return await request;
         } finally {
-          setDataLoading(false);
+          if (ordersRefreshRef.current === request) ordersRefreshRef.current = null;
         }
       }
 
@@ -2726,9 +2764,14 @@ import finance from '../../lib/admin-finance.js';
 
       async function refreshData() {
         try {
-          await Promise.all([refreshOrders(), refreshExpenses(), refreshPayments(), refreshPayouts()]);
+          // Замовлення завантажуємо першими. Послідовне читання не створює
+          // одночасну хвилю запитів до Apps Script під час входу або оновлення.
+          await refreshOrders();
+          await refreshExpenses();
+          await refreshPayments();
+          await refreshPayouts();
         } catch (e) {
-          setOrdersError(e.message || "Не вдалося оновити дані CRM");
+          setOrdersError(current => current || e.message || "Не вдалося оновити дані CRM");
         }
       }
 
@@ -2841,9 +2884,11 @@ import finance from '../../lib/admin-finance.js';
                 onOpenOrder={openOrder}
               />
             </div>
-            <div style={{ display: tab === "partners" ? "block" : "none" }}>
-              <PartnersView token={token} payouts={payouts} refreshPayouts={refreshPayouts} />
-            </div>
+            {tab === "partners" && (
+              <div>
+                <PartnersView token={token} payouts={payouts} refreshPayouts={refreshPayouts} />
+              </div>
+            )}
             <div style={{ display: tab === "expenses" ? "block" : "none" }}>
               <ExpensesView token={token} expenses={expenses} refreshExpenses={refreshExpenses} />
             </div>
