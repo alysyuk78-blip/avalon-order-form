@@ -21,8 +21,13 @@
 - Перевірено: `npm run test:quick`, `npm run check:admin`, syntax checks,
   `git diff --check` — PASS. Локальний Chromium QA: один bootstrap, нуль
   `/api/admin/order` при відкритті картки, console errors = 0.
-- Apps Script і Vercel production ще не оновлені: перед rollout потрібне окреме
-  підтвердження за `CHANGE-CONTROL.md` після готового PR і зелених перевірок.
+- Production rollout завершено: Apps Script deployment
+  `AKfycbyGmlQKyUwYWami3bLnbUzPLhLivzODdwCdq_buYqsBpAMvqBgWYjosifhN3Ei7e--eIw`
+  переведено на версію 49; PR #105 злитий у `main` (`fb81816`); Vercel production
+  deployment `dpl_jLGS7Qm7eJZK1BCT75xXNzboyzb7` має статус READY.
+- Production smoke: `/admin/` = 200, `/api/admin/bootstrap` без сесії = 401,
+  live admin bundle точно збігається з перевіреним файлом, Apps Script `/exec` = 200,
+  runtime errors нового Vercel deployment = 0. Після deployment виконано `clasp logout`.
 
 ## CRM: відновлення після тайм-ауту Google Sheets — 01.08.2026
 
