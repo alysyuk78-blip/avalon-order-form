@@ -73,8 +73,8 @@ import finance from '../../lib/admin-finance.js';
       orders: ClipboardList,
       clients: UsersRound,
       dashboard: ChartNoAxesColumnIncreasing,
-      partners: Handshake,
-      expenses: HandCoins,
+      partners: (props) => <MaskIcon src="icons/partners.png" size={props.size} className={props.className} />,
+      expenses: (props) => <MaskIcon src="icons/expenses.png" size={props.size} className={props.className} />,
       form: FilePenLine,
       logout: LogOut,
       info: Info,
@@ -334,6 +334,23 @@ import finance from '../../lib/admin-finance.js';
       if (!closed && diffDays === 0) return { kind: "today", label, days: 0, text: label + " · сьогодні", hint: "Доставка сьогодні" };
       if (!closed && diffDays === 1) return { kind: "soon", label, days: 1, text: label + " · завтра", hint: "Доставка завтра" };
       return { kind: "ok", label, days: diffDays, text: label, hint: "Дата доставки / відправлення" };
+    }
+
+    // Іконки, надані власником (Flaticon, PNG). Малюємо їх CSS-маскою, щоб вони
+    // успадковували колір тексту — інакше на активній темній вкладці чорний PNG
+    // був би невидимий. Решта іконок кабінету — з lucide-react.
+    function MaskIcon({ src, size = 19, className = "" }) {
+      return (
+        <span
+          className={"mask-icon" + (className ? " " + className : "")}
+          aria-hidden="true"
+          style={{
+            width: size, height: size,
+            WebkitMaskImage: "url(" + src + ")",
+            maskImage: "url(" + src + ")",
+          }}
+        />
+      );
     }
 
     function formatDateShort(v) {
@@ -837,6 +854,10 @@ import finance from '../../lib/admin-finance.js';
             <button className="btn" style={{ width: "100%", marginTop: 12 }} disabled={loading || !password}>
               {loading ? "Перевірка…" : "Увійти"}
             </button>
+            {/* Безкоштовна ліцензія Flaticon вимагає вказати авторство іконок. */}
+            <p className="login-credits">
+              Іконки: <a href="https://www.flaticon.com/" target="_blank" rel="noopener noreferrer">Flaticon</a> та Lucide
+            </p>
           </form>
         </div>
       );
