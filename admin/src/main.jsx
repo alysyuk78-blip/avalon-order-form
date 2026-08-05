@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Columns3,
   FilePenLine,
+  HandCoins,
   Handshake,
   Info,
   List,
@@ -19,7 +20,6 @@ import {
   Search,
   Truck,
   UsersRound,
-  WalletCards,
   X,
 } from 'lucide-react';
 import finance from '../../lib/admin-finance.js';
@@ -74,7 +74,7 @@ import finance from '../../lib/admin-finance.js';
       clients: UsersRound,
       dashboard: ChartNoAxesColumnIncreasing,
       partners: Handshake,
-      expenses: WalletCards,
+      expenses: HandCoins,
       form: FilePenLine,
       logout: LogOut,
       info: Info,
