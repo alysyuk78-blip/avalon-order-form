@@ -73,8 +73,10 @@ import finance from '../../lib/admin-finance.js';
       orders: ClipboardList,
       clients: UsersRound,
       dashboard: ChartNoAxesColumnIncreasing,
-      partners: (props) => <MaskIcon src="icons/partners.png" size={props.size} className={props.className} />,
-      expenses: (props) => <MaskIcon src="icons/expenses.png" size={props.size} className={props.className} />,
+      // Шлях АБСОЛЮТНИЙ: кабінет відкривається і як /admin, і як /admin/ — відносний
+      // "icons/..." у першому випадку резолвиться в корінь сайту і дає 404.
+      partners: (props) => <MaskIcon src="/admin/icons/partners.png" size={props.size} className={props.className} />,
+      expenses: (props) => <MaskIcon src="/admin/icons/expenses.png" size={props.size} className={props.className} />,
       form: FilePenLine,
       logout: LogOut,
       info: Info,
