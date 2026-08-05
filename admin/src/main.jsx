@@ -1800,6 +1800,26 @@ import finance from '../../lib/admin-finance.js';
             map[g.status].margin_left += Number(g.margin_left) || 0;
           }
         });
+        // Найтерміновіші — вгору колонки: протерміновані, далі сьогодні, завтра,
+        // майбутні (за датою), і в кінці ті, де дати немає. Усередині рівних —
+        // новіші замовлення вище, як було раніше.
+        const rank = { overdue: 0, today: 1, soon: 2, ok: 3 };
+        Object.keys(map).forEach(st => {
+          map[st].items.sort((a, b) => {
+            const da = deliveryState(a.delivery_date, a.status);
+            const db = deliveryState(b.delivery_date, b.status);
+            const ra = da ? rank[da.kind] : 4;
+            const rb = db ? rank[db.kind] : 4;
+            if (ra !== rb) return ra - rb;
+            // Однаковий стан: серед протермінованих першим той, хто прострочений ДОВШЕ;
+            // серед решти — у кого дата ближча.
+            if (da && db && da.days !== db.days) {
+              return ra === rank.overdue ? db.days - da.days : da.days - db.days;
+            }
+            const ca = parseUaDateTime(a.created_at), cb = parseUaDateTime(b.created_at);
+            return (cb ? cb.getTime() : 0) - (ca ? ca.getTime() : 0);
+          });
+        });
         return map;
       }, [filteredGroups, funnelStatuses]);
 
