@@ -458,6 +458,19 @@
     .card-payment.margin { background: rgba(143,115,64,.10); color: #8f7340; }
     .card-payment.paid { background: rgba(27,122,74,.09); color: #1b7a4a; }
     /* Дата доставки/відправлення на картці; протермінована — червоним. */
+    .login-credits { margin-top: 14px; font-size: 11px; color: #9aa49d; text-align: center; }
+    .login-credits a { color: #9aa49d; text-decoration: underline; }
+
+    /* Іконки, надані власником (Flaticon PNG): малюємо CSS-маскою, тому вони
+       фарбуються поточним кольором тексту — як і векторні іконки кабінету. */
+    .mask-icon {
+      display: inline-block; flex: none;
+      background-color: currentColor;
+      -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+      -webkit-mask-position: center; mask-position: center;
+      -webkit-mask-size: contain; mask-size: contain;
+    }
+
     /* Дата доставки/відправлення: без плашки — стан передає КОЛІР ШРИФТУ,
        а слово «Доставка» заміняє іконка вантажівки (lucide Truck). */
     .card-delivery {
@@ -465,9 +478,10 @@
       font-size: 10.4px; font-weight: 700; line-height: 1.3; color: #5c6861;
     }
     .card-delivery svg { width: 14px; height: 14px; flex: none; stroke-width: 2; }
-    .card-delivery.overdue { color: #b54842; font-weight: 800; }
-    .card-delivery.today { color: #8f7340; font-weight: 800; }
-    .card-delivery.soon { color: #8f7340; }
+    /* Шкала терміновості: протерміновано → сьогодні → завтра. */
+    .card-delivery.overdue { color: #c2261c; font-weight: 800; }  /* червоний */
+    .card-delivery.today   { color: #c2410c; font-weight: 800; }  /* оранжевий */
+    .card-delivery.soon    { color: #a16207; font-weight: 750; }  /* жовтий (золотий, читабельний) */
     .list { display: grid; gap: 8px; }
     .row-card {
       display: grid; grid-template-columns: 1.1fr 1.2fr 0.8fr 0.7fr 0.7fr 0.7fr auto;
