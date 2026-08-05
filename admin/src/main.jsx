@@ -310,6 +310,30 @@ import finance from '../../lib/admin-finance.js';
       return isNaN(d.getTime()) ? null : d;
     }
     /** Коротка дата для таблиць: 23.06.2026 09:04 */
+    // Дата доставки/відправлення на картці: рахуємо, чи вона протермінована.
+    // Протермінована = дата в минулому, а замовлення ще не відправлене/завершене/скасоване.
+    const DELIVERY_DONE_STATUSES = ["Відправлено", "Завершено", "Скасовано"];
+    function deliveryState(dateValue, status) {
+      const raw = String(dateValue || "").trim();
+      if (!raw) return null;
+      const d = parseUaDateTime(raw);
+      if (!d) return null;
+      const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const diffDays = Math.round((day - today) / 86400000);
+      const label = String(d.getDate()).padStart(2, "0") + "." +
+        String(d.getMonth() + 1).padStart(2, "0") + "." + d.getFullYear();
+      const closed = DELIVERY_DONE_STATUSES.indexOf(status) >= 0;
+      if (!closed && diffDays < 0) {
+        return { kind: "overdue", label, days: -diffDays,
+          text: "Протерміновано: " + label + " (" + (-diffDays) + " дн.)" };
+      }
+      if (!closed && diffDays === 0) return { kind: "today", label, days: 0, text: "Доставка сьогодні · " + label };
+      if (!closed && diffDays === 1) return { kind: "soon", label, days: 1, text: "Доставка завтра · " + label };
+      return { kind: "ok", label, days: diffDays, text: "Доставка: " + label };
+    }
+
     function formatDateShort(v) {
       if (v == null || v === "") return "—";
       const d = parseUaDateTime(v);
@@ -1933,6 +1957,12 @@ import finance from '../../lib/admin-finance.js';
                               <div><span>Сума</span><strong>{money(g.revenue)}</strong></div>
                               <div><span>Маржа</span><strong>{money(g.profit)}</strong></div>
                             </div>
+                            {/* Дата доставки/відправлення: протермінована — червоним. */}
+                            {(() => {
+                              const dl = deliveryState(g.delivery_date, g.status);
+                              if (!dl) return null;
+                              return <div className={"card-delivery " + dl.kind}>{dl.text}</div>;
+                            })()}
                             {/* Оплати клієнта: видно борг просто на картці, без відкриття замовлення. */}
                             {(g.client_paid_sum > 0 || g.client_left > 0) && (
                               <div className={"card-payment " + (g.client_left > 0 ? "debt" : "paid")}>
