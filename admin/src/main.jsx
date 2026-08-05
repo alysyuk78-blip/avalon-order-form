@@ -355,6 +355,24 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
+    // Порядок за терміновістю доставки: протерміновані (найдовше — найвище),
+    // сьогодні, завтра, майбутні (ближча дата вище), без дати — в кінці.
+    // Усередині однакового стану новіші замовлення вище.
+    const DELIVERY_RANK = { overdue: 0, today: 1, soon: 2, ok: 3 };
+    function compareByUrgency(a, b) {
+      const da = deliveryState(a.delivery_date, a.status);
+      const db = deliveryState(b.delivery_date, b.status);
+      const ra = da ? DELIVERY_RANK[da.kind] : 4;
+      const rb = db ? DELIVERY_RANK[db.kind] : 4;
+      if (ra !== rb) return ra - rb;
+      if (da && db && da.days !== db.days) {
+        return ra === DELIVERY_RANK.overdue ? db.days - da.days : da.days - db.days;
+      }
+      const ca = parseUaDateTime(a.created_at);
+      const cb = parseUaDateTime(b.created_at);
+      return (cb ? cb.getTime() : 0) - (ca ? ca.getTime() : 0);
+    }
+
     function formatDateShort(v) {
       if (v == null || v === "") return "—";
       const d = parseUaDateTime(v);
@@ -1800,28 +1818,16 @@ import finance from '../../lib/admin-finance.js';
             map[g.status].margin_left += Number(g.margin_left) || 0;
           }
         });
-        // Найтерміновіші — вгору колонки: протерміновані, далі сьогодні, завтра,
-        // майбутні (за датою), і в кінці ті, де дати немає. Усередині рівних —
-        // новіші замовлення вище, як було раніше.
-        const rank = { overdue: 0, today: 1, soon: 2, ok: 3 };
-        Object.keys(map).forEach(st => {
-          map[st].items.sort((a, b) => {
-            const da = deliveryState(a.delivery_date, a.status);
-            const db = deliveryState(b.delivery_date, b.status);
-            const ra = da ? rank[da.kind] : 4;
-            const rb = db ? rank[db.kind] : 4;
-            if (ra !== rb) return ra - rb;
-            // Однаковий стан: серед протермінованих першим той, хто прострочений ДОВШЕ;
-            // серед решти — у кого дата ближча.
-            if (da && db && da.days !== db.days) {
-              return ra === rank.overdue ? db.days - da.days : da.days - db.days;
-            }
-            const ca = parseUaDateTime(a.created_at), cb = parseUaDateTime(b.created_at);
-            return (cb ? cb.getTime() : 0) - (ca ? ca.getTime() : 0);
-          });
-        });
+        // Найтерміновіші — вгору колонки (той самий порядок, що й у списку).
+        Object.keys(map).forEach(st => { map[st].items.sort(compareByUrgency); });
         return map;
       }, [filteredGroups, funnelStatuses]);
+
+      // Список — той самий порядок за терміновістю, що й у воронці.
+      const urgencySortedGroups = useMemo(
+        () => filteredGroups.slice().sort(compareByUrgency),
+        [filteredGroups]
+      );
 
       const grand = useMemo(() => {
         let revenue = 0, profit = 0, count = 0, clientLeft = 0, marginLeft = 0;
@@ -2052,7 +2058,7 @@ import finance from '../../lib/admin-finance.js';
 
           {filteredGroups.length > 0 && view === "list" && (
             <div className="list">
-              {filteredGroups.map(g => (
+              {urgencySortedGroups.map(g => (
                 <div
                   key={g.order_number}
                   className="row-card"
