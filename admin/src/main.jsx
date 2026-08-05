@@ -17,6 +17,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Truck,
   UsersRound,
   WalletCards,
   X,
@@ -327,11 +328,12 @@ import finance from '../../lib/admin-finance.js';
       const closed = DELIVERY_DONE_STATUSES.indexOf(status) >= 0;
       if (!closed && diffDays < 0) {
         return { kind: "overdue", label, days: -diffDays,
-          text: "Протерміновано: " + label + " (" + (-diffDays) + " дн.)" };
+          text: label + " · " + (-diffDays) + " дн.",
+          hint: "Протерміновано на " + (-diffDays) + " дн." };
       }
-      if (!closed && diffDays === 0) return { kind: "today", label, days: 0, text: "Доставка сьогодні · " + label };
-      if (!closed && diffDays === 1) return { kind: "soon", label, days: 1, text: "Доставка завтра · " + label };
-      return { kind: "ok", label, days: diffDays, text: "Доставка: " + label };
+      if (!closed && diffDays === 0) return { kind: "today", label, days: 0, text: label + " · сьогодні", hint: "Доставка сьогодні" };
+      if (!closed && diffDays === 1) return { kind: "soon", label, days: 1, text: label + " · завтра", hint: "Доставка завтра" };
+      return { kind: "ok", label, days: diffDays, text: label, hint: "Дата доставки / відправлення" };
     }
 
     function formatDateShort(v) {
@@ -1961,7 +1963,12 @@ import finance from '../../lib/admin-finance.js';
                             {(() => {
                               const dl = deliveryState(g.delivery_date, g.status);
                               if (!dl) return null;
-                              return <div className={"card-delivery " + dl.kind}>{dl.text}</div>;
+                              return (
+                                <div className={"card-delivery " + dl.kind} title={dl.hint}>
+                                  <Truck aria-hidden="true" />
+                                  <span>{dl.text}</span>
+                                </div>
+                              );
                             })()}
                             {/* Оплати клієнта: видно борг просто на картці, без відкриття замовлення. */}
                             {(g.client_paid_sum > 0 || g.client_left > 0) && (
