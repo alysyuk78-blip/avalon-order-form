@@ -216,7 +216,10 @@
     .col h3 .col-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
     .col-metrics {
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px;
-      min-height: 66px; padding-top: 2px; text-transform: none; letter-spacing: 0;
+      min-height: 66px; text-transform: none; letter-spacing: 0;
+      /* Тонка лінія під назвою стовпчика — як роздільник фінансів у картці.
+         Напівпрозора, бо фони стовпчиків різні (жовтий/синій/зелений). */
+      margin-top: 2px; padding-top: 8px; border-top: 1px solid rgba(0, 0, 0, .11);
     }
     .col-metric { min-width: 0; display: grid; align-content: start; gap: 1px; }
     .col-metric span {
