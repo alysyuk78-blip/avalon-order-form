@@ -8,10 +8,16 @@ const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
 const MONEY = "#,##0 ₴";
 const HEADER_FILL = "FF383E42";
 
+// «2026-08-01» → «01.08.2026»: у документі для підрядника службовий формат недоречний.
+function uaDate(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || "");
+}
+
 function periodLabel(from, to) {
-  if (from && to) return `${from} — ${to}`;
-  if (from) return `з ${from}`;
-  if (to) return `до ${to}`;
+  if (from && to) return `${uaDate(from)} — ${uaDate(to)}`;
+  if (from) return `з ${uaDate(from)}`;
+  if (to) return `до ${uaDate(to)}`;
   return "усі періоди";
 }
 
@@ -21,10 +27,11 @@ function fileBase(from, to) {
 }
 
 function styleHeader(row) {
+  row.height = 30;
   row.eachCell((cell) => {
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_FILL } };
-    cell.alignment = { vertical: "middle", wrapText: true };
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
   });
 }
 
@@ -43,8 +50,8 @@ async function buildXlsx(d) {
     pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
   });
   ws.columns = [
-    { width: 18 }, { width: 12 }, { width: 30 }, { width: 15 },
-    { width: 15 }, { width: 15 }, { width: 14 }, { width: 15 },
+    { width: 18 }, { width: 12 }, { width: 34 }, { width: 14 },
+    { width: 16 }, { width: 14 }, { width: 13 }, { width: 14 },
   ];
 
   const title = ws.addRow(["АКТ ЗВІРКИ З ПІДРЯДНИКОМ"]);
@@ -86,7 +93,7 @@ async function buildXlsx(d) {
     styleSection(ws.addRow(["ДОВІДКОВО: очікує повної оплати клієнтом — у борг НЕ входить"]));
     styleHeader(ws.addRow([
       "№ замовлення", "Дата", "Клієнт / місто", "Сплатив клієнт",
-      "Не сплачено", "Маржа Avalon", "Отримано", "Потенційно",
+      "Не сплачено клієнтом", "Маржа Avalon", "Отримано", "Потенційно",
     ]));
     d.waiting.forEach((r) => {
       ws.addRow([
@@ -124,6 +131,9 @@ async function buildXlsx(d) {
       if (typeof cell.value === "number") cell.numFmt = MONEY;
     }
   });
+
+  // Місто/ПІБ переносимо в межах клітинки — інакше текст обрізає сусідня колонка.
+  ws.eachRow((row) => { row.getCell(3).alignment = { vertical: "middle", wrapText: true }; });
 
   const buf = await wb.xlsx.writeBuffer();
   return Buffer.from(buf);
