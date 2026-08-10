@@ -53,7 +53,9 @@ async function buildXlsx(d) {
   const sub = ws.addRow(["Avalon Metal Design"]);
   sub.font = { color: { argb: "FF66716B" } };
   ws.mergeCells(sub.number, 1, sub.number, 8);
-  ws.addRow([`Період: ${periodLabel(d.from, d.to)}`, "", "", "", `Сформовано: ${d.generated_at || ""}`]);
+  const meta = ws.addRow([`Період: ${periodLabel(d.from, d.to)}`, "", "", "", `Сформовано: ${d.generated_at || ""}`]);
+  ws.mergeCells(meta.number, 1, meta.number, 4);   // інакше сусідня клітинка обрізає текст
+  ws.mergeCells(meta.number, 5, meta.number, 8);
   ws.addRow([]);
 
   // ── До виплати: лише замовлення, оплачені клієнтом на 100% ──
@@ -65,7 +67,7 @@ async function buildXlsx(d) {
   (d.due || []).forEach((r) => {
     ws.addRow([
       r.order_number,
-      String(r.created_at || "").slice(0, 10) || r.delivery_date || "",
+      r.date_label || "",
       [r.client, r.city].filter(Boolean).join(" · "),
       r.revenue, r.cost_total, r.profit, r.margin_received, r.margin_left,
     ]);
@@ -89,7 +91,7 @@ async function buildXlsx(d) {
     d.waiting.forEach((r) => {
       ws.addRow([
         r.order_number,
-        String(r.created_at || "").slice(0, 10) || r.delivery_date || "",
+        r.date_label || "",
         [r.client, r.city].filter(Boolean).join(" · "),
         r.client_paid, r.client_left, r.profit, r.margin_received, r.margin_left,
       ]);

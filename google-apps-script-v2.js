@@ -1879,6 +1879,24 @@ function adminDeletePayment_(data) {
 
 var SHEET_ACT_TMP = "Акт звірки (тимч.)";
 
+/**
+ * Дата замовлення в мілісекундах. У колонці B дата може лежати і текстом
+ * («05.08.2026 14:20»), і справжньою датою Google — тоді mapOrderRow_ віддає її як
+ * «Wed Aug 05 2026 …», чого parseCreatedAtMs_ не розбирає (повертає 0). Без цього
+ * фільтр періоду не працював, а в акті були англійські дати.
+ */
+function orderDateMs_(v) {
+  var ms = parseCreatedAtMs_(v);
+  if (ms) return ms;
+  var t = Date.parse(String(v || ""));
+  return isNaN(t) ? 0 : t;
+}
+
+function orderDateLabel_(v) {
+  var ms = orderDateMs_(v);
+  return ms ? Utilities.formatDate(new Date(ms), "Europe/Kiev", "dd.MM.yyyy") : "";
+}
+
 /** Дані для акта звірки за період. */
 function settlementData_(data) {
   var fromISO = String((data && data.from) || "").slice(0, 10);
@@ -1892,7 +1910,7 @@ function settlementData_(data) {
   (listed.groups || []).forEach(function (g) {
     if (g.status === "Скасовано") return;
     if (!(Number(g.margin_left) > 0)) return;           // маржу вже отримано повністю
-    var ms = parseCreatedAtMs_(g.created_at);
+    var ms = orderDateMs_(g.created_at);
     if (ms) {
       if (fromMs && ms < fromMs) return;
       if (toMs && ms > toMs) return;
@@ -1901,6 +1919,7 @@ function settlementData_(data) {
     var row = {
       order_number: g.order_number,
       created_at: g.created_at,
+      date_label: orderDateLabel_(g.created_at),
       delivery_date: g.delivery_date || "",
       client: g.client || "",
       city: g.city || "",
@@ -1957,7 +1976,8 @@ function buildActSheet_(d) {
   var old = ss.getSheetByName(SHEET_ACT_TMP);
   if (old) ss.deleteSheet(old);
   var sh = ss.insertSheet(SHEET_ACT_TMP);
-  sh.hideSheet();
+  // НЕ ховаємо аркуш: експорт PDF приховані аркуші не віддає (HTTP 500).
+  // Живе він кілька секунд і видаляється у finally.
 
   var period = (d.from || "…") + " — " + (d.to || "…");
   var rows = [];
@@ -1969,7 +1989,7 @@ function buildActSheet_(d) {
   rows.push(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив клієнт, ₴",
              "Підряднику, ₴", "Маржа Avalon, ₴", "Отримано, ₴", "До виплати, ₴"]);
   d.due.forEach(function (r) {
-    rows.push([r.order_number, String(r.created_at || "").slice(0, 10) || r.delivery_date,
+    rows.push([r.order_number, r.date_label || fmtDate_(r.delivery_date) || "",
                (r.client + (r.city ? " · " + r.city : "")).trim(),
                r.revenue, r.cost_total, r.profit, r.margin_received, r.margin_left]);
   });
@@ -1982,7 +2002,7 @@ function buildActSheet_(d) {
     rows.push(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив клієнт, ₴",
                "Не сплачено клієнтом, ₴", "Маржа Avalon, ₴", "Отримано, ₴", "Потенційно, ₴"]);
     d.waiting.forEach(function (r) {
-      rows.push([r.order_number, String(r.created_at || "").slice(0, 10) || r.delivery_date,
+      rows.push([r.order_number, r.date_label || fmtDate_(r.delivery_date) || "",
                  (r.client + (r.city ? " · " + r.city : "")).trim(),
                  r.client_paid, r.client_left, r.profit, r.margin_received, r.margin_left]);
     });
@@ -2042,13 +2062,20 @@ function exportActPdf_(sh) {
     + "&portrait=false&size=A4&fitw=true&gridlines=false&printtitle=false"
     + "&sheetnames=false&pagenum=CENTER&fzr=false&top_margin=0.5&bottom_margin=0.5"
     + "&left_margin=0.4&right_margin=0.4";
-  var res = UrlFetchApp.fetch(url, {
+  var opts = {
     headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() },
     muteHttpExceptions: true
-  });
+  };
+  var res = UrlFetchApp.fetch(url, opts);
   if (res.getResponseCode() !== 200) {
-    throw new Error("Google не дозволив експорт PDF (HTTP " + res.getResponseCode()
-      + "). Найімовірніше треба перезапустити авторизацію скрипта.");
+    Utilities.sleep(1200);                 // буває тимчасовий 500 одразу після створення аркуша
+    res = UrlFetchApp.fetch(url, opts);
+  }
+  if (res.getResponseCode() !== 200) {
+    var body = "";
+    try { body = String(res.getContentText() || "").replace(/<[^>]+>/g, " ").trim().slice(0, 160); } catch (e) {}
+    throw new Error("Google не дозволив експорт PDF (HTTP " + res.getResponseCode() + ")"
+      + (body ? ": " + body : ""));
   }
   return res.getBlob();
 }
