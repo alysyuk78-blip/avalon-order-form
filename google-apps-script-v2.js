@@ -1979,15 +1979,15 @@ function buildActSheet_(d) {
   // НЕ ховаємо аркуш: експорт PDF приховані аркуші не віддає (HTTP 500).
   // Живе він кілька секунд і видаляється у finally.
 
-  var period = (d.from || "…") + " — " + (d.to || "…");
+  var period = (fmtDate_(d.from) || d.from || "…") + " — " + (fmtDate_(d.to) || d.to || "…");
   var rows = [];
   rows.push(["АКТ ЗВІРКИ З ПІДРЯДНИКОМ", "", "", "", "", "", ""]);
   rows.push(["Avalon Metal Design", "", "", "", "", "", ""]);
   rows.push(["Період: " + period, "", "", "", "Сформовано: " + d.generated_at, "", ""]);
   rows.push(["", "", "", "", "", "", ""]);
   rows.push(["МАРЖА ДО ВИПЛАТИ (клієнт сплатив 100%)", "", "", "", "", "", ""]);
-  rows.push(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив клієнт, ₴",
-             "Підряднику, ₴", "Маржа Avalon, ₴", "Отримано, ₴", "До виплати, ₴"]);
+  rows.push(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив\nклієнт, ₴",
+             "Підряднику, ₴", "Маржа\nAvalon, ₴", "Отримано, ₴", "До виплати, ₴"]);
   d.due.forEach(function (r) {
     rows.push([r.order_number, r.date_label || fmtDate_(r.delivery_date) || "",
                (r.client + (r.city ? " · " + r.city : "")).trim(),
@@ -1999,8 +1999,8 @@ function buildActSheet_(d) {
   if (d.waiting.length) {
     rows.push(["", "", "", "", "", "", "", ""]);
     rows.push(["ДОВІДКОВО: очікує повної оплати клієнтом — у борг НЕ входить", "", "", "", "", "", "", ""]);
-    rows.push(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив клієнт, ₴",
-               "Не сплачено клієнтом, ₴", "Маржа Avalon, ₴", "Отримано, ₴", "Потенційно, ₴"]);
+    rows.push(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив\nклієнт, ₴",
+               "Не сплачено\nклієнтом, ₴", "Маржа\nAvalon, ₴", "Отримано, ₴", "Потенційно, ₴"]);
     d.waiting.forEach(function (r) {
       rows.push([r.order_number, r.date_label || fmtDate_(r.delivery_date) || "",
                  (r.client + (r.city ? " · " + r.city : "")).trim(),
@@ -2030,8 +2030,10 @@ function buildActSheet_(d) {
   // Оформлення
   sh.getRange(1, 1, 1, width).merge().setFontSize(15).setFontWeight("bold").setFontFamily(HDR_FONT);
   sh.getRange(2, 1, 1, width).merge().setFontColor("#66716b");
-  sh.setColumnWidth(1, 130); sh.setColumnWidth(2, 90); sh.setColumnWidth(3, 210);
-  for (var c = 4; c <= width; c++) sh.setColumnWidth(c, 105);
+  sh.setColumnWidth(1, 132); sh.setColumnWidth(2, 88); sh.setColumnWidth(3, 250);
+  for (var c = 4; c <= width; c++) sh.setColumnWidth(c, 108);
+  sh.getRange(1, 1, rows.length, width).setVerticalAlignment("middle");
+  sh.getRange(1, 3, rows.length, 1).setWrap(true);   // місто не обрізається
   rows.forEach(function (r, i) {
     var line = i + 1;
     var first = String(r[0] || "");
@@ -2041,7 +2043,9 @@ function buildActSheet_(d) {
     }
     if (first === "№ замовлення" || first === "Дата") {
       sh.getRange(line, 1, 1, width).setFontWeight("bold").setBackground(RAL7016)
-        .setFontColor(HDR_TEXT).setFontFamily(HDR_FONT).setVerticalAlignment("middle");
+        .setFontColor(HDR_TEXT).setFontFamily(HDR_FONT).setVerticalAlignment("middle")
+        .setWrap(true).setHorizontalAlignment("center");
+      sh.setRowHeight(line, 34);
     }
     if (String(r[2] || "").indexOf("РАЗОМ") === 0 || String(r[3] || "").indexOf("Разом") === 0
         || String(r[2] || "").indexOf("Разом") === 0) {
