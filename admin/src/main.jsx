@@ -2420,19 +2420,23 @@ import finance from '../../lib/admin-finance.js';
         () => new Set((groups || []).filter(g => g.status !== "Скасовано").map(g => String(g.order_number || ""))),
         [groups]
       );
-      const marginCashReceived = useMemo(() => {
-        let total = (filteredPayments || []).reduce((sum, payment) => {
+      // Рахуємо ДВІ частини окремо, щоб у підписі було видно склад суми:
+      // ledger — платежі з журналу (мають реальну дату), legacy — старі замовлення,
+      // де стоїть лише галочка «Маржу отримано» і дати платежу не існує.
+      const marginCashSplit = useMemo(() => {
+        const ledger = (filteredPayments || []).reduce((sum, payment) => {
           if (payment.type !== "Маржа від підрядника") return sum;
           if (!eligibleOrderNumbers.has(String(payment.order_number || ""))) return sum;
           return sum + (Number(payment.amount) || 0);
         }, 0);
-        // У старих записів без журналу немає дати платежу: використовуємо дату замовлення.
+        let legacy = 0;
         (filteredGroups || []).forEach(group => {
           if (group.status === "Скасовано" || Number(group.payments_count) > 0) return;
-          total += groupPaymentMetrics(group).marginReceived;
+          legacy += groupPaymentMetrics(group).marginReceived;
         });
-        return total;
+        return { ledger, legacy, total: ledger + legacy };
       }, [filteredPayments, filteredGroups, eligibleOrderNumbers]);
+      const marginCashReceived = marginCashSplit.total;
 
       const t = useMemo(() => {
         const expSum = filteredExpenses.reduce((s, ex) => s + (Number(ex.amount) || 0), 0);
@@ -2527,7 +2531,15 @@ import finance from '../../lib/admin-finance.js';
             <div className="kpi"><div className="label">Валовий прибуток</div><div className="value">{money(t.profit)}</div></div>
             <div className="kpi"><div className="label">Маржа %</div><div className="value">{pct(t.margin_pct)}</div></div>
             <div className="kpi"><div className="label">Борг підрядника</div><div className="value">{money(t.margin_debt)}</div></div>
-            <div className="kpi"><div className="label">Маржа надійшла</div><div className="value">{money(t.margin_cash_received)}</div><div className="sub">За датами платежів</div></div>
+            <div className="kpi"><div className="label">Маржа надійшла</div><div className="value">{money(t.margin_cash_received)}</div>
+              <div className="sub">
+                {marginCashSplit.legacy > 0 && marginCashSplit.ledger > 0
+                  ? "За датами платежів · " + money(marginCashSplit.legacy) + " без дати (стара галочка)"
+                  : marginCashSplit.legacy > 0
+                    ? "За галочкою «Маржу отримано» — платежі без дати"
+                    : "За датами платежів"}
+              </div>
+            </div>
             <div className="kpi"><div className="label">Виплати + витрати</div><div className="value">{money((t.payouts_paid || 0) + (t.expenses || 0))}</div><div className="sub">Комісій нараховано: {money(t.commission)}</div></div>
             <div className="kpi"><div className="label">Чистий факт</div><div className="value">{money(t.net_fact)}</div></div>
           </div>
