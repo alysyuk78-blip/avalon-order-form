@@ -2,13 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import {
-  ChartNoAxesColumnIncreasing,
   Check,
   ClipboardList,
   Columns3,
   FilePenLine,
-  HandCoins,
-  Handshake,
   Info,
   List,
   ListFilter,
@@ -20,7 +17,6 @@ import {
   Search,
   Truck,
   UsersRound,
-  X,
 } from 'lucide-react';
 import finance from '../../lib/admin-finance.js';
 
@@ -72,7 +68,7 @@ import finance from '../../lib/admin-finance.js';
       list: List,
       orders: ClipboardList,
       clients: UsersRound,
-      dashboard: ChartNoAxesColumnIncreasing,
+      dashboard: (props) => <MaskIcon src="/admin/icons/dashboard.png" size={props.size} className={props.className} />,
       // Шлях АБСОЛЮТНИЙ: кабінет відкривається і як /admin, і як /admin/ — відносний
       // "icons/..." у першому випадку резолвиться в корінь сайту і дає 404.
       partners: (props) => <MaskIcon src="/admin/icons/partners.png" size={props.size} className={props.className} />,
@@ -80,7 +76,8 @@ import finance from '../../lib/admin-finance.js';
       form: FilePenLine,
       logout: LogOut,
       info: Info,
-      close: X,
+      close: (props) => <MaskIcon src="/admin/icons/close.png" size={props.size} className={props.className} />,
+      trash: (props) => <MaskIcon src="/admin/icons/trash.png" size={props.size} className={props.className} />,
       check: Check,
       collapseCards: PanelTopClose,
       expandCards: PanelTopOpen,
@@ -1008,7 +1005,7 @@ import finance from '../../lib/admin-finance.js';
                       <td><b>{money(p.amount)}</b></td>
                       <td>{p.method || "—"}</td>
                       <td>{p.note || "—"}</td>
-                      <td><button className="btn ghost" disabled={busy} onClick={() => remove(p)}>Видалити</button></td>
+                      <td><IconButton icon="trash" label="Видалити платіж" disabled={busy} onClick={() => remove(p)} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -1187,7 +1184,7 @@ import finance from '../../lib/admin-finance.js';
                   {order.city ? <> · {order.city}</> : null}
                 </div>
               </div>
-              <button className="btn ghost" onClick={onClose}>Закрити</button>
+              <IconButton icon="close" label="Закрити" onClick={onClose} />
             </header>
 
             <QuickContact order={order} />
@@ -1542,7 +1539,7 @@ import finance from '../../lib/admin-finance.js';
                   Ручне внесення — номер ORD присвоїться автоматично
                 </div>
               </div>
-              <button className="btn ghost" onClick={onClose}>Закрити</button>
+              <IconButton icon="close" label="Закрити" onClick={onClose} />
             </header>
 
             <div className="section-title section-title--first">Клієнт</div>
