@@ -59,6 +59,7 @@ import finance from '../../lib/admin-finance.js';
     const TOKEN_KEY = "avalon_admin_token";
     const CARDS_COLLAPSED_KEY = "avalon_admin_cards_collapsed_v1";
     const ORDERS_CACHE_KEY = "avalon_admin_orders_cache_v1";
+    const TODO_COLLAPSED_KEY = "avalon_admin_todo_collapsed_v1";
     const ICON_COMPONENTS = {
       search: Search,
       filter: ListFilter,
@@ -2392,6 +2393,13 @@ import finance from '../../lib/admin-finance.js';
 
     function DashboardView({ token, groups, expenses, payments, payouts, loading, error, refreshData, onOpenOrder }) {
       const [period, setPeriod] = useState("all");
+      // Список справ згортається; вибір запамʼятовуємо, щоб не тиснути щоразу.
+      const [todoCollapsed, setTodoCollapsed] = useState(() => {
+        try { return localStorage.getItem(TODO_COLLAPSED_KEY) === "1"; } catch (e) { return false; }
+      });
+      useEffect(() => {
+        try { localStorage.setItem(TODO_COLLAPSED_KEY, todoCollapsed ? "1" : "0"); } catch (e) { /* приватний режим */ }
+      }, [todoCollapsed]);
 
       const filteredGroups = useMemo(
         () => (groups || []).filter(g => inPeriod(g, period)),
@@ -2479,18 +2487,31 @@ import finance from '../../lib/admin-finance.js';
 
           {reminders.length > 0 && (
             <div className="panel">
-              <h2>Що зробити сьогодні</h2>
-              <div className="remind-list">
-                {reminders.map(r => (
-                  <button key={r.key} type="button" className="remind-item" onClick={() => onOpenOrder(r.order_number)}>
-                    <div>
-                      <div className="title">{r.title}</div>
-                      <div className="desc">{r.desc}</div>
-                    </div>
-                    <span className={"tag " + r.tagClass}>{r.tag}</span>
-                  </button>
-                ))}
-              </div>
+              <button
+                type="button"
+                className="todo-head"
+                aria-expanded={!todoCollapsed}
+                onClick={() => setTodoCollapsed(v => !v)}
+              >
+                <h2>Що зробити сьогодні <span className="todo-count">{reminders.length}</span></h2>
+                <span className="todo-toggle">
+                  {todoCollapsed ? "Розгорнути" : "Згорнути"}
+                  <Icon name={todoCollapsed ? "expandCards" : "collapseCards"} size={17} />
+                </span>
+              </button>
+              {!todoCollapsed && (
+                <div className="remind-list">
+                  {reminders.map(r => (
+                    <button key={r.key} type="button" className="remind-item" onClick={() => onOpenOrder(r.order_number)}>
+                      <div>
+                        <div className="title">{r.title}</div>
+                        <div className="desc">{r.desc}</div>
+                      </div>
+                      <span className={"tag " + r.tagClass}>{r.tag}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
