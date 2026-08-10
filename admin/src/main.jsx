@@ -849,7 +849,11 @@ import finance from '../../lib/admin-finance.js';
     function SettlementPanel({ token }) {
       const today = new Date();
       const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-      const iso = d => d.toISOString().slice(0, 10);
+      // Дату беремо з ЛОКАЛЬНИХ компонентів. toISOString() переводить у UTC, і в
+      // Києві (UTC+2/+3) 1 серпня 00:00 стає «2026-07-31», а «по» до 03:00 — вчора.
+      const iso = d => d.getFullYear() + "-"
+        + String(d.getMonth() + 1).padStart(2, "0") + "-"
+        + String(d.getDate()).padStart(2, "0");
       const [from, setFrom] = useState(iso(monthStart));
       const [to, setTo] = useState(iso(today));
       const [busy, setBusy] = useState("");
