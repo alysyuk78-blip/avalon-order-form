@@ -831,6 +831,83 @@ import finance from '../../lib/admin-finance.js';
       return data;
     }
 
+    // Зберегти файл, який бекенд віддав як base64 (акт звірки: xlsx або pdf).
+    function saveBase64File(filename, mime, base64) {
+      const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: mime || "application/octet-stream" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename || "file";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+
+    // Панель «Звірка з підрядником»: період → XLSX / PDF / надсилання в Telegram.
+    // Правило власника: у борг входить лише маржа замовлень, оплачених клієнтом на 100%.
+    function SettlementPanel({ token }) {
+      const today = new Date();
+      const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+      const iso = d => d.toISOString().slice(0, 10);
+      const [from, setFrom] = useState(iso(monthStart));
+      const [to, setTo] = useState(iso(today));
+      const [busy, setBusy] = useState("");
+      const [error, setError] = useState("");
+      const [info, setInfo] = useState(null);
+
+      async function run(format) {
+        setBusy(format); setError(""); setInfo(null);
+        try {
+          const res = await api("/api/admin/settlement", {
+            method: "POST", token, body: { from, to, format },
+          });
+          if (format === "send") {
+            setInfo("Акт надіслано підряднику в Telegram" + (res.filename ? " · " + res.filename : ""));
+          } else {
+            saveBase64File(res.filename, res.mime, res.base64);
+            setInfo("Файл збережено: " + (res.filename || ""));
+          }
+          if (res.totals) {
+            setInfo(prev => (prev || "") + " · до виплати " + money(res.totals.due_left || 0)
+              + " за " + (res.totals.due_orders || 0) + " замовл.");
+          }
+        } catch (e) {
+          setError(e.message || "Не вдалося сформувати акт");
+        } finally {
+          setBusy("");
+        }
+      }
+
+      return (
+        <div className="panel settlement-panel">
+          <div className="panel-head">
+            <h2>Звірка з підрядником</h2>
+            <InfoTip text="У борг підрядника входить лише маржа замовлень, які клієнт оплатив на 100%. Недоплачені показані в акті окремо, довідково." />
+          </div>
+          <div className="grid2">
+            <div className="field"><label>Період з</label>
+              <input type="date" value={from} onChange={e => setFrom(e.target.value)} /></div>
+            <div className="field"><label>по</label>
+              <input type="date" value={to} onChange={e => setTo(e.target.value)} /></div>
+          </div>
+          <div className="settlement-actions">
+            <button className="btn" disabled={!!busy} onClick={() => run("xlsx")}>
+              {busy === "xlsx" ? "Формую…" : "Завантажити XLSX"}
+            </button>
+            <button className="btn secondary" disabled={!!busy} onClick={() => run("pdf")}>
+              {busy === "pdf" ? "Формую…" : "Завантажити PDF"}
+            </button>
+            <button className="btn secondary" disabled={!!busy} onClick={() => run("send")}>
+              {busy === "send" ? "Надсилаю…" : "Надіслати підряднику в Telegram"}
+            </button>
+          </div>
+          {info && <div className="settlement-info">{info}</div>}
+          {error && <div className="error">{error}</div>}
+        </div>
+      );
+    }
+
     function confirmStatusChange(fromStatus, toStatus) {
       if (toStatus === "Скасовано") {
         return window.confirm("Скасувати замовлення?");
@@ -2412,6 +2489,8 @@ import finance from '../../lib/admin-finance.js';
               </div>
             </div>
           )}
+
+          <SettlementPanel token={token} />
 
           <div className="kpi-grid">
             <div className="kpi">

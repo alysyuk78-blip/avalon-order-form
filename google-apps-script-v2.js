@@ -35,7 +35,8 @@ var CAL_KEY = "AVALON";
 
 // Дії кабінету, що ПИШУТЬ у таблицю — лише вони потребують блокування скрипта.
 var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "upsert_partner",
-  "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment"];
+  "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment",
+  "settlement_pdf", "settlement_send"];
 
 function doPost(e) {
   // Тіло читаємо ДО блокування: кабінет робить кілька запитів паралельно, і якщо
@@ -1870,6 +1871,257 @@ function adminDeletePayment_(data) {
   return { status: "ok", summary: summary, payments: num ? readPayments_(num) : [] };
 }
 
+// ===================== АКТ ЗВІРКИ З ПІДРЯДНИКОМ =====================
+// Модель: клієнт платить підряднику, підрядник перераховує власнику маржу.
+// ПРАВИЛО ВЛАСНИКА: маржа вважається такою, що підлягає виплаті, ЛИШЕ коли клієнт
+// сплатив 100% вартості замовлення. Недоплачені замовлення показуємо окремо,
+// довідково, і в суму боргу НЕ включаємо.
+
+var SHEET_ACT_TMP = "Акт звірки (тимч.)";
+
+/** Дані для акта звірки за період. */
+function settlementData_(data) {
+  var fromISO = String((data && data.from) || "").slice(0, 10);
+  var toISO = String((data && data.to) || "").slice(0, 10);
+  var fromMs = fromISO ? new Date(fromISO + "T00:00:00").getTime() : null;
+  var toMs = toISO ? new Date(toISO + "T23:59:59").getTime() : null;
+
+  var listed = adminListOrders_({});
+  var due = [], waiting = [];
+
+  (listed.groups || []).forEach(function (g) {
+    if (g.status === "Скасовано") return;
+    if (!(Number(g.margin_left) > 0)) return;           // маржу вже отримано повністю
+    var ms = parseCreatedAtMs_(g.created_at);
+    if (ms) {
+      if (fromMs && ms < fromMs) return;
+      if (toMs && ms > toMs) return;
+    }
+    var revenue = Number(g.revenue) || 0;
+    var row = {
+      order_number: g.order_number,
+      created_at: g.created_at,
+      delivery_date: g.delivery_date || "",
+      client: g.client || "",
+      city: g.city || "",
+      revenue: revenue,
+      cost_total: Math.max(0, revenue - (Number(g.profit) || 0)),
+      profit: Number(g.profit) || 0,
+      client_paid: Number(g.client_paid_sum) || 0,
+      client_left: Number(g.client_left) || 0,
+      margin_received: Number(g.margin_received) || 0,
+      margin_left: Number(g.margin_left) || 0
+    };
+    // Головне правило: до виплати — лише повністю оплачені клієнтом замовлення.
+    if (revenue > 0 && row.client_left === 0) due.push(row);
+    else waiting.push(row);
+  });
+
+  function sortRows(a, b) { return String(a.order_number).localeCompare(String(b.order_number)); }
+  due.sort(sortRows); waiting.sort(sortRows);
+
+  var payments = readPayments_("").filter(function (p) {
+    if (p.type !== "Маржа від підрядника") return false;
+    var d = String(p.date || "").slice(0, 10);
+    if (fromISO && d && d < fromISO) return false;
+    if (toISO && d && d > toISO) return false;
+    return true;
+  }).sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
+
+  function sum(arr, key) {
+    return arr.reduce(function (s, x) { return s + (Number(x[key]) || 0); }, 0);
+  }
+  return {
+    status: "ok",
+    from: fromISO, to: toISO,
+    generated_at: Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm"),
+    due: due, waiting: waiting, payments: payments,
+    totals: {
+      due_orders: due.length,
+      due_revenue: sum(due, "revenue"),
+      due_cost: sum(due, "cost_total"),
+      due_margin: sum(due, "profit"),
+      due_received: sum(due, "margin_received"),
+      due_left: sum(due, "margin_left"),          // ← борг підрядника
+      waiting_orders: waiting.length,
+      waiting_margin_left: sum(waiting, "margin_left"),
+      waiting_client_left: sum(waiting, "client_left"),
+      payments_sum: sum(payments, "amount")
+    }
+  };
+}
+
+/** Тимчасовий аркуш з актом — потрібен лише щоб коректно вивести PDF. */
+function buildActSheet_(d) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var old = ss.getSheetByName(SHEET_ACT_TMP);
+  if (old) ss.deleteSheet(old);
+  var sh = ss.insertSheet(SHEET_ACT_TMP);
+  sh.hideSheet();
+
+  var period = (d.from || "…") + " — " + (d.to || "…");
+  var rows = [];
+  rows.push(["АКТ ЗВІРКИ З ПІДРЯДНИКОМ", "", "", "", "", "", ""]);
+  rows.push(["Avalon Metal Design", "", "", "", "", "", ""]);
+  rows.push(["Період: " + period, "", "", "", "Сформовано: " + d.generated_at, "", ""]);
+  rows.push(["", "", "", "", "", "", ""]);
+  rows.push(["МАРЖА ДО ВИПЛАТИ (клієнт сплатив 100%)", "", "", "", "", "", ""]);
+  rows.push(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив клієнт, ₴",
+             "Підряднику, ₴", "Маржа Avalon, ₴", "Отримано, ₴", "До виплати, ₴"]);
+  d.due.forEach(function (r) {
+    rows.push([r.order_number, String(r.created_at || "").slice(0, 10) || r.delivery_date,
+               (r.client + (r.city ? " · " + r.city : "")).trim(),
+               r.revenue, r.cost_total, r.profit, r.margin_received, r.margin_left]);
+  });
+  rows.push(["", "", "РАЗОМ ДО ВИПЛАТИ:", d.totals.due_revenue, d.totals.due_cost,
+             d.totals.due_margin, d.totals.due_received, d.totals.due_left]);
+
+  if (d.waiting.length) {
+    rows.push(["", "", "", "", "", "", "", ""]);
+    rows.push(["ДОВІДКОВО: очікує повної оплати клієнтом — у борг НЕ входить", "", "", "", "", "", "", ""]);
+    rows.push(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив клієнт, ₴",
+               "Не сплачено клієнтом, ₴", "Маржа Avalon, ₴", "Отримано, ₴", "Потенційно, ₴"]);
+    d.waiting.forEach(function (r) {
+      rows.push([r.order_number, String(r.created_at || "").slice(0, 10) || r.delivery_date,
+                 (r.client + (r.city ? " · " + r.city : "")).trim(),
+                 r.client_paid, r.client_left, r.profit, r.margin_received, r.margin_left]);
+    });
+    rows.push(["", "", "Разом (довідково):", "", d.totals.waiting_client_left, "", "", d.totals.waiting_margin_left]);
+  }
+
+  if (d.payments.length) {
+    rows.push(["", "", "", "", "", "", "", ""]);
+    rows.push(["ОТРИМАНО ВІД ПІДРЯДНИКА ЗА ПЕРІОД", "", "", "", "", "", "", ""]);
+    rows.push(["Дата", "№ замовлення", "Спосіб", "Примітка", "Сума, ₴", "", "", ""]);
+    d.payments.forEach(function (p) {
+      rows.push([String(p.date).slice(0, 10), p.order_number, p.method || "—", p.note || "", p.amount, "", "", ""]);
+    });
+    rows.push(["", "", "", "Разом отримано:", d.totals.payments_sum, "", "", ""]);
+  }
+
+  rows.push(["", "", "", "", "", "", "", ""]);
+  rows.push(["Avalon Metal Design: ____________________", "", "", "",
+             "Підрядник: ____________________", "", "", ""]);
+
+  var width = 8;
+  rows = rows.map(function (r) { while (r.length < width) r.push(""); return r.slice(0, width); });
+  sh.getRange(1, 1, rows.length, width).setValues(rows);
+
+  // Оформлення
+  sh.getRange(1, 1, 1, width).merge().setFontSize(15).setFontWeight("bold").setFontFamily(HDR_FONT);
+  sh.getRange(2, 1, 1, width).merge().setFontColor("#66716b");
+  sh.setColumnWidth(1, 130); sh.setColumnWidth(2, 90); sh.setColumnWidth(3, 210);
+  for (var c = 4; c <= width; c++) sh.setColumnWidth(c, 105);
+  rows.forEach(function (r, i) {
+    var line = i + 1;
+    var first = String(r[0] || "");
+    if (first.indexOf("МАРЖА ДО ВИПЛАТИ") === 0 || first.indexOf("ДОВІДКОВО") === 0
+        || first.indexOf("ОТРИМАНО ВІД") === 0) {
+      sh.getRange(line, 1, 1, width).merge().setFontWeight("bold").setBackground("#EFF2F0");
+    }
+    if (first === "№ замовлення" || first === "Дата") {
+      sh.getRange(line, 1, 1, width).setFontWeight("bold").setBackground(RAL7016)
+        .setFontColor(HDR_TEXT).setFontFamily(HDR_FONT).setVerticalAlignment("middle");
+    }
+    if (String(r[2] || "").indexOf("РАЗОМ") === 0 || String(r[3] || "").indexOf("Разом") === 0
+        || String(r[2] || "").indexOf("Разом") === 0) {
+      sh.getRange(line, 1, 1, width).setFontWeight("bold").setBorder(true, null, null, null, null, null);
+    }
+  });
+  sh.getRange(1, 4, rows.length, width - 3).setNumberFormat("#,##0 ₴");
+  sh.setFrozenRows(0);
+  SpreadsheetApp.flush();
+  return sh;
+}
+
+/** PDF саме цього аркуша (gid), тому інші аркуші книги в файл не потрапляють. */
+function exportActPdf_(sh) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var url = "https://docs.google.com/spreadsheets/d/" + ss.getId() + "/export"
+    + "?format=pdf&gid=" + sh.getSheetId()
+    + "&portrait=false&size=A4&fitw=true&gridlines=false&printtitle=false"
+    + "&sheetnames=false&pagenum=CENTER&fzr=false&top_margin=0.5&bottom_margin=0.5"
+    + "&left_margin=0.4&right_margin=0.4";
+  var res = UrlFetchApp.fetch(url, {
+    headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() },
+    muteHttpExceptions: true
+  });
+  if (res.getResponseCode() !== 200) {
+    throw new Error("Google не дозволив експорт PDF (HTTP " + res.getResponseCode()
+      + "). Найімовірніше треба перезапустити авторизацію скрипта.");
+  }
+  return res.getBlob();
+}
+
+function actFileName_(d, ext) {
+  var p = (d.from || "") + (d.to ? "_" + d.to : "");
+  return "Akt-zvirky-Avalon" + (p ? "_" + p : "") + "." + ext;
+}
+
+/** Дані акта для кабінету (з них Vercel збирає XLSX). */
+function adminSettlementData_(data) {
+  return settlementData_(data);
+}
+
+/** PDF акта у base64 — кабінет зберігає його як файл. */
+function adminSettlementPdf_(data) {
+  var d = settlementData_(data);
+  var sh = buildActSheet_(d);
+  try {
+    var blob = exportActPdf_(sh);
+    return {
+      status: "ok", filename: actFileName_(d, "pdf"),
+      mime: "application/pdf",
+      base64: Utilities.base64Encode(blob.getBytes()),
+      totals: d.totals
+    };
+  } finally {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var tmp = ss.getSheetByName(SHEET_ACT_TMP);
+    if (tmp) ss.deleteSheet(tmp);   // не залишаємо смітника в книзі
+  }
+}
+
+/** Надіслати PDF акта в групу підрядника (chat_id уже у властивостях скрипта). */
+function adminSettlementSend_(data) {
+  var props = PropertiesService.getScriptProperties();
+  var token = props.getProperty("TG_TOKEN");
+  var chat = props.getProperty("TG_CONTRACTOR_CHAT");
+  if (!token) throw new Error("У властивостях скрипта немає TG_TOKEN");
+  if (!chat) throw new Error("У властивостях скрипта немає TG_CONTRACTOR_CHAT (група підрядника)");
+
+  var d = settlementData_(data);
+  var sh = buildActSheet_(d);
+  var blob;
+  try {
+    blob = exportActPdf_(sh).setName(actFileName_(d, "pdf"));
+  } finally {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var tmp = ss.getSheetByName(SHEET_ACT_TMP);
+    if (tmp) ss.deleteSheet(tmp);
+  }
+
+  var caption = "📄 <b>Акт звірки</b>"
+    + (d.from || d.to ? "\nПеріод: " + (d.from || "…") + " — " + (d.to || "…") : "")
+    + "\nЗамовлень до виплати: <b>" + d.totals.due_orders + "</b>"
+    + "\nМаржа до виплати: <b>" + money_(d.totals.due_left) + " ₴</b>";
+  if (d.totals.waiting_orders) {
+    caption += "\n\n<i>Довідково: ще " + d.totals.waiting_orders
+      + " замовл. чекають повної оплати клієнтом — у борг не входять.</i>";
+  }
+
+  var res = UrlFetchApp.fetch("https://api.telegram.org/bot" + token + "/sendDocument", {
+    method: "post", muteHttpExceptions: true,
+    payload: { chat_id: String(chat), caption: caption, parse_mode: "HTML", document: blob }
+  });
+  var parsed;
+  try { parsed = JSON.parse(res.getContentText()); } catch (e) { parsed = { ok: false }; }
+  if (!parsed.ok) {
+    throw new Error("Telegram не прийняв файл: " + (parsed.description || ("HTTP " + res.getResponseCode())));
+  }
+  return { status: "ok", sent: true, totals: d.totals, filename: actFileName_(d, "pdf") };
+}
+
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
 var ADMIN_ORDER_COLS = 45; // A–AS (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS)
@@ -2000,6 +2252,9 @@ function handleAdminRequest_(data) {
     if (action === "update_order") return jsonOut(adminUpdateOrder_(data));
     if (action === "create_order") return jsonOut(adminCreateOrder_(data));
     if (action === "list_payments") return jsonOut(adminListPayments_(data));
+    if (action === "settlement_data") return jsonOut(adminSettlementData_(data));
+    if (action === "settlement_pdf") return jsonOut(adminSettlementPdf_(data));
+    if (action === "settlement_send") return jsonOut(adminSettlementSend_(data));
     if (action === "add_payment") return jsonOut(adminAddPayment_(data));
     if (action === "delete_payment") return jsonOut(adminDeletePayment_(data));
     if (action === "list_partners") return jsonOut(adminListPartners_());
