@@ -17,6 +17,14 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(data);
     }
 
+    // Разовий перенос старих галочок «Оплата клієнта ✓» / «Маржу отримано ✓» у журнал.
+    if (req.method === "POST" && (req.body || {}).migrate) {
+      const out = await callAdminSheets("migrate_legacy_payments", {
+        dry_run: !!req.body.dry_run,
+      });
+      return res.status(200).json(out);
+    }
+
     // Внесення передоплати / доплати клієнта або виплати маржі підрядником.
     if (req.method === "POST") {
       const body = req.body || {};

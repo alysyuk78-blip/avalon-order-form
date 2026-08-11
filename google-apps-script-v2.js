@@ -36,7 +36,7 @@ var CAL_KEY = "AVALON";
 // Дії кабінету, що ПИШУТЬ у таблицю — лише вони потребують блокування скрипта.
 var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "upsert_partner",
   "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment",
-  "settlement_pdf", "settlement_send"];
+  "settlement_pdf", "settlement_send", "migrate_legacy_payments"];
 
 function doPost(e) {
   // Тіло читаємо ДО блокування: кабінет робить кілька запитів паралельно, і якщо
@@ -1878,6 +1878,9 @@ function adminDeletePayment_(data) {
 // довідково, і в суму боргу НЕ включаємо.
 
 var SHEET_ACT_TMP = "Акт звірки (тимч.)";
+// Позначка в примітці платежу: за нею впізнаємо рядки, створені переносом галочок,
+// і можемо доповнити обірваний перенос, не чіпаючи реальні платежі.
+var MIGRATION_TAG = "Перенесено з галочки — дата приблизна (за датою замовлення)";
 
 /**
  * Дата замовлення в мілісекундах. У колонці B дата може лежати і текстом
@@ -2153,6 +2156,92 @@ function adminSettlementSend_(data) {
   return { status: "ok", sent: true, totals: d.totals, filename: actFileName_(d, "pdf") };
 }
 
+/**
+ * РАЗОВИЙ перенос старих галочок AG/AH у журнал платежів.
+ *
+ * Нащо: до появи журналу оплата фіксувалась галочками без дат. Через це існувало
+ * ДВА джерела правди, підсумок «Маржа надійшла» не мав дат, а фільтри по періодах
+ * зараховували такі надходження за датою замовлення — тобто наближено.
+ *
+ * ВАЖЛИВО: переносимо ОБИДВІ галочки одночасно. Щойно в замовленні зʼявляється
+ * перший платіж, syncOrderPaymentState_ перестає довіряти галочкам і рахує все з
+ * журналу — тож якщо внести лише маржу, галочка оплати клієнта зніметься сама і
+ * замовлення покаже фальшивий борг.
+ *
+ * Дату ставимо за датою замовлення і пишемо це в примітці — не вигадуємо точну дату,
+ * а фіксуємо, що вона приблизна.
+ */
+function adminMigrateLegacyPayments_(data) {
+  var dry = !!(data && data.dry_run);
+  var limit = Math.max(1, Math.min(60, Number((data && data.limit) || 40)));
+  var listed = adminListOrders_({});
+  var plan = [], pending = 0;
+
+  (listed.groups || []).forEach(function (g) {
+    if (g.status === "Скасовано") return;
+    var revenue = Math.round(Number(g.revenue) || 0);
+    var profit = Math.round(Number(g.profit) || 0);
+    if (!g.client_paid && !g.margin_paid) return;
+
+    // Що вже лежить у журналі. Замовлення з РЕАЛЬНИМИ платежами не чіпаємо взагалі:
+    // там галочки й так виводяться з журналу. Доповнюємо лише порожні або такі, де
+    // лежать виключно рядки цієї ж міграції — це і є випадок обірваного переносу.
+    var pay = readPayments_(g.order_number);
+    var onlyMigrated = pay.length > 0 && pay.every(function (x) {
+      return String(x.note || "").indexOf(MIGRATION_TAG) >= 0;
+    });
+    if (pay.length > 0 && !onlyMigrated) return;
+    var have = paymentTotals_(pay);
+
+    var rows = [];
+    if (g.client_paid && revenue > have.client_paid) {
+      rows.push({ type: "Оплата повністю", amount: revenue - have.client_paid });
+    }
+    if (g.margin_paid && profit > have.margin_paid_sum) {
+      rows.push({ type: "Маржа від підрядника", amount: profit - have.margin_paid_sum });
+    }
+    if (!rows.length) return;
+
+    pending += 1;
+    if (plan.length >= limit) return;         // решта піде наступним запуском
+    var ms = orderDateMs_(g.created_at);
+    plan.push({
+      order_number: g.order_number,
+      date: Utilities.formatDate(ms ? new Date(ms) : new Date(), "Europe/Kiev", "yyyy-MM-dd"),
+      rows: rows
+    });
+  });
+
+  var rowsPlanned = plan.reduce(function (n, p) { return n + p.rows.length; }, 0);
+  if (dry) {
+    return { status: "ok", dry_run: true, orders: plan.length, rows: rowsPlanned,
+             pending: pending, remaining: Math.max(0, pending - plan.length), plan: plan.slice(0, 80) };
+  }
+
+  var psh = paymentsSheet_();
+  var added = 0, doneOrders = 0;
+  plan.forEach(function (p) {
+    // ОДИН setValues на замовлення: обидва рядки або жоден. Інакше обірваний запис
+    // залишив би замовлення з половиною журналу — і галочка, що лишилась без платежу,
+    // показала б фальшивий борг (журнал стає головним, щойно в ньому є хоч рядок).
+    var startRow = psh.getLastRow() + 1;
+    var values = p.rows.map(function (r) {
+      return [p.date, p.order_number, r.type, r.amount, "", MIGRATION_TAG];
+    });
+    psh.getRange(startRow, 1, values.length, 6).setValues(values);
+    psh.getRange(startRow, 1, values.length, 1).setNumberFormat("dd.MM.yyyy");
+    psh.getRange(startRow, 4, values.length, 1).setNumberFormat("#,##0 ₴");
+    added += values.length;
+    doneOrders += 1;
+  });
+  // syncOrderPaymentState_ тут НЕ викликаємо: суми рядків рівно покривають те, що
+  // заявляли галочки, тож стан не змінюється, а перескан усіх замовлень і платежів на
+  // кожне замовлення виносив запит за 25-секундний тайм-аут проксі.
+  SpreadsheetApp.flush();
+  return { status: "ok", dry_run: false, orders: doneOrders, rows: added,
+           remaining: Math.max(0, pending - doneOrders) };
+}
+
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
 var ADMIN_ORDER_COLS = 45; // A–AS (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS)
@@ -2288,6 +2377,7 @@ function handleAdminRequest_(data) {
     if (action === "settlement_send") return jsonOut(adminSettlementSend_(data));
     if (action === "add_payment") return jsonOut(adminAddPayment_(data));
     if (action === "delete_payment") return jsonOut(adminDeletePayment_(data));
+    if (action === "migrate_legacy_payments") return jsonOut(adminMigrateLegacyPayments_(data));
     if (action === "list_partners") return jsonOut(adminListPartners_());
     if (action === "upsert_partner") return jsonOut(adminUpsertPartner_(data.partner || data));
     if (action === "list_expenses") return jsonOut(adminListExpenses_(data));
