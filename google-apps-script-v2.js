@@ -36,7 +36,7 @@ var CAL_KEY = "AVALON";
 // Дії кабінету, що ПИШУТЬ у таблицю — лише вони потребують блокування скрипта.
 var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "upsert_partner",
   "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment",
-  "settlement_pdf", "settlement_send"];
+  "settlement_pdf", "settlement_send", "migrate_legacy_payments"];
 
 function doPost(e) {
   // Тіло читаємо ДО блокування: кабінет робить кілька запитів паралельно, і якщо
@@ -2153,6 +2153,66 @@ function adminSettlementSend_(data) {
   return { status: "ok", sent: true, totals: d.totals, filename: actFileName_(d, "pdf") };
 }
 
+/**
+ * РАЗОВИЙ перенос старих галочок AG/AH у журнал платежів.
+ *
+ * Нащо: до появи журналу оплата фіксувалась галочками без дат. Через це існувало
+ * ДВА джерела правди, підсумок «Маржа надійшла» не мав дат, а фільтри по періодах
+ * зараховували такі надходження за датою замовлення — тобто наближено.
+ *
+ * ВАЖЛИВО: переносимо ОБИДВІ галочки одночасно. Щойно в замовленні зʼявляється
+ * перший платіж, syncOrderPaymentState_ перестає довіряти галочкам і рахує все з
+ * журналу — тож якщо внести лише маржу, галочка оплати клієнта зніметься сама і
+ * замовлення покаже фальшивий борг.
+ *
+ * Дату ставимо за датою замовлення і пишемо це в примітці — не вигадуємо точну дату,
+ * а фіксуємо, що вона приблизна.
+ */
+function adminMigrateLegacyPayments_(data) {
+  var dry = !!(data && data.dry_run);
+  var NOTE = "Перенесено з галочки — дата приблизна (за датою замовлення)";
+  var listed = adminListOrders_({});
+  var plan = [];
+
+  (listed.groups || []).forEach(function (g) {
+    if (g.status === "Скасовано") return;
+    if (Number(g.payments_count) > 0) return;   // журнал у цього замовлення вже є
+    var revenue = Math.round(Number(g.revenue) || 0);
+    var profit = Math.round(Number(g.profit) || 0);
+    var rows = [];
+    if (g.client_paid && revenue > 0) rows.push({ type: "Оплата повністю", amount: revenue });
+    if (g.margin_paid && profit > 0) rows.push({ type: "Маржа від підрядника", amount: profit });
+    if (!rows.length) return;
+    var ms = orderDateMs_(g.created_at);
+    plan.push({
+      order_number: g.order_number,
+      date: Utilities.formatDate(ms ? new Date(ms) : new Date(), "Europe/Kiev", "yyyy-MM-dd"),
+      rows: rows
+    });
+  });
+
+  var rowsPlanned = plan.reduce(function (n, p) { return n + p.rows.length; }, 0);
+  if (dry) {
+    return { status: "ok", dry_run: true, orders: plan.length, rows: rowsPlanned, plan: plan.slice(0, 80) };
+  }
+
+  var psh = paymentsSheet_();
+  var added = 0;
+  plan.forEach(function (p) {
+    p.rows.forEach(function (r) {
+      var row = psh.getLastRow() + 1;
+      psh.getRange(row, 1, 1, 6).setValues([[p.date, p.order_number, r.type, r.amount, "", NOTE]]);
+      psh.getRange(row, 1).setNumberFormat("dd.MM.yyyy");
+      psh.getRange(row, 4).setNumberFormat("#,##0 ₴");
+      added++;
+    });
+    // Галочки лишаються стояти: суми з журналу тепер покривають виручку й маржу.
+    syncOrderPaymentState_(p.order_number);
+  });
+  SpreadsheetApp.flush();
+  return { status: "ok", dry_run: false, orders: plan.length, rows: added };
+}
+
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
 var ADMIN_ORDER_COLS = 45; // A–AS (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS)
@@ -2288,6 +2348,7 @@ function handleAdminRequest_(data) {
     if (action === "settlement_send") return jsonOut(adminSettlementSend_(data));
     if (action === "add_payment") return jsonOut(adminAddPayment_(data));
     if (action === "delete_payment") return jsonOut(adminDeletePayment_(data));
+    if (action === "migrate_legacy_payments") return jsonOut(adminMigrateLegacyPayments_(data));
     if (action === "list_partners") return jsonOut(adminListPartners_());
     if (action === "upsert_partner") return jsonOut(adminUpsertPartner_(data.partner || data));
     if (action === "list_expenses") return jsonOut(adminListExpenses_(data));

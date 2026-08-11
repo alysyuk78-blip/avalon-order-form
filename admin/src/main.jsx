@@ -913,6 +913,58 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
+    // Панель переносу старих галочок у журнал платежів. Зʼявляється ЛИШЕ якщо є що
+    // переносити, тобто після одного натискання зникає назавжди.
+    function LegacyPaymentsPanel({ token, legacy, onDone }) {
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState("");
+      const [done, setDone] = useState(null);
+      if (!legacy.orders) return null;
+
+      async function migrate() {
+        const ok = window.confirm(
+          "Перенести оплати " + legacy.orders + " замовл. у журнал платежів?\n\n"
+          + "Дата платежів буде поставлена за датою замовлення (у примітці зазначено, що вона приблизна). "
+          + "Суми й галочки не змінюються. Зайвий платіж завжди можна видалити в картці замовлення."
+        );
+        if (!ok) return;
+        setBusy(true); setError("");
+        try {
+          const res = await api("/api/admin/payments", { method: "POST", token, body: { migrate: true } });
+          setDone("Перенесено: " + (res.orders || 0) + " замовл., " + (res.rows || 0) + " платежів");
+          onDone && onDone();
+        } catch (e) {
+          setError(e.message || "Не вдалося перенести");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      return (
+        <div className="panel legacy-panel">
+          <div className="panel-head">
+            <h2>Оплати без дат</h2>
+          </div>
+          <p className="legacy-text">
+            У <b>{legacy.orders}</b> замовл. оплата позначена лише галочкою, без записів у журналі платежів.
+            Такі надходження не мають дати, тому у фільтрах «Цей місяць» і «30 днів» вони враховуються
+            приблизно — за датою замовлення.
+          </p>
+          <p className="legacy-text">
+            Перенос створить платежі в журналі: дата — за датою замовлення, у примітці зазначено, що вона приблизна.
+            Суми, борги й галочки від цього не зміняться.
+          </p>
+          {done && <div className="settlement-info">{done}</div>}
+          {error && <div className="error">{error}</div>}
+          {!done && (
+            <button className="btn" disabled={busy} onClick={migrate}>
+              {busy ? "Переношу…" : "Перенести в журнал (" + legacy.orders + ")"}
+            </button>
+          )}
+        </div>
+      );
+    }
+
     function confirmStatusChange(fromStatus, toStatus) {
       if (toStatus === "Скасовано") {
         return window.confirm("Скасувати замовлення?");
@@ -2393,6 +2445,17 @@ import finance from '../../lib/admin-finance.js';
 
     function DashboardView({ token, groups, expenses, payments, payouts, loading, error, refreshData, onOpenOrder }) {
       const [period, setPeriod] = useState("all");
+      // Замовлення, де оплата позначена галочкою, але журналу платежів немає.
+      const legacyPayments = useMemo(() => {
+        let orders = 0;
+        (groups || []).forEach(g => {
+          if (g.status === "Скасовано") return;
+          if (Number(g.payments_count) > 0) return;
+          if (g.client_paid || g.margin_paid) orders += 1;
+        });
+        return { orders };
+      }, [groups]);
+
       // Список справ згортається; вибір запамʼятовуємо, щоб не тиснути щоразу.
       const [todoCollapsed, setTodoCollapsed] = useState(() => {
         try { return localStorage.getItem(TODO_COLLAPSED_KEY) === "1"; } catch (e) { return false; }
@@ -2518,6 +2581,8 @@ import finance from '../../lib/admin-finance.js';
               )}
             </div>
           )}
+
+          <LegacyPaymentsPanel token={token} legacy={legacyPayments} onDone={refreshData} />
 
           <SettlementPanel token={token} />
 
