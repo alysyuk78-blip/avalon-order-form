@@ -919,6 +919,7 @@ import finance from '../../lib/admin-finance.js';
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
       const [done, setDone] = useState(null);
+      const [progress, setProgress] = useState("");
       if (!legacy.orders) return null;
 
       async function migrate() {
@@ -930,8 +931,19 @@ import finance from '../../lib/admin-finance.js';
         if (!ok) return;
         setBusy(true); setError("");
         try {
-          const res = await api("/api/admin/payments", { method: "POST", token, body: { migrate: true } });
-          setDone("Перенесено: " + (res.orders || 0) + " замовл., " + (res.rows || 0) + " платежів");
+          // Apps Script переносить партіями, щоб не впертись у тайм-аут: гортаємо,
+          // поки не лишиться нуль, і показуємо накопичений підсумок.
+          let orders = 0, rows = 0, guard = 0;
+          for (;;) {
+            const res = await api("/api/admin/payments", { method: "POST", token, body: { migrate: true } });
+            orders += Number(res.orders) || 0;
+            rows += Number(res.rows) || 0;
+            setProgress("Перенесено " + orders + " замовл." +
+              (Number(res.remaining) > 0 ? " · лишилось " + res.remaining : ""));
+            if (!(Number(res.remaining) > 0) || !(Number(res.orders) > 0) || ++guard > 40) break;
+          }
+          setProgress("");
+          setDone("Перенесено: " + orders + " замовл., " + rows + " платежів");
           onDone && onDone();
         } catch (e) {
           setError(e.message || "Не вдалося перенести");
@@ -954,6 +966,7 @@ import finance from '../../lib/admin-finance.js';
             Перенос створить платежі в журналі: дата — за датою замовлення, у примітці зазначено, що вона приблизна.
             Суми, борги й галочки від цього не зміняться.
           </p>
+          {progress && <div className="legacy-text"><b>{progress}</b></div>}
           {done && <div className="settlement-info">{done}</div>}
           {error && <div className="error">{error}</div>}
           {!done && (

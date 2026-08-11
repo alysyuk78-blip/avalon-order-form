@@ -1878,6 +1878,9 @@ function adminDeletePayment_(data) {
 // довідково, і в суму боргу НЕ включаємо.
 
 var SHEET_ACT_TMP = "Акт звірки (тимч.)";
+// Позначка в примітці платежу: за нею впізнаємо рядки, створені переносом галочок,
+// і можемо доповнити обірваний перенос, не чіпаючи реальні платежі.
+var MIGRATION_TAG = "Перенесено з галочки — дата приблизна (за датою замовлення)";
 
 /**
  * Дата замовлення в мілісекундах. У колонці B дата може лежати і текстом
@@ -2170,19 +2173,37 @@ function adminSettlementSend_(data) {
  */
 function adminMigrateLegacyPayments_(data) {
   var dry = !!(data && data.dry_run);
-  var NOTE = "Перенесено з галочки — дата приблизна (за датою замовлення)";
+  var limit = Math.max(1, Math.min(60, Number((data && data.limit) || 40)));
   var listed = adminListOrders_({});
-  var plan = [];
+  var plan = [], pending = 0;
 
   (listed.groups || []).forEach(function (g) {
     if (g.status === "Скасовано") return;
-    if (Number(g.payments_count) > 0) return;   // журнал у цього замовлення вже є
     var revenue = Math.round(Number(g.revenue) || 0);
     var profit = Math.round(Number(g.profit) || 0);
+    if (!g.client_paid && !g.margin_paid) return;
+
+    // Що вже лежить у журналі. Замовлення з РЕАЛЬНИМИ платежами не чіпаємо взагалі:
+    // там галочки й так виводяться з журналу. Доповнюємо лише порожні або такі, де
+    // лежать виключно рядки цієї ж міграції — це і є випадок обірваного переносу.
+    var pay = readPayments_(g.order_number);
+    var onlyMigrated = pay.length > 0 && pay.every(function (x) {
+      return String(x.note || "").indexOf(MIGRATION_TAG) >= 0;
+    });
+    if (pay.length > 0 && !onlyMigrated) return;
+    var have = paymentTotals_(pay);
+
     var rows = [];
-    if (g.client_paid && revenue > 0) rows.push({ type: "Оплата повністю", amount: revenue });
-    if (g.margin_paid && profit > 0) rows.push({ type: "Маржа від підрядника", amount: profit });
+    if (g.client_paid && revenue > have.client_paid) {
+      rows.push({ type: "Оплата повністю", amount: revenue - have.client_paid });
+    }
+    if (g.margin_paid && profit > have.margin_paid_sum) {
+      rows.push({ type: "Маржа від підрядника", amount: profit - have.margin_paid_sum });
+    }
     if (!rows.length) return;
+
+    pending += 1;
+    if (plan.length >= limit) return;         // решта піде наступним запуском
     var ms = orderDateMs_(g.created_at);
     plan.push({
       order_number: g.order_number,
@@ -2193,24 +2214,32 @@ function adminMigrateLegacyPayments_(data) {
 
   var rowsPlanned = plan.reduce(function (n, p) { return n + p.rows.length; }, 0);
   if (dry) {
-    return { status: "ok", dry_run: true, orders: plan.length, rows: rowsPlanned, plan: plan.slice(0, 80) };
+    return { status: "ok", dry_run: true, orders: plan.length, rows: rowsPlanned,
+             pending: pending, remaining: Math.max(0, pending - plan.length), plan: plan.slice(0, 80) };
   }
 
   var psh = paymentsSheet_();
-  var added = 0;
+  var added = 0, doneOrders = 0;
   plan.forEach(function (p) {
-    p.rows.forEach(function (r) {
-      var row = psh.getLastRow() + 1;
-      psh.getRange(row, 1, 1, 6).setValues([[p.date, p.order_number, r.type, r.amount, "", NOTE]]);
-      psh.getRange(row, 1).setNumberFormat("dd.MM.yyyy");
-      psh.getRange(row, 4).setNumberFormat("#,##0 ₴");
-      added++;
+    // ОДИН setValues на замовлення: обидва рядки або жоден. Інакше обірваний запис
+    // залишив би замовлення з половиною журналу — і галочка, що лишилась без платежу,
+    // показала б фальшивий борг (журнал стає головним, щойно в ньому є хоч рядок).
+    var startRow = psh.getLastRow() + 1;
+    var values = p.rows.map(function (r) {
+      return [p.date, p.order_number, r.type, r.amount, "", MIGRATION_TAG];
     });
-    // Галочки лишаються стояти: суми з журналу тепер покривають виручку й маржу.
-    syncOrderPaymentState_(p.order_number);
+    psh.getRange(startRow, 1, values.length, 6).setValues(values);
+    psh.getRange(startRow, 1, values.length, 1).setNumberFormat("dd.MM.yyyy");
+    psh.getRange(startRow, 4, values.length, 1).setNumberFormat("#,##0 ₴");
+    added += values.length;
+    doneOrders += 1;
   });
+  // syncOrderPaymentState_ тут НЕ викликаємо: суми рядків рівно покривають те, що
+  // заявляли галочки, тож стан не змінюється, а перескан усіх замовлень і платежів на
+  // кожне замовлення виносив запит за 25-секундний тайм-аут проксі.
   SpreadsheetApp.flush();
-  return { status: "ok", dry_run: false, orders: plan.length, rows: added };
+  return { status: "ok", dry_run: false, orders: doneOrders, rows: added,
+           remaining: Math.max(0, pending - doneOrders) };
 }
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
