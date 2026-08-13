@@ -1,5 +1,13 @@
 # CODEX HANDOFF — avalon-order-form
 
+## Ліди з Vercel-лендингу — 13.08.2026
+
+- До CORS allowlist `api/order.js` додано production-домен
+  `https://avalon-ac-baskets.vercel.app`.
+- Маршрут, структура заявки, Google Sheets, CRM і Telegram не змінювалися.
+- Перевірено: `npm run test:quick`, `node --check api/order.js`,
+  `git diff --check` — PASS.
+
 ## Ліди з лендингу кошиків — 13.08.2026
 
 - До CORS allowlist `api/order.js` додано production-домен лендингу
