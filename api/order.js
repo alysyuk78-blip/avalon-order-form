@@ -279,6 +279,7 @@ function isRateLimited(ip) {
 const ALLOWED_ORIGINS = [
   "https://avalon-order-form.vercel.app",
   "https://avalon-ac-baskets.active-sloth-1989.chatgpt.site",
+  "https://avalon-ac-baskets.vercel.app",
   "http://localhost:3000",
   "http://localhost:5500",
 ];
