@@ -1,5 +1,15 @@
 # CODEX HANDOFF — avalon-order-form
 
+## Ліди з лендингу кошиків — 13.08.2026
+
+- До CORS allowlist `api/order.js` додано production-домен лендингу
+  `avalon-ac-baskets.active-sloth-1989.chatgpt.site`.
+- Лендинг надсилає коротку заявку в чинний `/api/order`; далі працює наявний
+  ланцюжок Google Sheets → CRM + Telegram.
+- Нову CRM, нового Telegram-бота або нові секрети не створювали.
+- Apps Script і його deployment не змінюються.
+
+
 ## CRM: статус не повертається до старого кешу — 01.08.2026
 
 - Production-логи за 15:25–15:33 підтвердили: `PATCH /api/admin/order` завершився

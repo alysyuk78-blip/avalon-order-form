@@ -278,6 +278,7 @@ function isRateLimited(ip) {
 // Allowed origins (update with your actual domain)
 const ALLOWED_ORIGINS = [
   "https://avalon-order-form.vercel.app",
+  "https://avalon-ac-baskets.active-sloth-1989.chatgpt.site",
   "http://localhost:3000",
   "http://localhost:5500",
 ];
