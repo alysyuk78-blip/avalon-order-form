@@ -1,5 +1,16 @@
 # CODEX HANDOFF — avalon-order-form
 
+## Ліди з нового production-домену — 26.08.2026
+
+- До CORS allowlist `api/order.js` додано production-домен
+  `https://koshyky.avalonmetaldesign.com.ua`.
+- Причина збою тестової заявки: браузер успішно виконував `OPTIONS`, але не
+  надсилав `POST`, оскільки новий домен був відсутній у дозволеному списку.
+- Маршрут `/api/order`, структура заявки, Google Sheets, CRM, Telegram і
+  секрети не змінювалися.
+- Vercel preview для Pull Request має статус READY; після злиття потрібна
+  перевірка production deployment і повторна тестова заявка з нового домену.
+
 ## Ліди з Vercel-лендингу — 13.08.2026
 
 - До CORS allowlist `api/order.js` додано production-домен
