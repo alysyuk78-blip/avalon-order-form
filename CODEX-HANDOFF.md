@@ -50,6 +50,35 @@
   візуальний прогін блоку в Chromium на реальних числах власника.
 - ⚠️ **Потрібен clasp deploy** — без нього колонки AT і нових формул у проді не буде.
 
+## Ліди з нового production-домену — 26.08.2026
+
+- До CORS allowlist `api/order.js` додано production-домен
+  `https://koshyky.avalonmetaldesign.com.ua`.
+- Причина збою тестової заявки: браузер успішно виконував `OPTIONS`, але не
+  надсилав `POST`, оскільки новий домен був відсутній у дозволеному списку.
+- Маршрут `/api/order`, структура заявки, Google Sheets, CRM, Telegram і
+  секрети не змінювалися.
+- Vercel preview для Pull Request має статус READY; після злиття потрібна
+  перевірка production deployment і повторна тестова заявка з нового домену.
+
+## Ліди з Vercel-лендингу — 13.08.2026
+
+- До CORS allowlist `api/order.js` додано production-домен
+  `https://avalon-ac-baskets.vercel.app`.
+- Маршрут, структура заявки, Google Sheets, CRM і Telegram не змінювалися.
+- Перевірено: `npm run test:quick`, `node --check api/order.js`,
+  `git diff --check` — PASS.
+
+## Ліди з лендингу кошиків — 13.08.2026
+
+- До CORS allowlist `api/order.js` додано production-домен лендингу
+  `avalon-ac-baskets.active-sloth-1989.chatgpt.site`.
+- Лендинг надсилає коротку заявку в чинний `/api/order`; далі працює наявний
+  ланцюжок Google Sheets → CRM + Telegram.
+- Нову CRM, нового Telegram-бота або нові секрети не створювали.
+- Apps Script і його deployment не змінюються.
+
+
 ## CRM: статус не повертається до старого кешу — 01.08.2026
 
 - Production-логи за 15:25–15:33 підтвердили: `PATCH /api/admin/order` завершився
