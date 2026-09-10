@@ -112,6 +112,8 @@ function writeOrderToSheet_(data) {
     }
 
     var patternFileInfo = getPatternFileInfo_(data);
+    // Ставка комісії партнера/ТОВ (% від маржі) — спільна для всіх позицій замовлення.
+    var commissionPct = normalizeCommissionPct_(data.commission_pct);
 
     var MARKUP = 1 / (1 - 0.2593);
     var itemsIn = (Array.isArray(data.items) && data.items.length) ? data.items : [{
@@ -251,12 +253,11 @@ function writeOrderToSheet_(data) {
       rr.setVerticalAlignment("middle").setWrap(true);
       sheet.getRange(lastRow, 1).setFontWeight("bold");
       sheet.getRange(lastRow, 3).setBackground("#FFF3CD").setFontColor("#856404").setFontWeight("bold").setHorizontalAlignment("center");
-      // Комісія = Кількість × ставка партнера (з аркуша Дропшипери); Чистий = Валовий − Комісія
-      sheet.getRange(lastRow, 25).setFormula("=IFERROR($Q" + lastRow + "*VLOOKUP($D" + lastRow + ";" + SHEET_DROP + "!$A:$E;5;0);0)");
-      sheet.getRange(lastRow, 26).setFormula("=IF($W" + lastRow + "=\"\";\"\";$W" + lastRow + "-$Y" + lastRow + ")");
+      // Y (комісія) і Z (чистий) — формули; формат ₴ ставить сама функція.
+      setCommissionFormulas_(sheet, lastRow);
+      if (commissionPct != null) sheet.getRange(lastRow, COMMISSION_PCT_COL).setValue(commissionPct);
       sheet.getRange(lastRow, 19, 1, 5).setNumberFormat("#,##0 ₴"); // S-W
       sheet.getRange(lastRow, 24).setNumberFormat('0.0"%"');        // X Маржа
-      sheet.getRange(lastRow, 25, 1, 2).setNumberFormat("#,##0 ₴"); // Y-Z
       sheet.getRange(lastRow, 21).setFontWeight("bold");            // Ціна продажу 1шт
       if (lastRow % 2 === 0) rr.setBackground("#F8F6F2");
     });
@@ -449,6 +450,40 @@ function onEditDelivery(e) {
       }
     }
   } catch (err) { console.error("onEditDelivery: " + err); }
+}
+
+// ===================== КОМІСІЯ ПАРТНЕРА/ТОВ (% ВІД МАРЖІ) =====================
+// Правило власника: партнер (майданчик, ТОВ, посередник) утримує комісію не з
+// суми продажу, а з МАРЖІ. Ставка живе в колонці AT (46) у відсотках, комісія
+// рахується формулою в Y, чистий прибуток — у Z (= W − Y), тому будь-яка зміна
+// ціни чи собівартості одразу дає правильні цифри і в таблиці, і в CRM.
+var COMMISSION_PCT_COL = 46; // AT
+
+/** Ставка з CRM → число 0..99.99 або null (не задано). Кидає помилку на невалідній. */
+function normalizeCommissionPct_(value) {
+  if (value == null || value === "") return null;
+  var pct = Number(value);
+  if (!isFinite(pct)) throw new Error("Комісія з маржі має бути числом");
+  if (pct < 0) throw new Error("Комісія з маржі не може бути відʼємною");
+  if (pct >= 100) throw new Error("Комісія з маржі має бути меншою за 100%");
+  return Math.round(pct * 100) / 100;
+}
+
+/**
+ * Y — комісія, Z — чистий прибуток.
+ * Якщо в AT задана ставка → комісія = валовий прибуток × ставка (тільки коли
+ * прибуток додатний: зі збиткової угоди комісію не беруть).
+ * Якщо ставки немає → лишається стара логіка дропшиперів: кількість × ставка з
+ * аркуша «Дропшипери» за кодом джерела. Тож наявні замовлення рахуються як раніше.
+ */
+function setCommissionFormulas_(sheet, row) {
+  var at = "$AT" + row, w = "$W" + row, q = "$Q" + row, d = "$D" + row;
+  sheet.getRange(row, 25).setFormula(
+    "=IFERROR(IF(N(" + at + ")>0;IF(" + w + ">0;ROUND(" + w + "*" + at + "/100;2);0);" +
+    q + "*VLOOKUP(" + d + ";" + SHEET_DROP + "!$A:$E;5;0));0)"
+  );
+  sheet.getRange(row, 26).setFormula("=IF(" + w + "=\"\";\"\";" + w + "-$Y" + row + ")");
+  sheet.getRange(row, 25, 1, 2).setNumberFormat("#,##0 ₴");
 }
 
 /**
@@ -1245,7 +1280,7 @@ function setupOrders(sheet) {
     "Тип кошика","Конструкція","Колір","Візерунок","Бренд кондиц.","Модель кондиц.",
     "W (мм)","H (мм)","D (мм)","Кількість","Площа (м²)",
     "Собівартість 1шт","Собівартість заг","Ціна продажу 1шт","Виручка","Валовий прибуток","Маржа %",
-    "Комісія дропш.","Чистий прибуток",
+    "Комісія ₴","Чистий прибуток",  // Y (25), Z (26): Z = валовий − комісія
     "Доставка","Адреса","Дата доставки","Оплата","Як дізнались","Примітки",
     "Оплата клієнта ✓", // AG (33): клієнт оплатив підряднику (є квитанція) → маржа до отримання
     "Маржу отримано ✓", // AH (34): підрядник перерахував мені маржу за це замовлення
@@ -1259,7 +1294,8 @@ function setupOrders(sheet) {
     "Вид виробу",        // AP (42): Кошик / Кронштейни / Інший виріб
     "Характеристики",    // AQ (43): опис довільного виробу (пергола, стенд тощо)
     "Одиниця виміру",    // AR (44): шт. / комп. / довільне значення
-    "ID запиту"          // AS (45): захист від дублювання після мережевого тайм-ауту
+    "ID запиту",         // AS (45): захист від дублювання після мережевого тайм-ауту
+    "Комісія з маржі, %" // AT (46): % ВІД ВАЛОВОГО ПРИБУТКУ, не від ціни продажу
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
@@ -1561,7 +1597,8 @@ function setupInstructions(ss) {
     "QR-код: будь-який безкоштовний генератор (напр. qr-code-generator.com) → встав посилання → друк наклейок у під'їзди.",
     "",
     "━━━ ФІНАНСИ ━━━",
-    "Комісія дропш. = Кількість × Ставка партнера.    Валовий прибуток = ціна продажу − собівартість.",
+    "Валовий прибуток = ціна продажу − собівартість.    Чистий прибуток = валовий − комісія партнера.",
+    "Комісія (Y): якщо в колонці AT «Комісія з маржі, %» стоїть ставка (напр. 30) — комісія = валовий прибуток × ставка, тобто % ВІД МАРЖІ. Її утримує підрядник, тож у акті звірки на цю суму зменшується його борг. Якщо AT порожня — як раніше: Кількість × ставка з аркуша «Дропшипери».",
     "AG «Оплата клієнта ✓» додає маржу в борг підрядника. AH «Маржу отримано ✓» переносить її в отриману маржу.",
     "Чистий прибуток факт (Зведення) = отримана маржа − комісії − витрати.",
     "",
@@ -1722,12 +1759,24 @@ function paymentTotals_(payments) {
  * AG/AH (замовлення до появи журналу платежів). Щойно з'явиться перший платіж —
  * головними стають суми, а не галочки.
  */
-function legacyPaidState_(revenue, profit, agChecked, ahChecked) {
+function legacyPaidState_(revenue, marginDue, agChecked, ahChecked) {
   return {
     client_paid: agChecked ? Math.round(revenue) : 0,
-    margin_paid_sum: ahChecked ? Math.round(profit) : 0,
+    margin_paid_sum: ahChecked ? Math.round(marginDue) : 0,
     legacy: true
   };
+}
+
+/**
+ * Маржа, яку підрядник реально має перерахувати: валовий прибуток МІНУС комісія.
+ * Комісію утримує підрядник, тому вона зменшує саме його борг, а не «загальний
+ * прибуток» у зведенні. Без комісії (більшість замовлень) = валовому прибутку.
+ */
+function marginDue_(profit, commission) {
+  var gross = Number(profit) || 0;
+  var com = Number(commission) || 0;
+  if (gross <= 0) return gross;              // збиткова угода: комісії немає
+  return Math.max(0, gross - Math.max(0, com));
 }
 
 function syncOrderPaymentState_(orderNumber) {
@@ -1741,37 +1790,39 @@ function syncOrderPaymentState_(orderNumber) {
   }
   if (!rows.length) return null;
 
-  var revenue = 0, profit = 0;
+  var revenue = 0, profit = 0, commission = 0;
   rows.forEach(function (r) {
-    var v = sh.getRange(r, 22, 1, 2).getValues()[0]; // V виручка, W валовий прибуток
+    var v = sh.getRange(r, 22, 1, 4).getValues()[0]; // V виручка, W валовий, X маржа %, Y комісія
     revenue += cellNum_(v[0]) || 0;
     profit += cellNum_(v[1]) || 0;
+    commission += cellNum_(v[3]) || 0;
   });
+  var due = marginDue_(profit, commission);
   var payments = readPayments_(orderNumber);
   var agChecked = !!sh.getRange(rows[0], 33).getValue();
   var ahChecked = !!sh.getRange(rows[0], 34).getValue();
   if (!payments.length) {
     // Журналу платежів для цього замовлення ще немає — не перетираємо старі галочки
     // (інакше вже оплачені замовлення показувались би як повний борг).
-    var lg = legacyPaidState_(revenue, profit, agChecked, ahChecked);
+    var lg = legacyPaidState_(revenue, due, agChecked, ahChecked);
     return {
-      revenue: revenue, profit: profit,
+      revenue: revenue, profit: profit, commission: commission, margin_due: due,
       client_paid: lg.client_paid, client_left: Math.max(0, revenue - lg.client_paid),
-      margin_received: lg.margin_paid_sum, margin_left: Math.max(0, profit - lg.margin_paid_sum),
+      margin_received: lg.margin_paid_sum, margin_left: Math.max(0, due - lg.margin_paid_sum),
       legacy: true
     };
   }
   var totals = paymentTotals_(payments);
   var clientDone = revenue > 0 && totals.client_paid >= revenue;
-  var marginDone = profit > 0 && totals.margin_paid_sum >= profit;
+  var marginDone = due > 0 && totals.margin_paid_sum >= due;
   rows.forEach(function (r) {
     if (!!sh.getRange(r, 33).getValue() !== clientDone) sh.getRange(r, 33).setValue(clientDone);
     if (!!sh.getRange(r, 34).getValue() !== marginDone) sh.getRange(r, 34).setValue(marginDone);
   });
   return {
-    revenue: revenue, profit: profit,
+    revenue: revenue, profit: profit, commission: commission, margin_due: due,
     client_paid: totals.client_paid, client_left: Math.max(0, revenue - totals.client_paid),
-    margin_received: totals.margin_paid_sum, margin_left: Math.max(0, profit - totals.margin_paid_sum)
+    margin_received: totals.margin_paid_sum, margin_left: Math.max(0, due - totals.margin_paid_sum)
   };
 }
 
@@ -1928,7 +1979,9 @@ function settlementData_(data) {
       city: g.city || "",
       revenue: revenue,
       cost_total: Math.max(0, revenue - (Number(g.profit) || 0)),
-      profit: Number(g.profit) || 0,
+      profit: Number(g.profit) || 0,                        // валовий прибуток
+      commission: Number(g.commission) || 0,                // утримує підрядник
+      margin_due: Number(g.margin_due) || 0,                // валовий − комісія
       client_paid: Number(g.client_paid_sum) || 0,
       client_left: Number(g.client_left) || 0,
       margin_received: Number(g.margin_received) || 0,
@@ -1963,9 +2016,12 @@ function settlementData_(data) {
       due_revenue: sum(due, "revenue"),
       due_cost: sum(due, "cost_total"),
       due_margin: sum(due, "profit"),
+      due_commission: sum(due, "commission"),
+      due_margin_net: sum(due, "margin_due"),     // валовий − комісія
       due_received: sum(due, "margin_received"),
       due_left: sum(due, "margin_left"),          // ← борг підрядника
       waiting_orders: waiting.length,
+      waiting_commission: sum(waiting, "commission"),
       waiting_margin_left: sum(waiting, "margin_left"),
       waiting_client_left: sum(waiting, "client_left"),
       payments_sum: sum(payments, "amount")
@@ -1983,50 +2039,69 @@ function buildActSheet_(d) {
   // Живе він кілька секунд і видаляється у finally.
 
   var period = (fmtDate_(d.from) || d.from || "…") + " — " + (fmtDate_(d.to) || d.to || "…");
+  // Колонка «Комісія» зʼявляється лише тоді, коли комісія справді є: інакше акт
+  // виглядав би точно так само, як і раніше, але з зайвими нулями.
+  var hasCom = (Number(d.totals.due_commission) || 0) > 0
+            || (Number(d.totals.waiting_commission) || 0) > 0;
+  var width = hasCom ? 9 : 8;
+  function line(cells) { return cells; }
+  function com(r) { return hasCom ? [Number(r.commission) || 0] : []; }
+
   var rows = [];
-  rows.push(["АКТ ЗВІРКИ З ПІДРЯДНИКОМ", "", "", "", "", "", ""]);
-  rows.push(["Avalon Metal Design", "", "", "", "", "", ""]);
-  rows.push(["Період: " + period, "", "", "", "Сформовано: " + d.generated_at, "", ""]);
-  rows.push(["", "", "", "", "", "", ""]);
-  rows.push(["МАРЖА ДО ВИПЛАТИ (клієнт сплатив 100%)", "", "", "", "", "", ""]);
-  rows.push(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив\nклієнт, ₴",
-             "Підряднику, ₴", "Маржа\nAvalon, ₴", "Отримано, ₴", "До виплати, ₴"]);
+  rows.push(["АКТ ЗВІРКИ З ПІДРЯДНИКОМ"]);
+  rows.push(["Avalon Metal Design"]);
+  rows.push(["Період: " + period, "", "", "", "Сформовано: " + d.generated_at]);
+  rows.push([""]);
+  rows.push(["МАРЖА ДО ВИПЛАТИ (клієнт сплатив 100%)"]);
+  rows.push(line(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив\nклієнт, ₴",
+                  "Підряднику, ₴", "Маржа\nAvalon, ₴"]
+    .concat(hasCom ? ["Комісія, ₴"] : [])
+    .concat(["Отримано, ₴", "До виплати, ₴"])));
   d.due.forEach(function (r) {
     rows.push([r.order_number, r.date_label || fmtDate_(r.delivery_date) || "",
                (r.client + (r.city ? " · " + r.city : "")).trim(),
-               r.revenue, r.cost_total, r.profit, r.margin_received, r.margin_left]);
+               r.revenue, r.cost_total, r.profit]
+      .concat(com(r))
+      .concat([r.margin_received, r.margin_left]));
   });
-  rows.push(["", "", "РАЗОМ ДО ВИПЛАТИ:", d.totals.due_revenue, d.totals.due_cost,
-             d.totals.due_margin, d.totals.due_received, d.totals.due_left]);
+  rows.push(["", "", "РАЗОМ ДО ВИПЛАТИ:", d.totals.due_revenue, d.totals.due_cost, d.totals.due_margin]
+    .concat(hasCom ? [d.totals.due_commission] : [])
+    .concat([d.totals.due_received, d.totals.due_left]));
 
   if (d.waiting.length) {
-    rows.push(["", "", "", "", "", "", "", ""]);
-    rows.push(["ДОВІДКОВО: очікує повної оплати клієнтом — у борг НЕ входить", "", "", "", "", "", "", ""]);
-    rows.push(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив\nклієнт, ₴",
-               "Не сплачено\nклієнтом, ₴", "Маржа\nAvalon, ₴", "Отримано, ₴", "Потенційно, ₴"]);
+    rows.push([""]);
+    rows.push(["ДОВІДКОВО: очікує повної оплати клієнтом — у борг НЕ входить"]);
+    rows.push(line(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив\nклієнт, ₴",
+                    "Не сплачено\nклієнтом, ₴", "Маржа\nAvalon, ₴"]
+      .concat(hasCom ? ["Комісія, ₴"] : [])
+      .concat(["Отримано, ₴", "Потенційно, ₴"])));
     d.waiting.forEach(function (r) {
       rows.push([r.order_number, r.date_label || fmtDate_(r.delivery_date) || "",
                  (r.client + (r.city ? " · " + r.city : "")).trim(),
-                 r.client_paid, r.client_left, r.profit, r.margin_received, r.margin_left]);
+                 r.client_paid, r.client_left, r.profit]
+        .concat(com(r))
+        .concat([r.margin_received, r.margin_left]));
     });
-    rows.push(["", "", "Разом (довідково):", "", d.totals.waiting_client_left, "", "", d.totals.waiting_margin_left]);
+    var waitTotals = ["", "", "Разом (довідково):", "", d.totals.waiting_client_left, ""]
+      .concat(hasCom ? [d.totals.waiting_commission] : [])
+      .concat(["", d.totals.waiting_margin_left]);
+    rows.push(waitTotals);
   }
 
   if (d.payments.length) {
-    rows.push(["", "", "", "", "", "", "", ""]);
-    rows.push(["ОТРИМАНО ВІД ПІДРЯДНИКА ЗА ПЕРІОД", "", "", "", "", "", "", ""]);
-    rows.push(["Дата", "№ замовлення", "Спосіб", "Примітка", "Сума, ₴", "", "", ""]);
+    rows.push([""]);
+    rows.push(["ОТРИМАНО ВІД ПІДРЯДНИКА ЗА ПЕРІОД"]);
+    rows.push(["Дата", "№ замовлення", "Спосіб", "Примітка", "Сума, ₴"]);
     d.payments.forEach(function (p) {
-      rows.push([String(p.date).slice(0, 10), p.order_number, p.method || "—", p.note || "", p.amount, "", "", ""]);
+      rows.push([String(p.date).slice(0, 10), p.order_number, p.method || "—", p.note || "", p.amount]);
     });
-    rows.push(["", "", "", "Разом отримано:", d.totals.payments_sum, "", "", ""]);
+    rows.push(["", "", "", "Разом отримано:", d.totals.payments_sum]);
   }
 
-  rows.push(["", "", "", "", "", "", "", ""]);
+  rows.push([""]);
   rows.push(["Avalon Metal Design: ____________________", "", "", "",
-             "Підрядник: ____________________", "", "", ""]);
+             "Підрядник: ____________________"]);
 
-  var width = 8;
   rows = rows.map(function (r) { while (r.length < width) r.push(""); return r.slice(0, width); });
   sh.getRange(1, 1, rows.length, width).setValues(rows);
 
@@ -2180,7 +2255,9 @@ function adminMigrateLegacyPayments_(data) {
   (listed.groups || []).forEach(function (g) {
     if (g.status === "Скасовано") return;
     var revenue = Math.round(Number(g.revenue) || 0);
-    var profit = Math.round(Number(g.profit) || 0);
+    // Галочка «Маржу отримано» означає, що надійшло стільки, скільки підрядник
+    // винен, — тобто валовий прибуток МІНУС утримана ним комісія.
+    var marginDue = Math.round(marginDue_(g.profit, g.commission));
     if (!g.client_paid && !g.margin_paid) return;
 
     // Що вже лежить у журналі. Замовлення з РЕАЛЬНИМИ платежами не чіпаємо взагалі:
@@ -2197,8 +2274,8 @@ function adminMigrateLegacyPayments_(data) {
     if (g.client_paid && revenue > have.client_paid) {
       rows.push({ type: "Оплата повністю", amount: revenue - have.client_paid });
     }
-    if (g.margin_paid && profit > have.margin_paid_sum) {
-      rows.push({ type: "Маржа від підрядника", amount: profit - have.margin_paid_sum });
+    if (g.margin_paid && marginDue > have.margin_paid_sum) {
+      rows.push({ type: "Маржа від підрядника", amount: marginDue - have.margin_paid_sum });
     }
     if (!rows.length) return;
 
@@ -2244,7 +2321,7 @@ function adminMigrateLegacyPayments_(data) {
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 45; // A–AS (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS)
+var ADMIN_ORDER_COLS = 46; // A–AT (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT)
 var STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
 
 function applyStatusSideEffects_(sh, row, newStatus) {
@@ -2301,13 +2378,13 @@ function ensureDiscountColumns_(sheet) {
 
 function ensureDiscountColumnsOnce_() {
   var props = PropertiesService.getScriptProperties();
-  // V5: після додавання AS «ID запиту» заголовки треба проставити ще раз.
-  if (props.getProperty("ORDERS_COLS_V5_READY") === "1") return;
+  // V6: після додавання AT «Комісія з маржі, %» заголовки треба проставити ще раз.
+  if (props.getProperty("ORDERS_COLS_V6_READY") === "1") return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) return;
   ensureDiscountColumns_(sheet);
-  props.setProperty("ORDERS_COLS_V5_READY", "1");
+  props.setProperty("ORDERS_COLS_V6_READY", "1");
 }
 
 /** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
@@ -2326,14 +2403,15 @@ function ensureContactColumns_(sheet) {
     sheet.setColumnWidth(39, 120);
     sheet.setColumnWidth(40, 160);
   }
-  // AO–AS (41–45): виріб, вид, характеристики, одиниця та ID запиту.
+  // AO–AT (41–46): виріб, вид, характеристики, одиниця, ID запиту та комісія партнера.
   // таблиці, щоб не вимагати ручного перезапуску setupOrders після зміни схеми.
   var extra = [
     { col: 41, title: "Модель / виріб", key: "Модель", width: 170 },
     { col: 42, title: "Вид виробу", key: "Вид", width: 120 },
     { col: 43, title: "Характеристики", key: "Характеристик", width: 320 },
     { col: 44, title: "Одиниця виміру", key: "Одиниц", width: 120 },
-    { col: 45, title: "ID запиту", key: "ID запиту", width: 210 }
+    { col: 45, title: "ID запиту", key: "ID запиту", width: 210 },
+    { col: COMMISSION_PCT_COL, title: "Комісія з маржі, %", key: "Комісія з маржі", width: 150 }
   ];
   extra.forEach(function (e) {
     var head = String(sheet.getRange(1, e.col).getValue() || "");
@@ -2343,6 +2421,8 @@ function ensureContactColumns_(sheet) {
       .setFontFamily(HDR_FONT).setHorizontalAlignment("center").setVerticalAlignment("middle");
     sheet.setColumnWidth(e.col, e.width);
   });
+  // Ставка — саме число у відсотках (30 = 30%), не текст «30%»: інакше формула в Y не порахує.
+  sheet.getRange(2, COMMISSION_PCT_COL, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat('0.##"%"');
 }
 
 function parseContactFromNotes_(notes) {
@@ -2478,7 +2558,8 @@ function mapOrderRow_(rowIndex, v) {
     list_price: cellNum_(v[34]),
     discount_pct: cellNum_(v[35]),
     discount_uah: cellNum_(v[36]),
-    request_id: String(v[44] || "")
+    request_id: String(v[44] || ""),
+    commission_pct: cellNum_(v[45])   // AT: ставка комісії партнера/ТОВ, % від маржі
   };
 }
 
@@ -2540,6 +2621,7 @@ function adminGroupOrders_(orders, payments) {
         profit: 0,
         commission: 0,
         net_profit: 0,
+        commission_pct: o.commission_pct,  // ставка спільна для позицій замовлення
         list_price: 0,
         discount_uah: 0
       };
@@ -2566,15 +2648,17 @@ function adminGroupOrders_(orders, payments) {
   var groups = Object.keys(byNum).map(function (k) {
     var g = byNum[k];
     g.margin_pct = g.revenue ? Math.round((g.profit / g.revenue) * 1000) / 10 : null;
+    // Комісію утримує підрядник → його борг = валовий прибуток мінус комісія.
+    g.margin_due = marginDue_(g.profit, g.commission);
     var pmts = payByOrder[k] || [];
     var t = pmts.length
       ? paymentTotals_(pmts)
-      : legacyPaidState_(Number(g.revenue) || 0, Number(g.profit) || 0, !!g.client_paid, !!g.margin_paid);
+      : legacyPaidState_(Number(g.revenue) || 0, g.margin_due, !!g.client_paid, !!g.margin_paid);
     g.payments_count = pmts.length;
     g.client_paid_sum = t.client_paid;
     g.client_left = Math.max(0, (Number(g.revenue) || 0) - t.client_paid);
     g.margin_received = t.margin_paid_sum;
-    g.margin_left = Math.max(0, (Number(g.profit) || 0) - t.margin_paid_sum);
+    g.margin_left = Math.max(0, g.margin_due - t.margin_paid_sum);
     return g;
   });
   groups.sort(function (a, b) {
@@ -2610,12 +2694,14 @@ function adminGetOrder_(data) {
     payment_summary: (function () {
       var rev = group ? (Number(group.revenue) || 0) : 0;
       var prof = group ? (Number(group.profit) || 0) : 0;
+      var com = group ? (Number(group.commission) || 0) : 0;
+      var due = marginDue_(prof, com);   // борг підрядника: валовий мінус комісія
       var t = pay.length ? payTotals
-        : legacyPaidState_(rev, prof, !!(group && group.client_paid), !!(group && group.margin_paid));
+        : legacyPaidState_(rev, due, !!(group && group.client_paid), !!(group && group.margin_paid));
       return {
-        revenue: rev, profit: prof,
+        revenue: rev, profit: prof, commission: com, margin_due: due,
         client_paid: t.client_paid, client_left: Math.max(0, rev - t.client_paid),
-        margin_received: t.margin_paid_sum, margin_left: Math.max(0, prof - t.margin_paid_sum),
+        margin_received: t.margin_paid_sum, margin_left: Math.max(0, due - t.margin_paid_sum),
         legacy: !pay.length
       };
     })()
@@ -2693,6 +2779,9 @@ function applyFinanceToRow_(sh, row, patch) {
   sh.getRange(row, 35).setNumberFormat("#,##0 ₴");
   sh.getRange(row, 36).setNumberFormat("0.0");
   sh.getRange(row, 37).setNumberFormat("#,##0 ₴");
+  // Комісія/чистий — завжди формули від свіжого валового прибутку. Заразом це
+  // переводить старі рядки на нову формулу при першій же правці фінансів.
+  setCommissionFormulas_(sh, row);
 }
 
 /**
@@ -2754,6 +2843,7 @@ function adminCreateOrder_(data) {
     how_found: src.how_found || "", how_found_custom: src.how_found_custom || "",
     notes: src.notes || "",
     request_id: String(src.request_id || "").trim(),
+    commission_pct: src.commission_pct,   // % від маржі (партнер/ТОВ)
     items: items
   };
 
@@ -2866,6 +2956,17 @@ function adminUpdateOrder_(data) {
   // Зміна розмірів/типу/візерунка перераховує гроші тією ж логікою, що й правка руками
   // в таблиці. Якщо в цьому ж запиті задана ціна — applyFinanceToRow_ нижче переважить.
   if (pricingItemTouched) recalcRow_(sh, row);
+
+  // ── Ставка комісії партнера/ТОВ: спільна для всього замовлення ──
+  // Пишемо в усі рядки та переставляємо формули Y/Z — зокрема й на старих
+  // замовленнях, створених до появи цієї колонки.
+  if (patch.commission_pct !== undefined) {
+    var pctVal = normalizeCommissionPct_(patch.commission_pct);
+    targetRows.forEach(function (r) {
+      sh.getRange(r, COMMISSION_PCT_COL).setValue(pctVal == null ? "" : pctVal);
+      setCommissionFormulas_(sh, r);
+    });
+  }
 
   var financeTouched = ["cost_total", "list_price", "discount_pct", "discount_uah", "revenue"].some(function (k) {
     return patch[k] != null;
