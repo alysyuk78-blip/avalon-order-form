@@ -454,6 +454,8 @@
     .card-finance div { display: grid; gap: 2px; min-width: 0; }
     .card-finance span { color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
     .card-finance strong { color: var(--brand-soft); font-size: 13px; font-weight: 740; white-space: nowrap; }
+    /* Валовий прибуток дрібним під чистою маржею — коли є комісія. */
+    .card-finance em { color: var(--muted); font-size: 9.5px; font-style: normal; font-weight: 650; white-space: nowrap; }
     .card-payment {
       min-height: 26px; margin-top: 7px; padding: 5px 8px; border-radius: 7px;
       display: flex; align-items: center;
@@ -508,6 +510,16 @@
     }
     .margin-net-main b { font-size: 16px; }
     .margin-net-warn { margin-top: 7px; color: var(--danger); font-weight: 650; line-height: 1.4; }
+    /* Підсумок замість disabled-input: довгий текст переноситься, а не обрізається. */
+    .field-static {
+      min-height: 44px; padding: 10px 12px; border-radius: var(--control-radius);
+      background: var(--control-bg); color: var(--ink); font-size: 13px; line-height: 1.35;
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px;
+    }
+    .field-static b { font-weight: 750; }
+    .field-static-note { color: var(--ok); font-weight: 650; font-size: 12px; }
+    .field-static-note.debt { color: var(--danger); }
+
     .margin-calc { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(143,115,64,.08); }
     .margin-calc-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; color: var(--ink); }
     .margin-calc-note { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
