@@ -2,7 +2,12 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
-const { groupPaymentMetrics } = require("../lib/admin-finance");
+const {
+  groupPaymentMetrics,
+  commissionRate,
+  marginBreakdown,
+  requiredPriceForNetMargin,
+} = require("../lib/admin-finance");
 
 function testPaymentMetrics() {
   assert.deepEqual(
@@ -15,6 +20,7 @@ function testPaymentMetrics() {
     }),
     {
       clientSettled: true,
+      marginDue: 1000,
       marginReady: 1000,
       marginReceived: 400,
       marginDebt: 600,
@@ -68,7 +74,7 @@ function testStandardRecalculationClearsStaleDiscount() {
   row[16] = 2;
 
   const sheet = {
-    getMaxColumns: () => 45,
+    getMaxColumns: () => 46,
     getRange(_row, column, _rows, columns) {
       if (column === 42) return { getValue: () => "Кошик" };
       if (column === 1 && columns === 17) return { getValues: () => [row] };
@@ -138,7 +144,7 @@ function testBootstrapReadsPaymentsOnce() {
 
 function testOrderDetailReadsOnlyMatchedRows() {
   const context = loadAppsScript();
-  const row = new Array(45).fill("");
+  const row = new Array(46).fill("");
   row[0] = "ORD-010126-001";
   row[2] = "В роботі";
   row[4] = "Тест";
@@ -163,7 +169,7 @@ function testOrderDetailReadsOnlyMatchedRows() {
           }),
         };
       }
-      if (r === 7 && c === 1 && rows === 1 && cols === 45) {
+      if (r === 7 && c === 1 && rows === 1 && cols === 46) {
         fullReads.push(r);
         return { getValues: () => [row] };
       }
@@ -179,7 +185,148 @@ function testOrderDetailReadsOnlyMatchedRows() {
   assert.deepEqual(fullReads, [7], "картка має читати лише знайдений рядок");
 }
 
+// ── Комісія з маржі (ТОВ): 4 кейси з ТЗ власника ───────────────────────────
+function round2(n) { return Math.round(n * 100) / 100; }
+
+function testCommissionFromMargin() {
+  // 1. Прямий розрахунок: 30% від маржі, а не від ціни.
+  const direct = marginBreakdown({ cost: 9650, price: 12545, commissionPct: 30 });
+  assert.equal(direct.grossMargin, 2895);
+  assert.equal(round2(direct.commission), 868.5);
+  assert.equal(round2(direct.netMargin), 2026.5);
+  assert.equal(direct.loss, false);
+
+  // 2. Зворотний: щоб чистими лишилось 2895 ₴, ціна росте лише на 9,89%.
+  const back = requiredPriceForNetMargin({ cost: 9650, price: 12545, targetNetMargin: 2895, commissionPct: 30 });
+  assert.equal(round2(back.requiredGrossMargin), 4135.71);
+  assert.equal(round2(back.requiredPrice), 13785.71);
+  assert.equal(back.requiredPriceRounded, 13790, "прайс округляємо ВГОРУ до 10 ₴");
+  assert.equal(Math.round(back.priceUplift * 10000) / 100, 9.89);
+  assert.equal(Math.round(back.marginUplift * 10000) / 100, 42.86);
+  // Головна перевірка з ТЗ: (13785.71 − 9650) × 0.7 = 2895
+  assert.equal(round2((back.requiredPrice - 9650) * 0.7), 2895);
+  // І типова помилка, якої не робимо: ділити всю ціну.
+  assert.notEqual(round2(back.requiredPrice), round2(12545 / 0.7));
+
+  // 3. Вироджений випадок cost = 0: комісія з маржі = комісія з ціни (+42,86%).
+  const zeroCost = requiredPriceForNetMargin({ cost: 0, price: 3000, targetNetMargin: 3000, commissionPct: 30 });
+  assert.equal(round2(zeroCost.requiredPrice), 4285.71);
+  assert.equal(Math.round(zeroCost.priceUplift * 10000) / 100, 42.86);
+
+  // 4. Збиткова угода: комісії немає, чиста маржа = брутто, прапорець «збиткова».
+  const loss = marginBreakdown({ cost: 10000, price: 9000, commissionPct: 30 });
+  assert.equal(loss.grossMargin, -1000);
+  assert.equal(loss.commission, 0);
+  assert.equal(loss.netMargin, -1000);
+  assert.equal(loss.loss, true);
+
+  // Валідація ставки
+  assert.equal(commissionRate(0), 0);
+  assert.equal(commissionRate(""), 0, "порожня ставка = 0%, а не помилка");
+  assert.equal(commissionRate(-1), null);
+  assert.equal(commissionRate(100), null, "ставка 100% не лишає маржі");
+  assert.equal(commissionRate(150), null);
+  assert.equal(requiredPriceForNetMargin({ cost: 100, targetNetMargin: 50, commissionPct: 100 }).valid, false);
+  assert.equal(marginBreakdown({ cost: 100, price: 200, commissionPct: 120 }).rateValid, false);
+  assert.equal(marginBreakdown({ cost: 100, price: 200, commissionPct: 120 }).commission, 0,
+    "некоректна ставка не має тихо зменшувати маржу");
+
+  // Без ставки поведінка не змінюється (усі наявні замовлення).
+  const noRate = marginBreakdown({ cost: 9650, price: 12545 });
+  assert.equal(noRate.commission, 0);
+  assert.equal(noRate.netMargin, 2895);
+}
+
+// Комісію утримує підрядник → на неї зменшується саме ЙОГО борг.
+function testContractorDebtIsNetOfCommission() {
+  const withCommission = groupPaymentMetrics({
+    revenue: 12545, profit: 2895, commission: 868.5, client_left: 0,
+  });
+  assert.equal(withCommission.marginDue, 2026.5, "підрядник винен валовий мінус комісія");
+  assert.equal(withCommission.marginReady, 2026.5);
+  assert.equal(withCommission.marginLeft, 2026.5);
+  assert.equal(withCommission.marginDebt, 2026.5);
+
+  // Часткове надходження зменшує саме чистий борг.
+  const partly = groupPaymentMetrics({
+    revenue: 12545, profit: 2895, commission: 868.5, client_left: 0, margin_received: 1000,
+  });
+  assert.equal(partly.marginLeft, 1026.5);
+
+  // Стара галочка «Маржу отримано» закриває чистий борг, а не валовий.
+  const legacyPaid = groupPaymentMetrics({
+    revenue: 12545, profit: 2895, commission: 868.5, client_paid: true, margin_paid: true,
+  });
+  assert.equal(legacyPaid.marginReceived, 2026.5);
+  assert.equal(legacyPaid.marginDebt, 0);
+
+  // Готовий margin_due з таблиці має пріоритет над локальним обчисленням.
+  assert.equal(groupPaymentMetrics({ revenue: 100, profit: 40, commission: 10, margin_due: 25 }).marginDue, 25);
+
+  // Замовлення без комісії рахуються рівно як раніше.
+  const plain = groupPaymentMetrics({ revenue: 5000, profit: 1000, client_left: 0 });
+  assert.equal(plain.marginDue, 1000);
+  assert.equal(plain.marginDebt, 1000);
+
+  // Збиткова угода: комісії немає, борг від'ємним не стає.
+  const loss = groupPaymentMetrics({ revenue: 9000, profit: -1000, commission: 0, client_left: 0 });
+  assert.equal(loss.marginDue, -1000);
+  assert.equal(loss.marginLeft, 0, "від'ємний борг підрядника не нараховуємо");
+}
+
+// Та сама арифметика в Apps Script.
+function testSheetMarginDue() {
+  const context = loadAppsScript();
+  assert.equal(context.marginDue_(2895, 868.5), 2026.5);
+  assert.equal(context.marginDue_(2895, 0), 2895);
+  assert.equal(context.marginDue_(2895, null), 2895);
+  assert.equal(context.marginDue_(-1000, 300), -1000, "зі збиткової угоди комісію не віднімаємо");
+  assert.equal(context.marginDue_(500, 900), 0, "борг не може стати відʼємним");
+}
+
+// Формула в таблиці має давати ті самі цифри, що й розрахунок у CRM.
+function testSheetCommissionFormula() {
+  const context = loadAppsScript();
+
+  assert.equal(context.normalizeCommissionPct_(""), null);
+  assert.equal(context.normalizeCommissionPct_(null), null);
+  assert.equal(context.normalizeCommissionPct_(30), 30);
+  assert.equal(context.normalizeCommissionPct_("12.345"), 12.35);
+  assert.throws(() => context.normalizeCommissionPct_(-1), /відʼємною/);
+  assert.throws(() => context.normalizeCommissionPct_(100), /меншою за 100/);
+  assert.throws(() => context.normalizeCommissionPct_("abc"), /числом/);
+
+  const formulas = {};
+  const sheet = {
+    getRange: (_row, column) => ({
+      setFormula(f) { formulas[column] = f; return this; },
+      setNumberFormat() { return this; },
+    }),
+  };
+  context.setCommissionFormulas_(sheet, 7);
+  // Зі ставкою в AT — % від валового прибутку (W); без неї — стара логіка дропшиперів.
+  assert.ok(formulas[25].includes("N($AT7)>0"), "формула має дивитись на ставку в AT");
+  assert.ok(formulas[25].includes("$W7*$AT7/100"), "комісія = валовий прибуток × ставка");
+  assert.ok(formulas[25].includes("$W7>0"), "зі збиткової угоди комісії немає");
+  assert.ok(formulas[25].includes("VLOOKUP($D7;Дропшипери!$A:$E;5;0)"), "без ставки — як раніше");
+  assert.equal(formulas[26], '=IF($W7="";"";$W7-$Y7)', "чистий прибуток = валовий − комісія");
+
+  // Схема таблиці розширена до AT (46) — інакше читання картки впаде.
+  assert.equal(context.ADMIN_ORDER_COLS, 46);
+  assert.equal(context.COMMISSION_PCT_COL, 46);
+
+  // mapOrderRow_ має віддавати ставку в CRM.
+  const row = new Array(46).fill("");
+  row[0] = "ORD-010126-001";
+  row[45] = 30;
+  assert.equal(context.mapOrderRow_(7, row).commission_pct, 30);
+}
+
 testPaymentMetrics();
+testCommissionFromMargin();
+testContractorDebtIsNetOfCommission();
+testSheetCommissionFormula();
+testSheetMarginDue();
 testStandardRecalculationClearsStaleDiscount();
 testPaymentDeletionChecksStableIdentity();
 testBootstrapReadsPaymentsOnce();

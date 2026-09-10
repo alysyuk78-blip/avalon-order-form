@@ -43,6 +43,13 @@ function styleSection(row) {
 }
 
 async function buildXlsx(d) {
+  const t = d.totals || {};
+  // Комісію утримує підрядник, тож вона зменшує його борг. Колонку показуємо
+  // лише коли комісія справді є — інакше акт лишається таким, як був.
+  const hasCom = (Number(t.due_commission) || 0) > 0 || (Number(t.waiting_commission) || 0) > 0;
+  const width = hasCom ? 9 : 8;
+  const com = (r) => (hasCom ? [Number(r.commission) || 0] : []);
+
   const wb = new ExcelJS.Workbook();
   wb.creator = "Avalon Metal Design";
   wb.created = new Date();
@@ -51,38 +58,44 @@ async function buildXlsx(d) {
   });
   ws.columns = [
     { width: 18 }, { width: 12 }, { width: 34 }, { width: 14 },
-    { width: 16 }, { width: 14 }, { width: 13 }, { width: 14 },
+    { width: 16 }, { width: 14 },
+    ...(hasCom ? [{ width: 13 }] : []),
+    { width: 13 }, { width: 14 },
   ];
 
   const title = ws.addRow(["АКТ ЗВІРКИ З ПІДРЯДНИКОМ"]);
   title.font = { bold: true, size: 14 };
-  ws.mergeCells(title.number, 1, title.number, 8);
+  ws.mergeCells(title.number, 1, title.number, width);
   const sub = ws.addRow(["Avalon Metal Design"]);
   sub.font = { color: { argb: "FF66716B" } };
-  ws.mergeCells(sub.number, 1, sub.number, 8);
+  ws.mergeCells(sub.number, 1, sub.number, width);
   const meta = ws.addRow([`Період: ${periodLabel(d.from, d.to)}`, "", "", "", `Сформовано: ${d.generated_at || ""}`]);
   ws.mergeCells(meta.number, 1, meta.number, 4);   // інакше сусідня клітинка обрізає текст
-  ws.mergeCells(meta.number, 5, meta.number, 8);
+  ws.mergeCells(meta.number, 5, meta.number, width);
   ws.addRow([]);
 
   // ── До виплати: лише замовлення, оплачені клієнтом на 100% ──
   styleSection(ws.addRow(["МАРЖА ДО ВИПЛАТИ (клієнт сплатив 100%)"]));
   styleHeader(ws.addRow([
     "№ замовлення", "Дата", "Клієнт / місто", "Сплатив клієнт",
-    "Підряднику", "Маржа Avalon", "Отримано", "До виплати",
+    "Підряднику", "Маржа Avalon",
+    ...(hasCom ? ["Комісія"] : []),
+    "Отримано", "До виплати",
   ]));
   (d.due || []).forEach((r) => {
     ws.addRow([
       r.order_number,
       r.date_label || "",
       [r.client, r.city].filter(Boolean).join(" · "),
-      r.revenue, r.cost_total, r.profit, r.margin_received, r.margin_left,
+      r.revenue, r.cost_total, r.profit,
+      ...com(r),
+      r.margin_received, r.margin_left,
     ]);
   });
-  const t = d.totals || {};
   const dueTotal = ws.addRow([
-    "", "", "РАЗОМ ДО ВИПЛАТИ:", t.due_revenue || 0, t.due_cost || 0,
-    t.due_margin || 0, t.due_received || 0, t.due_left || 0,
+    "", "", "РАЗОМ ДО ВИПЛАТИ:", t.due_revenue || 0, t.due_cost || 0, t.due_margin || 0,
+    ...(hasCom ? [t.due_commission || 0] : []),
+    t.due_received || 0, t.due_left || 0,
   ]);
   dueTotal.font = { bold: true };
   dueTotal.eachCell((cell) => { cell.border = { top: { style: "thin" } }; });
@@ -93,18 +106,24 @@ async function buildXlsx(d) {
     styleSection(ws.addRow(["ДОВІДКОВО: очікує повної оплати клієнтом — у борг НЕ входить"]));
     styleHeader(ws.addRow([
       "№ замовлення", "Дата", "Клієнт / місто", "Сплатив клієнт",
-      "Не сплачено клієнтом", "Маржа Avalon", "Отримано", "Потенційно",
+      "Не сплачено клієнтом", "Маржа Avalon",
+      ...(hasCom ? ["Комісія"] : []),
+      "Отримано", "Потенційно",
     ]));
     d.waiting.forEach((r) => {
       ws.addRow([
         r.order_number,
         r.date_label || "",
         [r.client, r.city].filter(Boolean).join(" · "),
-        r.client_paid, r.client_left, r.profit, r.margin_received, r.margin_left,
+        r.client_paid, r.client_left, r.profit,
+        ...com(r),
+        r.margin_received, r.margin_left,
       ]);
     });
     const wRow = ws.addRow([
-      "", "", "Разом (довідково):", "", t.waiting_client_left || 0, "", "", t.waiting_margin_left || 0,
+      "", "", "Разом (довідково):", "", t.waiting_client_left || 0, "",
+      ...(hasCom ? [t.waiting_commission || 0] : []),
+      "", t.waiting_margin_left || 0,
     ]);
     wRow.font = { bold: true, italic: true };
   }
@@ -126,7 +145,7 @@ async function buildXlsx(d) {
 
   // Грошові формати
   ws.eachRow((row) => {
-    for (let c = 4; c <= 8; c++) {
+    for (let c = 4; c <= width; c++) {
       const cell = row.getCell(c);
       if (typeof cell.value === "number") cell.numFmt = MONEY;
     }

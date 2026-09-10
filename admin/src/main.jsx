@@ -272,9 +272,21 @@ import finance from '../../lib/admin-finance.js';
       if (v == null || v === "") return "—";
       return Number(v).toLocaleString("uk-UA") + "\u00A0₴";
     }
+    // Комісія з маржі дає копійки (868,50 ₴) — там, де це важливо, показуємо 2 знаки.
+    function money2(v) {
+      if (v == null || v === "") return "—";
+      return Number(v).toLocaleString("uk-UA", { maximumFractionDigits: 2 }) + " ₴";
+    }
     function pct(v) {
       if (v == null || v === "") return "—";
       return Number(v).toLocaleString("uk-UA", { maximumFractionDigits: 1 }) + "%";
+    }
+    /** Частка (0.0989) → «+9,89%». Для дельт ціни та зростання маржі. */
+    function pct2(v, withSign) {
+      if (v == null || !Number.isFinite(Number(v))) return "—";
+      const value = Number(v) * 100;
+      const sign = withSign && value > 0 ? "+" : "";
+      return sign + value.toLocaleString("uk-UA", { maximumFractionDigits: 2 }) + "%";
     }
     function itemMarginPct(item) {
       const source = item || {};
@@ -445,6 +457,8 @@ import finance from '../../lib/admin-finance.js';
         payment_summary: {
           revenue: Number(order.revenue) || 0,
           profit: Number(order.profit) || 0,
+          commission: Number(order.commission) || 0,
+          margin_due: Number(order.margin_due) || 0,
           client_paid: Number(order.client_paid_sum) || 0,
           client_left: Number(order.client_left) || 0,
           margin_received: Number(order.margin_received) || 0,
@@ -573,7 +587,7 @@ import finance from '../../lib/admin-finance.js';
     function totalsFromGroups(groups, expensesTotal, payoutsTotal, marginCashReceived) {
       const by_status = {};
       DISPLAY_STATUSES.forEach(s => { by_status[s] = 0; });
-      let revenue = 0, cost = 0, profit = 0, commission = 0;
+      let revenue = 0, cost = 0, profit = 0, commission = 0, margin_due_total = 0;
       let margin_ready = 0, margin_received = 0, margin_debt = 0;
       (groups || []).forEach(g => {
         const st = g.status || "";
@@ -588,6 +602,7 @@ import finance from '../../lib/admin-finance.js';
         cost += cst;
         profit += pr;
         commission += com;
+        margin_due_total += payment.marginDue;
         margin_ready += payment.marginReady;
         margin_received += payment.marginReceived;
         margin_debt += payment.marginDebt;
@@ -600,7 +615,7 @@ import finance from '../../lib/admin-finance.js';
       return {
         revenue, cost, profit, commission, expenses,
         margin_ready, margin_received, margin_debt,
-        margin_pending: Math.max(0, profit - margin_received - margin_debt),
+        margin_pending: Math.max(0, margin_due_total - margin_received - margin_debt),
         margin_cash_received, payouts_paid,
         margin_pct: revenue ? Math.round((profit / revenue) * 1000) / 10 : 0,
         net_fact: margin_cash_received - payouts_paid - expenses,
@@ -1080,7 +1095,9 @@ import finance from '../../lib/admin-finance.js';
       const list = payments || [];
       const s = summary || {};
       const clientOverpaid = Math.max(0, (Number(s.client_paid) || 0) - (Number(s.revenue) || 0));
-      const marginOverreceived = Math.max(0, (Number(s.margin_received) || 0) - (Number(s.profit) || 0));
+      // Підрядник утримує комісію, тож переказати він має валовий прибуток мінус її.
+      const marginDue = Number(s.margin_due) || groupPaymentMetrics(s).marginDue;
+      const marginOverreceived = Math.max(0, (Number(s.margin_received) || 0) - marginDue);
 
       async function add() {
         setError("");
@@ -1129,7 +1146,7 @@ import finance from '../../lib/admin-finance.js';
                 + ((s.client_left || 0) > 0 ? " · борг " + money(s.client_left)
                   : clientOverpaid > 0 ? " · переплата " + money(clientOverpaid) : " · повністю")} /></div>
             <div className="field"><label htmlFor="payment-margin-summary">Маржа отримана</label>
-              <input id="payment-margin-summary" disabled value={money(s.margin_received || 0) + " / " + money(s.profit || 0)
+              <input id="payment-margin-summary" disabled value={money(s.margin_received || 0) + " / " + money(marginDue)
                 + ((s.margin_left || 0) > 0 ? " · до отримання " + money(s.margin_left)
                   : marginOverreceived > 0 ? " · понад нову маржу " + money(marginOverreceived) : " · повністю")} /></div>
           </div>
@@ -1202,6 +1219,9 @@ import finance from '../../lib/admin-finance.js';
           discount_pct: item.discount_pct ?? "",
           discount_uah: item.discount_uah ?? "",
           revenue: item.revenue ?? "",
+          // Ставка комісії партнера/ТОВ — спільна для всього замовлення.
+          commission_pct: (res.order && res.order.commission_pct) ?? item.commission_pct ?? "",
+          target_net_margin: "",
           client_paid: !!(res.order && res.order.client_paid),
           margin_paid: !!(res.order && res.order.margin_paid),
           notes: item.notes || "",
@@ -1301,6 +1321,7 @@ import finance from '../../lib/admin-finance.js';
           discount_uah: item.discount_uah ?? "",
           revenue: item.revenue ?? "",
           notes: item.notes || "",
+          // Ставка живе на рівні замовлення — при перемиканні позицій не губимо її.
           payment_method: item.payment_method || "",
           basket_model: item.basket_model || "",
           basket_type: item.basket_type || "",
@@ -1319,6 +1340,38 @@ import finance from '../../lib/admin-finance.js';
 
       const profit = (Number(form.revenue) || 0) - (Number(form.cost_total) || 0);
       const marginPct = Number(form.revenue) ? Math.round((profit / Number(form.revenue)) * 1000) / 10 : 0;
+
+      // Комісія партнера/ТОВ береться з МАРЖІ, а не з ціни: 30% — це 30% від
+      // валового прибутку. Тому й ціну під потрібну чисту маржу рахуємо через
+      // маржинальну частину (див. lib/admin-finance.js).
+      const commissionPctInput = form.commission_pct;
+      const breakdown = finance.marginBreakdown({
+        cost: Number(form.cost_total) || 0,
+        price: Number(form.revenue) || 0,
+        commissionPct: commissionPctInput,
+      });
+      const hasCommission = Number(commissionPctInput) > 0;
+      // Без ставки в AT комісія лишається старою — за ставкою дропшипера з таблиці.
+      const currentItem = items[itemIdx] || {};
+      const dropCommission = Number(currentItem.commission) || 0;
+      const shownCommission = hasCommission ? breakdown.commission : dropCommission;
+      const shownNet = breakdown.grossMargin - (breakdown.loss ? 0 : shownCommission);
+      // Ціль за замовчуванням — маржа, ЗБЕРЕЖЕНА в таблиці (а не та, що змінюється
+      // просто зараз у полях). Інакше після підстановки ціни ціль підскочила б услід
+      // за новою маржею і кабінет пропонував би підняти ціну ще раз, і ще раз.
+      const savedGross = Number(currentItem.profit) || 0;
+      const targetNet = form.target_net_margin === "" || form.target_net_margin == null
+        ? savedGross
+        : Number(form.target_net_margin) || 0;
+      const targetReached = targetNet > 0 && shownNet >= targetNet - 0.005;
+      const suggestion = hasCommission && breakdown.rateValid && targetNet > 0
+        ? finance.requiredPriceForNetMargin({
+            cost: Number(form.cost_total) || 0,
+            price: Number(form.revenue) || 0,
+            targetNetMargin: targetNet,
+            commissionPct: commissionPctInput,
+          })
+        : null;
 
       return (
         <div className="drawer-backdrop" onClick={onClose}>
@@ -1477,7 +1530,8 @@ import finance from '../../lib/admin-finance.js';
                   </select>
                 </div>
                 <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
-                  Разом по замовленню: {money(order.revenue)} · маржа {money(order.profit)}.
+                  Разом по замовленню: {money(order.revenue)} · маржа {money(order.profit)}
+                  {Number(order.commission) ? <> · чистими {money2((Number(order.profit) || 0) - Number(order.commission))}</> : null}.
                 </p>
               </>
             )}
@@ -1507,19 +1561,86 @@ import finance from '../../lib/admin-finance.js';
                 }} /></div>
               <div className="field"><label>Ціна продажу / виручка (разом)</label>
                 <input type="number" value={form.revenue} onChange={e => setForm({ ...form, revenue: e.target.value, discount_pct: "", discount_uah: "" })} /></div>
-              <div className="field"><label>Маржа (авто)</label>
+              <div className="field"><label>Маржа брутто (авто)</label>
                 <input disabled value={money(profit) + " · " + pct(marginPct)} /></div>
+              <div className="field">
+                <label>Комісія з маржі, %</label>
+                <input type="number" step="0.01" min="0" max="99.99" placeholder="0"
+                  value={form.commission_pct}
+                  onChange={e => setForm({ ...form, commission_pct: e.target.value })} />
+              </div>
             </div>
-            <div className="grid2" style={{ marginTop: 8 }}>
-              <div className="field"><label>Комісія партнера</label><input disabled value={money(items.reduce((s, it) => s + (Number(it.commission) || 0), 0))} /></div>
-              <div className="field"><label>Чистий по позиції</label><input disabled value={money(items.reduce((s, it) => s + (Number(it.net_profit) || 0), 0))} /></div>
+
+            <div className="margin-net">
+              <div className="margin-net-row">
+                <span>Маржа брутто</span>
+                <b>{money2(breakdown.grossMargin)}
+                  {breakdown.markupOnCost != null ? " · " + pct2(breakdown.markupOnCost) + " до собівартості" : ""}</b>
+              </div>
+              <div className="margin-net-row">
+                <span>Комісія{hasCommission
+                  ? " (" + pct(Number(commissionPctInput)) + " від маржі)"
+                  : (dropCommission ? " (ставка за джерелом)" : "")}</span>
+                <b>{shownCommission > 0 ? "− " : ""}{money2(shownCommission)}</b>
+              </div>
+              <div className="margin-net-row margin-net-main">
+                <span>Маржа чиста</span>
+                <b>{money2(shownNet)}</b>
+              </div>
+              {!breakdown.rateValid && (
+                <div className="margin-net-warn">Ставка комісії має бути від 0% до 99,99%.</div>
+              )}
+              {breakdown.loss && (Number(form.revenue) || Number(form.cost_total)) ? (
+                <div className="margin-net-warn">Збиткова угода: ціна не покриває собівартість. Комісію не нараховуємо.</div>
+              ) : null}
             </div>
+
+            {hasCommission && breakdown.rateValid && (
+              <div className="margin-calc">
+                <div className="margin-calc-title">Яка потрібна ціна, щоб чистими лишилось…</div>
+                <div className="grid2">
+                  <div className="field"><label>Цільова чиста маржа, ₴</label>
+                    <input type="number" placeholder={savedGross ? String(Math.round(savedGross)) : "0"}
+                      value={form.target_net_margin}
+                      onChange={e => setForm({ ...form, target_net_margin: e.target.value })} /></div>
+                  <div className="field"><label>Рекомендована ціна</label>
+                    <input disabled value={targetReached
+                      ? "ціль уже досягнута"
+                      : (suggestion && suggestion.valid ? money(suggestion.requiredPriceRounded) : "—")} /></div>
+                </div>
+                {targetReached ? (
+                  <p className="margin-calc-note">
+                    За цієї ціни чистими лишається {money2(shownNet)} — не менше за ціль {money2(targetNet)}.
+                  </p>
+                ) : suggestion && suggestion.valid && (
+                  <>
+                    <p className="margin-calc-note">
+                      Маржа має вирости з {money2(breakdown.grossMargin)} до {money2(suggestion.requiredGrossMargin)}
+                      {" "}({pct2(suggestion.marginUplift, true)}), а ціна — лише на {pct2(suggestion.priceUplift, true)}
+                      {suggestion.priceDelta != null ? " (" + money2(suggestion.priceDelta) + ")" : ""}.
+                      Комісія рахується з маржі, тому ціну на всі {pct2(suggestion.marginUplift)} піднімати не треба.
+                    </p>
+                    <button className="btn secondary" type="button" style={{ marginTop: 4 }}
+                      onClick={() => setForm({
+                        ...form,
+                        // Ціль фіксуємо явно, щоб вона не «поїхала» за новою маржею.
+                        target_net_margin: String(targetNet),
+                        revenue: String(suggestion.requiredPriceRounded),
+                        list_price: String(suggestion.requiredPriceRounded),
+                        discount_pct: "", discount_uah: "",
+                      })}>Підставити ціну {money(suggestion.requiredPriceRounded)}</button>
+                  </>
+                )}
+              </div>
+            )}
+
             <button className="btn" style={{ marginTop: 8 }} disabled={busy} onClick={() => save({
               cost_total: form.cost_total === "" ? null : Number(form.cost_total),
               list_price: form.list_price === "" ? null : Number(form.list_price),
               discount_pct: form.discount_pct === "" ? 0 : Number(form.discount_pct),
               discount_uah: form.discount_uah === "" ? 0 : Number(form.discount_uah),
               revenue: form.revenue === "" ? null : Number(form.revenue),
+              commission_pct: form.commission_pct === "" ? null : Number(form.commission_pct),
             })}>Зберегти фінанси</button>
             <div className="section-title">Доставка та нотатки</div>
             <div className="grid2">
@@ -1575,6 +1696,7 @@ import finance from '../../lib/admin-finance.js';
         product_name: "", specs: "",
         size_w: "", size_h: "", size_d: "", quantity: "1", unit: "шт.",
         cost_total: "", price_total: "", list_price: "", discount_pct: "", discount_uah: "",
+        commission_pct: "",
         transport: "", delivery_address: "", delivery_date: "", payment_method: "", notes: "",
       });
       const [busy, setBusy] = useState(false);
@@ -1632,6 +1754,16 @@ import finance from '../../lib/admin-finance.js';
 
       const profit = revenueTotal - costTotalCalc;
       const marginPct = revenueTotal ? Math.round((profit / revenueTotal) * 1000) / 10 : 0;
+      // Комісія партнера/ТОВ — % від маржі (див. lib/admin-finance.js).
+      const newBreakdown = finance.marginBreakdown({
+        cost: costTotalCalc, price: revenueTotal, commissionPct: form.commission_pct,
+      });
+      const newRequired = Number(form.commission_pct) > 0 && newBreakdown.rateValid && profit > 0
+        ? finance.requiredPriceForNetMargin({
+            cost: costTotalCalc, price: revenueTotal,
+            targetNetMargin: profit, commissionPct: form.commission_pct,
+          })
+        : null;
 
       async function submit() {
         setError("");
@@ -1641,6 +1773,9 @@ import finance from '../../lib/admin-finance.js';
         }
         if (isOther && !form.product_name.trim()) return setError("Вкажіть назву виробу");
         if (!form.unit.trim()) return setError("Вкажіть одиницю виміру");
+        if (form.commission_pct !== "" && !newBreakdown.rateValid) {
+          return setError("Комісія з маржі має бути від 0% до 99,99%");
+        }
         const order = {
           ...form,
           product_type: isOther ? "other" : (isBracket ? "bracket" : "basket"),
@@ -1654,6 +1789,7 @@ import finance from '../../lib/admin-finance.js';
           discount_pct: priceUnitOverride ? "" : (form.discount_pct || ""),
           discount_uah: priceUnitOverride ? "" : (discountTotal || ""),
           price_total: revenueTotal || "",
+          commission_pct: form.commission_pct === "" ? null : Number(form.commission_pct),
         };
         const fingerprint = JSON.stringify(order);
         if (pendingCreateRef.current.fingerprint !== fingerprint) {
@@ -1818,7 +1954,13 @@ import finance from '../../lib/admin-finance.js';
                   placeholder={listUnit ? "заповнено прайсом" : ""} /></div>
               <div className="field"><label>Маржа разом (авто)</label>
                 <input disabled value={money(profit) + " · " + pct(marginPct)} /></div>
+              <div className="field"><label>Комісія з маржі, %</label>
+                <input type="number" step="0.01" min="0" max="99.99" placeholder="0"
+                  value={form.commission_pct} onChange={e => set("commission_pct", e.target.value)} /></div>
             </div>
+            {newBreakdown.rateValid === false && (
+              <div className="error">Ставка комісії має бути від 0% до 99,99%.</div>
+            )}
             {(revenueTotal > 0 || costTotalCalc > 0) && (
               <div className="panel" style={{ boxShadow: "none", padding: 12, marginTop: 10 }}>
                 <div style={{ fontWeight: 700, marginBottom: 6 }}>Разом за позицію ({qtyNum} {form.unit.trim() || "шт."})</div>
@@ -1833,6 +1975,18 @@ import finance from '../../lib/admin-finance.js';
                   <div>Виручка: <b style={{ color: "var(--text)" }}>{money(revenueTotal)}</b></div>
                   <div>Собівартість: {money(costUnit)} × {qtyNum} = <b>{money(costTotalCalc)}</b></div>
                   <div>Маржа: <b style={{ color: "var(--text)" }}>{money(profit)}</b> · {pct(marginPct)}</div>
+                  {Number(form.commission_pct) > 0 && newBreakdown.rateValid && (
+                    <>
+                      <div>Комісія ({pct(Number(form.commission_pct))} від маржі): <b>− {money2(newBreakdown.commission)}</b></div>
+                      <div>Чистими: <b style={{ color: "var(--text)" }}>{money2(newBreakdown.netMargin)}</b></div>
+                      {newRequired && newRequired.valid && (
+                        <div style={{ marginTop: 4 }}>
+                          Щоб чистими лишилось {money2(profit)} — ціна разом {money(newRequired.requiredPriceRounded)}
+                          {" "}({pct2(newRequired.priceUplift, true)}).
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -2606,8 +2760,14 @@ import finance from '../../lib/admin-finance.js';
               <div className="sub">Маржа: {money(t.profit)}</div>
             </div>
             <div className="kpi"><div className="label">Собівартість</div><div className="value">{money(t.cost)}</div></div>
-            <div className="kpi"><div className="label">Валовий прибуток</div><div className="value">{money(t.profit)}</div></div>
-            <div className="kpi"><div className="label">Маржа %</div><div className="value">{pct(t.margin_pct)}</div></div>
+            <div className="kpi"><div className="label">Валовий прибуток</div><div className="value">{money(t.profit)}</div>
+              {t.commission > 0 && <div className="sub">Чистий після комісій: {money(t.profit - t.commission)}</div>}
+            </div>
+            <div className="kpi"><div className="label">Маржа %</div><div className="value">{pct(t.margin_pct)}</div>
+              {t.commission > 0 && t.revenue > 0 && (
+                <div className="sub">Чиста: {pct(Math.round(((t.profit - t.commission) / t.revenue) * 1000) / 10)}</div>
+              )}
+            </div>
             <div className="kpi"><div className="label">Борг підрядника</div><div className="value">{money(t.margin_debt)}</div></div>
             <div className="kpi"><div className="label">Маржа надійшла</div><div className="value">{money(t.margin_cash_received)}</div>
               <div className="sub">
@@ -3187,6 +3347,8 @@ import finance from '../../lib/admin-finance.js';
           client_left: summary.client_left ?? detail.order.client_left,
           margin_received: summary.margin_received ?? detail.order.margin_received,
           margin_left: summary.margin_left ?? detail.order.margin_left,
+          margin_due: summary.margin_due ?? detail.order.margin_due,
+          commission: summary.commission ?? detail.order.commission,
         };
 
         setGroups(current => {

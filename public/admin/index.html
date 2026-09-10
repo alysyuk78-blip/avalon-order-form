@@ -494,6 +494,24 @@
       background: rgba(27,122,74,.09); color: #1b7a4a; font-size: 13px; font-weight: 650;
     }
 
+    /* Комісія партнера/ТОВ: беруть % ВІД МАРЖІ, тому головна цифра картки —
+       не валовий прибуток, а «чиста» маржа після комісії. */
+    .margin-net {
+      margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+      background: var(--control-bg); font-size: 13px;
+    }
+    .margin-net-row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; color: var(--muted); }
+    .margin-net-row b { color: var(--ink); font-weight: 700; white-space: nowrap; }
+    .margin-net-main {
+      margin-top: 4px; padding-top: 7px; border-top: 1px solid rgba(0,0,0,.11);
+      color: var(--ink); font-weight: 700;
+    }
+    .margin-net-main b { font-size: 16px; }
+    .margin-net-warn { margin-top: 7px; color: var(--danger); font-weight: 650; line-height: 1.4; }
+    .margin-calc { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(143,115,64,.08); }
+    .margin-calc-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; color: var(--ink); }
+    .margin-calc-note { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+
     .login-credits { margin-top: 14px; font-size: 11px; color: #9aa49d; text-align: center; }
     .login-credits a { color: #9aa49d; text-decoration: underline; }
 
