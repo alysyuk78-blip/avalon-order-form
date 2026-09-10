@@ -240,7 +240,7 @@ function testCommissionFromMargin() {
 // Комісію утримує підрядник → на неї зменшується саме ЙОГО борг.
 function testContractorDebtIsNetOfCommission() {
   const withCommission = groupPaymentMetrics({
-    revenue: 12545, profit: 2895, commission: 868.5, client_left: 0,
+    revenue: 12545, profit: 2895, commission: 868.5, commission_pct: 30, client_left: 0,
   });
   assert.equal(withCommission.marginDue, 2026.5, "підрядник винен валовий мінус комісія");
   assert.equal(withCommission.marginReady, 2026.5);
@@ -249,19 +249,24 @@ function testContractorDebtIsNetOfCommission() {
 
   // Часткове надходження зменшує саме чистий борг.
   const partly = groupPaymentMetrics({
-    revenue: 12545, profit: 2895, commission: 868.5, client_left: 0, margin_received: 1000,
+    revenue: 12545, profit: 2895, commission: 868.5, commission_pct: 30, client_left: 0, margin_received: 1000,
   });
   assert.equal(partly.marginLeft, 1026.5);
 
   // Стара галочка «Маржу отримано» закриває чистий борг, а не валовий.
   const legacyPaid = groupPaymentMetrics({
-    revenue: 12545, profit: 2895, commission: 868.5, client_paid: true, margin_paid: true,
+    revenue: 12545, profit: 2895, commission: 868.5, commission_pct: 30, client_paid: true, margin_paid: true,
   });
   assert.equal(legacyPaid.marginReceived, 2026.5);
   assert.equal(legacyPaid.marginDebt, 0);
 
   // Готовий margin_due з таблиці має пріоритет над локальним обчисленням.
-  assert.equal(groupPaymentMetrics({ revenue: 100, profit: 40, commission: 10, margin_due: 25 }).marginDue, 25);
+  assert.equal(groupPaymentMetrics({ revenue: 100, profit: 40, commission: 10, commission_pct: 25, margin_due: 25 }).marginDue, 25);
+
+  // ⚠️ Комісія дропшипера (без ставки) НЕ зменшує борг підрядника: її платить Avalon.
+  const dropshipper = groupPaymentMetrics({ revenue: 5000, profit: 1000, commission: 150, client_left: 0 });
+  assert.equal(dropshipper.marginDue, 1000, "комісія дропшипера не зменшує борг підрядника");
+  assert.equal(dropshipper.marginDebt, 1000);
 
   // Замовлення без комісії рахуються рівно як раніше.
   const plain = groupPaymentMetrics({ revenue: 5000, profit: 1000, client_left: 0 });
@@ -269,7 +274,7 @@ function testContractorDebtIsNetOfCommission() {
   assert.equal(plain.marginDebt, 1000);
 
   // Збиткова угода: комісії немає, борг від'ємним не стає.
-  const loss = groupPaymentMetrics({ revenue: 9000, profit: -1000, commission: 0, client_left: 0 });
+  const loss = groupPaymentMetrics({ revenue: 9000, profit: -1000, commission: 0, commission_pct: 30, client_left: 0 });
   assert.equal(loss.marginDue, -1000);
   assert.equal(loss.marginLeft, 0, "від'ємний борг підрядника не нараховуємо");
 }
@@ -277,11 +282,14 @@ function testContractorDebtIsNetOfCommission() {
 // Та сама арифметика в Apps Script.
 function testSheetMarginDue() {
   const context = loadAppsScript();
-  assert.equal(context.marginDue_(2895, 868.5), 2026.5);
-  assert.equal(context.marginDue_(2895, 0), 2895);
-  assert.equal(context.marginDue_(2895, null), 2895);
-  assert.equal(context.marginDue_(-1000, 300), -1000, "зі збиткової угоди комісію не віднімаємо");
-  assert.equal(context.marginDue_(500, 900), 0, "борг не може стати відʼємним");
+  assert.equal(context.marginDue_(2895, 868.5, 30), 2026.5);
+  assert.equal(context.marginDue_(2895, 0, 30), 2895);
+  assert.equal(context.marginDue_(2895, null, 30), 2895);
+  assert.equal(context.marginDue_(-1000, 300, 30), -1000, "зі збиткової угоди комісію не віднімаємо");
+  assert.equal(context.marginDue_(500, 900, 30), 0, "борг не може стати відʼємним");
+  // Без ставки AT комісія в Y — дропшиперська, борг підрядника вона не зменшує.
+  assert.equal(context.marginDue_(1000, 150, null), 1000);
+  assert.equal(context.marginDue_(1000, 150, 0), 1000);
 }
 
 // Формула в таблиці має давати ті самі цифри, що й розрахунок у CRM.

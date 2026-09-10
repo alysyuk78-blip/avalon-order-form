@@ -1300,7 +1300,8 @@ function setupOrders(sheet) {
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210];
+  // Ширини A..AT — рівно стільки ж, скільки заголовків (остання: комісія з маржі).
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -1768,15 +1769,19 @@ function legacyPaidState_(revenue, marginDue, agChecked, ahChecked) {
 }
 
 /**
- * Маржа, яку підрядник реально має перерахувати: валовий прибуток МІНУС комісія.
- * Комісію утримує підрядник, тому вона зменшує саме його борг, а не «загальний
- * прибуток» у зведенні. Без комісії (більшість замовлень) = валовому прибутку.
+ * Маржа, яку підрядник реально має перерахувати: валовий прибуток МІНУС комісія,
+ * яку він утримує (ставка з колонки AT).
+ *
+ * ⚠️ Віднімаємо ЛИШЕ комісію зі ставки AT. Колонка Y може містити й комісію
+ * дропшипера (кількість × ставка за ?ref) — її Avalon платить партнеру САМА через
+ * аркуш «Виплати», підрядник її не утримує. Якщо відняти і її, борг підрядника
+ * по всіх старих ?ref-замовленнях зменшиться безпідставно.
  */
-function marginDue_(profit, commission) {
+function marginDue_(profit, commission, commissionPct) {
   var gross = Number(profit) || 0;
-  var com = Number(commission) || 0;
-  if (gross <= 0) return gross;              // збиткова угода: комісії немає
-  return Math.max(0, gross - Math.max(0, com));
+  if (gross <= 0) return gross;                       // збиткова угода: комісії немає
+  if (!(Number(commissionPct) > 0)) return gross;     // ставки немає — борг як був
+  return Math.max(0, gross - Math.max(0, Number(commission) || 0));
 }
 
 function syncOrderPaymentState_(orderNumber) {
@@ -1797,7 +1802,9 @@ function syncOrderPaymentState_(orderNumber) {
     profit += cellNum_(v[1]) || 0;
     commission += cellNum_(v[3]) || 0;
   });
-  var due = marginDue_(profit, commission);
+  var commissionPct = sh.getMaxColumns() >= COMMISSION_PCT_COL
+    ? cellNum_(sh.getRange(rows[0], COMMISSION_PCT_COL).getValue()) : null;
+  var due = marginDue_(profit, commission, commissionPct);
   var payments = readPayments_(orderNumber);
   var agChecked = !!sh.getRange(rows[0], 33).getValue();
   var ahChecked = !!sh.getRange(rows[0], 34).getValue();
@@ -2257,7 +2264,7 @@ function adminMigrateLegacyPayments_(data) {
     var revenue = Math.round(Number(g.revenue) || 0);
     // Галочка «Маржу отримано» означає, що надійшло стільки, скільки підрядник
     // винен, — тобто валовий прибуток МІНУС утримана ним комісія.
-    var marginDue = Math.round(marginDue_(g.profit, g.commission));
+    var marginDue = Math.round(marginDue_(g.profit, g.commission, g.commission_pct));
     if (!g.client_paid && !g.margin_paid) return;
 
     // Що вже лежить у журналі. Замовлення з РЕАЛЬНИМИ платежами не чіпаємо взагалі:
@@ -2649,7 +2656,7 @@ function adminGroupOrders_(orders, payments) {
     var g = byNum[k];
     g.margin_pct = g.revenue ? Math.round((g.profit / g.revenue) * 1000) / 10 : null;
     // Комісію утримує підрядник → його борг = валовий прибуток мінус комісія.
-    g.margin_due = marginDue_(g.profit, g.commission);
+    g.margin_due = marginDue_(g.profit, g.commission, g.commission_pct);
     var pmts = payByOrder[k] || [];
     var t = pmts.length
       ? paymentTotals_(pmts)
@@ -2695,7 +2702,7 @@ function adminGetOrder_(data) {
       var rev = group ? (Number(group.revenue) || 0) : 0;
       var prof = group ? (Number(group.profit) || 0) : 0;
       var com = group ? (Number(group.commission) || 0) : 0;
-      var due = marginDue_(prof, com);   // борг підрядника: валовий мінус комісія
+      var due = marginDue_(prof, com, group && group.commission_pct);
       var t = pay.length ? payTotals
         : legacyPaidState_(rev, due, !!(group && group.client_paid), !!(group && group.margin_paid));
       return {
