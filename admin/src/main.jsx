@@ -1140,15 +1140,28 @@ import finance from '../../lib/admin-finance.js';
       return (
         <section className="payments-section" aria-labelledby="payments-section-title">
           <div className="section-title section-title--first" id="payments-section-title">Платежі</div>
+          {/* Не input: суми з підписом не вміщались у вузьке поле і обрізались. */}
           <div className="grid2">
-            <div className="field"><label htmlFor="payment-client-summary">Клієнт сплатив</label>
-              <input id="payment-client-summary" disabled value={money(s.client_paid || 0) + " / " + money(s.revenue || 0)
-                + ((s.client_left || 0) > 0 ? " · борг " + money(s.client_left)
-                  : clientOverpaid > 0 ? " · переплата " + money(clientOverpaid) : " · повністю")} /></div>
-            <div className="field"><label htmlFor="payment-margin-summary">Маржа отримана</label>
-              <input id="payment-margin-summary" disabled value={money(s.margin_received || 0) + " / " + money(marginDue)
-                + ((s.margin_left || 0) > 0 ? " · до отримання " + money(s.margin_left)
-                  : marginOverreceived > 0 ? " · понад нову маржу " + money(marginOverreceived) : " · повністю")} /></div>
+            <div className="field">
+              <label>Клієнт сплатив</label>
+              <div className="field-static">
+                <b>{money(s.client_paid || 0)}</b> / {money(s.revenue || 0)}
+                <span className={(s.client_left || 0) > 0 ? "field-static-note debt" : "field-static-note"}>
+                  {(s.client_left || 0) > 0 ? "борг " + money(s.client_left)
+                    : clientOverpaid > 0 ? "переплата " + money(clientOverpaid) : "повністю"}
+                </span>
+              </div>
+            </div>
+            <div className="field">
+              <label>Маржа отримана</label>
+              <div className="field-static">
+                <b>{money(s.margin_received || 0)}</b> / {money(marginDue)}
+                <span className={(s.margin_left || 0) > 0 ? "field-static-note debt" : "field-static-note"}>
+                  {(s.margin_left || 0) > 0 ? "до отримання " + money(s.margin_left)
+                    : marginOverreceived > 0 ? "понад нову маржу " + money(marginOverreceived) : "повністю"}
+                </span>
+              </div>
+            </div>
           </div>
 
           {s.legacy && (
@@ -1356,13 +1369,10 @@ import finance from '../../lib/admin-finance.js';
       const dropCommission = Number(currentItem.commission) || 0;
       const shownCommission = hasCommission ? breakdown.commission : dropCommission;
       const shownNet = breakdown.grossMargin - (breakdown.loss ? 0 : shownCommission);
-      // Ціль за замовчуванням — маржа, ЗБЕРЕЖЕНА в таблиці (а не та, що змінюється
-      // просто зараз у полях). Інакше після підстановки ціни ціль підскочила б услід
-      // за новою маржею і кабінет пропонував би підняти ціну ще раз, і ще раз.
-      const savedGross = Number(currentItem.profit) || 0;
-      const targetNet = form.target_net_margin === "" || form.target_net_margin == null
-        ? savedGross
-        : Number(form.target_net_margin) || 0;
+      // Ціль НЕ підставляємо самі. Будь-яке автоматичне значення бралося б із поточної
+      // маржі, тож після підняття ціни воно росло б разом із нею і кабінет пропонував би
+      // підняти ціну ще раз, і ще раз. Скільки хочеться чистими — знає лише менеджер.
+      const targetNet = Number(form.target_net_margin) || 0;
       const targetReached = targetNet > 0 && shownNet >= targetNet - 0.005;
       const suggestion = hasCommission && breakdown.rateValid && targetNet > 0
         ? finance.requiredPriceForNetMargin({
@@ -1600,15 +1610,22 @@ import finance from '../../lib/admin-finance.js';
                 <div className="margin-calc-title">Яка потрібна ціна, щоб чистими лишилось…</div>
                 <div className="grid2">
                   <div className="field"><label>Цільова чиста маржа, ₴</label>
-                    <input type="number" placeholder={savedGross ? String(Math.round(savedGross)) : "0"}
+                    <input type="number" placeholder="скільки хочете чистими"
                       value={form.target_net_margin}
                       onChange={e => setForm({ ...form, target_net_margin: e.target.value })} /></div>
                   <div className="field"><label>Рекомендована ціна</label>
-                    <input disabled value={targetReached
-                      ? "ціль уже досягнута"
-                      : (suggestion && suggestion.valid ? money(suggestion.requiredPriceRounded) : "—")} /></div>
+                    <input disabled value={!targetNet
+                      ? "—"
+                      : targetReached
+                        ? "ціна вже достатня"
+                        : (suggestion && suggestion.valid ? money(suggestion.requiredPriceRounded) : "—")} /></div>
                 </div>
-                {targetReached ? (
+                {!targetNet ? (
+                  <p className="margin-calc-note">
+                    Впишіть суму, яку хочете отримати чистими, — і кабінет порахує ціну.
+                    Зараз за ціни {money(Number(form.revenue) || 0)} чистими виходить {money2(shownNet)}.
+                  </p>
+                ) : targetReached ? (
                   <p className="margin-calc-note">
                     За цієї ціни чистими лишається {money2(shownNet)} — не менше за ціль {money2(targetNet)}.
                   </p>
@@ -1623,8 +1640,6 @@ import finance from '../../lib/admin-finance.js';
                     <button className="btn secondary" type="button" style={{ marginTop: 4 }}
                       onClick={() => setForm({
                         ...form,
-                        // Ціль фіксуємо явно, щоб вона не «поїхала» за новою маржею.
-                        target_net_margin: String(targetNet),
                         revenue: String(suggestion.requiredPriceRounded),
                         list_price: String(suggestion.requiredPriceRounded),
                         discount_pct: "", discount_uah: "",
@@ -2304,7 +2319,17 @@ import finance from '../../lib/admin-finance.js';
                           <div className="card-details">
                             <div className="card-finance">
                               <div><span>Сума</span><strong>{money(g.revenue)}</strong></div>
-                              <div><span>Маржа</span><strong>{money(g.profit)}</strong></div>
+                              {/* Зі ставкою комісії головна цифра — та, що реально
+                                  дійде до Avalon, а не валовий прибуток. */}
+                              {Number(g.commission_pct) > 0 ? (
+                                <div>
+                                  <span>Маржа чиста</span>
+                                  <strong>{money(g.margin_due)}</strong>
+                                  <em className="card-finance-sub">брутто {money(g.profit)}</em>
+                                </div>
+                              ) : (
+                                <div><span>Маржа</span><strong>{money(g.profit)}</strong></div>
+                              )}
                             </div>
                             {/* Дата доставки/відправлення: протермінована — червоним. */}
                             {(() => {
