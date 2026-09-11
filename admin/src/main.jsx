@@ -1427,7 +1427,7 @@ import finance from '../../lib/admin-finance.js';
         const seq = ++previewSeq.current;
         const timer = setTimeout(async () => {
           try {
-            const r = await api("/api/admin/contractor", {
+            const r = await api("/api/admin/order?resource=contractor", {
               method: "POST", token,
               body: { action: "preview", order_number: orderNumber, options: JSON.parse(optionsKey) },
             });
@@ -1447,7 +1447,7 @@ import finance from '../../lib/admin-finance.js';
         for (let i = 0; i < 40; i += 1) {
           let r;
           try {
-            r = await api("/api/admin/contractor", { method: "POST", token, body });
+            r = await api("/api/admin/order?resource=contractor", { method: "POST", token, body });
           } catch (e) {
             const transient = e.status === 504 || e.status === undefined;
             if (!transient || transientRetries >= 4) throw e;
@@ -1615,7 +1615,7 @@ import finance from '../../lib/admin-finance.js';
       async function loadFiles() {
         setFilesError("");
         try {
-          const res = await api("/api/admin/files?order_number=" + encodeURIComponent(orderNumber), { token });
+          const res = await api("/api/admin/order?resource=files&order_number=" + encodeURIComponent(orderNumber), { token });
           setFiles(res.files || []);
         } catch (e) {
           setFiles(cur => cur || []);
@@ -1648,7 +1648,7 @@ import finance from '../../lib/admin-finance.js';
         if (file.size > FILE_MAX_BYTES) {
           throw new Error("Файл більший за 300 МБ — завантажте його на Google Диск вручну й додайте посилання в примітки");
         }
-        const init = await api("/api/admin/files", {
+        const init = await api("/api/admin/order?resource=files", {
           method: "POST", token,
           body: { action: "init", order_number: orderNumber, name: file.name, mime: file.type || "", size: file.size },
         });
@@ -1656,7 +1656,7 @@ import finance from '../../lib/admin-finance.js';
         while (!done) {
           try {
             const data64 = await blobToBase64(file.slice(offset, Math.min(offset + UPLOAD_CHUNK, file.size)));
-            const r = await api("/api/admin/files", {
+            const r = await api("/api/admin/order?resource=files", {
               method: "POST", token,
               body: { action: "chunk", order_number: orderNumber, upload_id: init.upload_id, offset, data: data64 },
             });
@@ -1667,7 +1667,7 @@ import finance from '../../lib/admin-finance.js';
             failures += 1;
             if (failures > 3) throw e;
             await pause(1500 * failures);
-            const st = await api("/api/admin/files", {
+            const st = await api("/api/admin/order?resource=files", {
               method: "POST", token,
               body: { action: "status", order_number: orderNumber, upload_id: init.upload_id },
             }).catch(() => null);
@@ -1712,7 +1712,7 @@ import finance from '../../lib/admin-finance.js';
       async function removeFile(f) {
         if (!window.confirm("Прибрати файл «" + f.name + "»? Він переміститься в кошик Google Диска.")) return;
         try {
-          const res = await api("/api/admin/files?order_number=" + encodeURIComponent(orderNumber)
+          const res = await api("/api/admin/order?resource=files&order_number=" + encodeURIComponent(orderNumber)
             + "&file_id=" + encodeURIComponent(f.id), { method: "DELETE", token });
           setFiles(res.files || []);
         } catch (e) {

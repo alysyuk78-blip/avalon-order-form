@@ -27,15 +27,19 @@
 - Ідемпотентність: `contractor_send` / `contractor_send_file` з `request_id` через
   `withRequestCache_` (CacheService: «pending» → результат). `lib/admin-sheets.js`:
   ці дії повторюються лише після обриву мережі; після тайм-ауту (55 с) — ні, повторює
-  клієнт тим самим `request_id`. ⚠️ НЕ додавайте блок `functions`/`maxDuration` у
-  `vercel.json`: розгортання з ним падає на «Deploying outputs» без тексту помилки. Функції
-  проєкту й так живуть довше 40 с (fluid compute), тож 55 с вкладаються в стандарт.
+  клієнт тим самим `request_id`. Функції проєкту й так живуть довше 40 с (fluid compute),
+  тож 55 с вкладаються в стандарт — `maxDuration` у `vercel.json` не потрібен.
 - ⚠️ **Нове право Google Диска.** `DriveApp` у коді → Google вимагає разового дозволу
   власника (функція `authorizeDriveAccess` у редакторі). Порядок деплою: `clasp push` →
   власник запускає `authorizeDriveAccess` → `clasp deploy` → злиття PR у Vercel. Між push і
   дозволом тригери таблиці (onEdit, нагадування) можуть не спрацювати.
-- API: `api/admin/files.js` (GET список, POST init/chunk/status, DELETE у кошик),
-  `api/admin/contractor.js` (preview / send / send_file; лише відомі пташки true/false).
+- ⚠️ **Ліміт Vercel Hobby — 12 серверних функцій на розгортання, у проєкті їх рівно 12.**
+  13-й файл в `api/` ламає розгортання на «Deploying outputs» без тексту помилки. Тому
+  файли й надсилання підряднику — не окремі функції, а обробники в `lib/`
+  (`admin-files-handler.js`: GET список, POST init/chunk/status, DELETE у кошик;
+  `admin-contractor-handler.js`: preview / send / send_file, лише відомі пташки true/false),
+  які викликає `api/admin/order.js` за параметром `resource=files|contractor`.
+  Нові API додавайте так само. `tests/admin-files-api.test.js` падає, якщо функцій > 12.
 - Тести: `tests/contractor-send.test.js` (пташки, без автовідправки з CRM, завантаження
   частинами, файл/посилання, чужий файл, повтор без дубля, статус «В роботі»),
   `tests/admin-files-api.test.js` (перевірка вхідних даних, 413 для завеликої частини),

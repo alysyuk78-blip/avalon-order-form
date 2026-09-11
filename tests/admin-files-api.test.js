@@ -21,8 +21,25 @@ require.cache[authPath].exports = {
   handleOptions: (req, res) => res.status(204).end(),
 };
 
-const files = require("../api/admin/files");
-const contractor = require("../api/admin/contractor");
+const fs = require("fs");
+const path = require("path");
+const order = require("../api/admin/order");
+
+// Файли й надсилання підряднику — не окремі функції, а /api/admin/order?resource=…
+const withResource = (resource) => (req, res) =>
+  order(Object.assign({}, req, { query: Object.assign({ resource }, req.query || {}) }), res);
+const files = withResource("files");
+const contractor = withResource("contractor");
+
+// Vercel Hobby: не більше 12 серверних функцій на розгортання. 13-та ламає деплой
+// на «Deploying outputs» без тексту помилки — тож стежимо тут.
+function countFunctions(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).reduce((n, e) => {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) return n + countFunctions(full);
+    return n + (/\.(js|mjs|cjs|ts)$/.test(e.name) ? 1 : 0);
+  }, 0);
+}
 const ORD = "ORD-110926-001";
 
 function response() {
@@ -43,6 +60,14 @@ async function call(handler, req) {
 }
 
 async function run() {
+  const fnCount = countFunctions(path.join(__dirname, "..", "api"));
+  assert.ok(fnCount <= 12, "Vercel Hobby дозволяє до 12 функцій, а в api/ їх " + fnCount);
+
+  // Без resource order.js працює, як і раніше: картка замовлення.
+  let o = await call(order, { method: "GET", query: { order_number: ORD } });
+  assert.equal(o.statusCode, 200);
+  assert.equal(calls.pop().action, "get_order");
+
   let r = await call(files, { method: "GET", query: { order_number: "ORD-1" } });
   assert.equal(r.statusCode, 400, "невірний номер замовлення відсікається до Apps Script");
   assert.equal(calls.length, 0);
