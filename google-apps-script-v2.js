@@ -70,7 +70,7 @@ function doPost(e) {
       addDeliveryEvent(data); // подія в Google Календарі + нагадування (за 2 дні і в день о 08:30)
     }
     // У групу підрядника замовлення НЕ йде автоматично — лише коли менеджер
-    // поставить статус «В роботі» (див. onEditDelivery). Так підрядник не бачить
+    // надішле замовлення підряднику (CRM або статус у таблиці). Так підрядник не бачить
     // попередніх/неопрацьованих запитів.
 
     return jsonOut({ status: "ok", order_number: written.order_number, row: written.row, duplicate: !!written.duplicate });
@@ -281,7 +281,7 @@ function findLastRealOrderRow_(sheet) {
 
 function applyOrderRowControls_(sheet, rowNumber) {
   var statusRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"]).setAllowInvalid(false).build();
+    .requireValueInList(STATUSES).setAllowInvalid(false).build();
   sheet.getRange(rowNumber, 3).setDataValidation(statusRule);
   var checkboxRule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
   sheet.getRange(rowNumber, 33, 1, 2).setDataValidation(checkboxRule);
@@ -397,7 +397,8 @@ function onEditDelivery(e) {
       return;
     }
 
-    // Статус «В роботі» → передати замовлення підряднику (тема + специфікація), один раз.
+    // Статус «В опрацюванні підрядником» / «Виготовлення» → передати замовлення
+    // підряднику (тема + специфікація), один раз. Стара назва «В роботі» = «Виготовлення».
     if (col === 3) {
       var newStatus = String(range.getValue() || "").trim();
       applyStatusSideEffects_(sh, range.getRow(), newStatus);
@@ -407,6 +408,13 @@ function onEditDelivery(e) {
     // AG/AH: оплата клієнта / отримання маржі → коротко сповістити власника.
     if (col === 33 || col === 34) {
       notifyOwnerPaymentChange_(sh, range.getRow(), col, range.getValue() === true);
+      return;
+    }
+
+    // AU/AV: термін і завдання опрацювання підрядником → оновити нагадування в Календарі.
+    if (col === PROCESSING_DUE_COL || col === PROCESSING_TASK_COL) {
+      var procNum = String(sh.getRange(range.getRow(), 1).getValue() || "").trim();
+      if (procNum) syncProcessingEvent_(sh, procNum);
       return;
     }
 
@@ -739,7 +747,7 @@ function nowKyiv_() {
  * постить туди специфікацію і запам'ятовує message_thread_id (для нагадувань).
  * Якщо групу не налаштовано — нічого не робить. Помилки не валять замовлення.
  */
-function createOrderTopic_(data, opts) {
+function createOrderTopic_(data, opts, prefix) {
   var p = PropertiesService.getScriptProperties();
   var chat = p.getProperty("TG_CONTRACTOR_CHAT");
   if (!p.getProperty("TG_TOKEN") || !chat) {
@@ -754,7 +762,7 @@ function createOrderTopic_(data, opts) {
   var r = tgApi_("createForumTopic", { chat_id: chat, name: num || "Замовлення" });
   if (r && r.ok && r.result && r.result.message_thread_id) threadId = r.result.message_thread_id;
   // якщо Теми вимкнені / бот не адмін — threadId лишиться null, повідомлення піде в загальний чат
-  var sent = tgSendTo_(chat, buildProductionMsg_(data, opts), threadId);
+  var sent = tgSendTo_(chat, (prefix || "") + buildProductionMsg_(data, opts), threadId);
   if (num && sent && sent.ok) {
     p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
     p.setProperty("sent_" + num, nowIsoKyiv_());                        // коли — показуємо в CRM
@@ -818,7 +826,7 @@ function checkContractorTelegram() {
 function buildOrderFromRows_(sh, orderNumber) {
   var last = sh.getLastRow();
   if (last < 2) return null;
-  var ncol = Math.min(COMMISSION_PCT_COL, sh.getMaxColumns()); // до AT «Комісія з маржі, %»
+  var ncol = Math.min(ADMIN_ORDER_COLS, sh.getMaxColumns()); // до AV «Завдання підряднику»
   var vals = sh.getRange(2, 1, last - 1, ncol).getValues();
   var order = null;
   for (var i = 0; i < vals.length; i++) {
@@ -835,7 +843,10 @@ function buildOrderFromRows_(sh, orderNumber) {
         // AL–AN: спосіб зв'язку, Telegram, e-mail — підряднику лише якщо дозволено пташками.
         contact_method: String(r[37] || "").trim(),
         contact_telegram: String(r[38] || "").replace(/^@/, "").trim(),
-        contact_email: String(r[39] || "").trim()
+        contact_email: String(r[39] || "").trim(),
+        // AU–AV: термін і завдання опрацювання підрядником (для заголовка повідомлення).
+        processing_due: ncol >= PROCESSING_DUE_COL ? toISODate(r[PROCESSING_DUE_COL - 1]) : "",
+        processing_task: ncol >= PROCESSING_TASK_COL ? String(r[PROCESSING_TASK_COL - 1] || "").trim() : ""
       };
     }
     String(r[31] || "").split(/\n+/).forEach(function (line) {
@@ -1115,7 +1126,7 @@ function sendDeliveryReminders() {
     var diff = dayDiff_(todayIso, o.iso);
     if (REMIND_BEFORE.indexOf(diff) < 0) return;
     var thread = props.getProperty("thread_" + num); // створюється, коли замовлення передали підряднику
-    if (!thread) return; // ще не підтверджене (статус не «В роботі») — не нагадуємо
+    if (!thread) return; // підряднику ще не надсилали — не нагадуємо
     var guard = "rem_" + num + "_" + todayIso;
     if (props.getProperty(guard)) return; // вже слали сьогодні
     var chat = props.getProperty("TG_CONTRACTOR_CHAT") || props.getProperty("TG_CHAT");
@@ -1155,7 +1166,8 @@ function buildOwnerDailyReport_() {
   if (!ss) return "📊 <b>AVALON: зведення</b>\nТаблицю для автоматичного звіту не знайдено.";
   var sh = ss.getSheetByName(SHEET_ORDERS);
   if (!sh || sh.getLastRow() < 2) return "📊 <b>AVALON: зведення</b>\nЗамовлень поки немає.";
-  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 34).getValues();
+  // До AV — щоб бачити й термін опрацювання підрядником (AU).
+  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, Math.min(ADMIN_ORDER_COLS, sh.getMaxColumns())).getValues();
   var todayIso = ymd_(new Date(), tz);
   var orders = {};
   var marginAccrued = 0;
@@ -1166,12 +1178,13 @@ function buildOwnerDailyReport_() {
   rows.forEach(function (r) {
     var num = String(r[0] || "").trim();
     if (!num) return;
-    var status = String(r[2] || "").trim();
+    var status = canonStatus_(r[2]);
     var profit = Number(r[22]) || 0; // W — поточна маржа з таблиці
     if (!orders[num]) {
       orders[num] = {
         num: num, status: status, client: r[4],
-        date: toISODate(r[28]), revenue: 0, profit: 0, rows: 0
+        date: toISODate(r[28]), revenue: 0, profit: 0, rows: 0,
+        procDue: r.length >= PROCESSING_DUE_COL ? toISODate(r[PROCESSING_DUE_COL - 1]) : ""
       };
     }
     orders[num].rows++;
@@ -1185,11 +1198,18 @@ function buildOwnerDailyReport_() {
     }
   });
 
-  var counts = { "Нове": 0, "В роботі": 0, "Готове": 0, "Відправлено": 0, "Завершено": 0, "Скасовано": 0 };
-  var late = [], today = [];
+  var counts = {};
+  STATUSES.forEach(function (s) { counts[s] = 0; });
+  var late = [], today = [], procLate = [], procSoon = [];
   Object.keys(orders).forEach(function (num) {
     var o = orders[num];
     if (counts[o.status] != null) counts[o.status]++;
+    // Термін опрацювання підрядником: прострочений або сьогодні/завтра.
+    if (o.status === STATUS_PROCESSING && o.procDue) {
+      var procDiff = dayDiff_(todayIso, o.procDue);
+      if (procDiff < 0) procLate.push(o);
+      else if (procDiff <= 1) procSoon.push(o);
+    }
     if (o.date && REMIND_DONE.indexOf(o.status) < 0) {
       if (dayDiff_(todayIso, o.date) < 0) late.push(o);
       if (dayDiff_(todayIso, o.date) === 0) today.push(o);
@@ -1205,7 +1225,8 @@ function buildOwnerDailyReport_() {
   var msg = "📊 <b>AVALON: щоденне зведення</b>\n";
   msg += "🕐 " + nowKyiv_() + "\n\n";
   msg += "• Нові: <b>" + counts["Нове"] + "</b>\n";
-  msg += "• В роботі: <b>" + counts["В роботі"] + "</b>\n";
+  msg += "• В опрацюванні підрядником: <b>" + counts[STATUS_PROCESSING] + "</b>\n";
+  msg += "• Виготовлення: <b>" + counts[STATUS_PRODUCTION] + "</b>\n";
   msg += "• Готові: <b>" + counts["Готове"] + "</b>\n";
   msg += "• Прострочені: <b>" + late.length + "</b>\n";
   msg += "\n💰 <b>МАРЖА З АКТУАЛЬНОЇ ТАБЛИЦІ</b>\n";
@@ -1215,6 +1236,13 @@ function buildOwnerDailyReport_() {
   msg += "• Залишок до отримання: <b>" + money_(marginDebt) + " ₴</b>\n";
   if (today.length) msg += "\n📅 <b>Сьогодні відправка/доставка</b>\n" + listOrders(today) + "\n";
   if (late.length) msg += "\n⚠️ <b>Прострочені</b>\n" + listOrders(late) + (late.length > 5 ? "\n• ще " + (late.length - 5) : "") + "\n";
+  function listProcessing(arr) {
+    return arr.slice(0, 5).map(function (o) {
+      return "• " + esc_(o.num) + (o.client ? " — " + esc_(o.client) : "") + " (до " + fmtDate_(o.procDue) + ")";
+    }).join("\n");
+  }
+  if (procLate.length) msg += "\n⏳ <b>Опрацювання підрядником прострочено</b>\n" + listProcessing(procLate) + "\n";
+  if (procSoon.length) msg += "\n⏳ <b>Термін опрацювання сьогодні/завтра</b>\n" + listProcessing(procSoon) + "\n";
   return msg;
 }
 
@@ -1315,7 +1343,7 @@ function sendUpdateToContractor() {
   var p = PropertiesService.getScriptProperties();
   var thread = p.getProperty("thread_" + num);
   if (!thread) {
-    ui.alert("Замовлення " + num + " ще не надсилалось підряднику.\nСпершу постав статус «В роботі».");
+    ui.alert("Замовлення " + num + " ще не надсилалось підряднику.\nСпершу надішліть його з CRM (кнопка «Надіслати підряднику») або постав статус «Виготовлення».");
     return;
   }
   var ord = buildOrderFromRows_(sh, num);
@@ -1350,12 +1378,12 @@ function resendCurrentOrderToContractor() {
 }
 
 /** Дозволити повторне надсилання підряднику: знімає «позначку надіслано» для вказаних
- *  замовлень. Запусти вручну, потім постав цим замовленням статус «В роботі» знову. */
+ *  замовлень. Запусти вручну, потім постав цим замовленням статус «Виготовлення» знову. */
 function resendToContractor() {
   var nums = ["ORD-190626-009"]; // ← впиши номери через кому, які треба надіслати ще раз
   var p = PropertiesService.getScriptProperties();
   nums.forEach(function (n) { p.deleteProperty("thread_" + String(n).trim()); });
-  Logger.log("Знято позначки: " + nums.join(", ") + ". Тепер постав їм статус «В роботі» знову.");
+  Logger.log("Знято позначки: " + nums.join(", ") + ". Тепер постав їм статус «Виготовлення» знову.");
 }
 
 // ===================== АРКУШІ =====================
@@ -1389,17 +1417,19 @@ function setupOrders(sheet) {
     "Характеристики",    // AQ (43): опис довільного виробу (пергола, стенд тощо)
     "Одиниця виміру",    // AR (44): шт. / комп. / довільне значення
     "ID запиту",         // AS (45): захист від дублювання після мережевого тайм-ауту
-    "Комісія з маржі, %" // AT (46): % ВІД ВАЛОВОГО ПРИБУТКУ, не від ціни продажу
+    "Комісія з маржі, %", // AT (46): % ВІД ВАЛОВОГО ПРИБУТКУ, не від ціни продажу
+    "Термін опрацювання підрядником", // AU (47): до якої дати підрядник має відповісти
+    "Завдання підряднику"             // AV (48): що саме опрацювати (вартість, конструктив…)
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
-  // Ширини A..AT — рівно стільки ж, скільки заголовків (остання: комісія з маржі).
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150];
+  // Ширини A..AV — рівно стільки ж, скільки заголовків (останні: термін і завдання підряднику).
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150,150,260];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"]).setAllowInvalid(false).build();
+    .requireValueInList(STATUSES).setAllowInvalid(false).build();
   sheet.getRange(2, 3, 1000, 1).setDataValidation(rule);
   var cb = SpreadsheetApp.newDataValidation().requireCheckbox().build();
   sheet.getRange(2, 33, 1000, 2).setDataValidation(cb); // AG, AH — галочки
@@ -1427,7 +1457,8 @@ function applyOrderConditionalFormats_(sheet) {
   var rowR = sheet.getRange("A2:AH1000"); // увесь рядок (текст)
   // Кольори статус-комірки (як було).
   var cellRules = [
-    {t:"Нове",bg:"#FFF3CD",fg:"#856404"}, {t:"В роботі",bg:"#CCE5FF",fg:"#004085"},
+    {t:"Нове",bg:"#FFF3CD",fg:"#856404"}, {t:STATUS_PROCESSING,bg:"#FFE3CC",fg:"#8A3B00"},
+    {t:STATUS_PRODUCTION,bg:"#CCE5FF",fg:"#004085"}, {t:"В роботі",bg:"#CCE5FF",fg:"#004085"},
     {t:"Готове",bg:"#D4EDDA",fg:"#155724"}, {t:"Відправлено",bg:"#D1ECF1",fg:"#0C5460"},
     {t:"Завершено",bg:"#E2E3E5",fg:"#383D41"}, {t:"Скасовано",bg:"#F8D7DA",fg:"#721C24"}
   ].map(function (r) { return SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(r.t).setBackground(r.bg).setFontColor(r.fg).setBold(true).setRanges([sr]).build(); });
@@ -1698,14 +1729,15 @@ function setupInstructions(ss) {
     "Чистий прибуток факт (Зведення) = отримана маржа − комісії − витрати.",
     "",
     "━━━ ЯК ПРАВИЛЬНО РЕДАГУВАТИ ТА СКАСОВУВАТИ ━━━",
-    "ГОЛОВНЕ ПРАВИЛО: усі правки (розміри, колір, адреса, оплата тощо) роби ДО того, як поставиш статус «В роботі».",
-    "Щойно статус став «В роботі» — замовлення вже надіслано підряднику в групу (гілка ORD-…). Подальші правки в таблиці туди автоматично НЕ підтягуються.",
-    "ПРАВКИ ПІСЛЯ «В РОБОТІ»: зміни рядок у таблиці → стань на будь-яку комірку цього рядка → меню зверху «AVALON» → «🔄 Надіслати оновлення підряднику». У ту саму гілку впаде оновлена специфікація з позначкою «ОНОВЛЕНО».",
+    "СТАТУСИ: Нове → В опрацюванні підрядником → Виготовлення (раніше «В роботі») → Готове → Відправлено → Завершено.",
+    "«В ОПРАЦЮВАННІ ПІДРЯДНИКОМ» — підрядник рахує виробничу вартість, розробляє конструктив нової моделі тощо; у виробництво замовлення ще не пішло. Термін (колонка AU) і завдання (AV) задаються в картці CRM; на дату терміну в Google Календарі зʼявляється нагадування (за добу й у сам день). Щойно замовлення виходить з цього статусу — нагадування прибирається.",
+    "ГОЛОВНЕ ПРАВИЛО: усі правки (розміри, колір, адреса, оплата тощо) роби ДО того, як надішлеш замовлення підряднику: кнопка «Надіслати підряднику» в картці CRM (з пташками, що саме надсилати) або статус «В опрацюванні підрядником» / «Виготовлення» прямо в таблиці.",
+    "ПРАВКИ ПІСЛЯ НАДСИЛАННЯ: у CRM — ще раз «Надіслати підряднику» (у ту саму гілку піде «Оновлено замовлення»; після опрацювання — «Погоджено, запускаємо у виробництво»). У таблиці — стань на рядок → меню «AVALON» → «🔄 Надіслати оновлення підряднику».",
     "ДАТУ ДОСТАВКИ можна міняти будь-коли: вона сама оновлюється в Google Календарі, а нагадування підлаштовуються автоматично.",
     "СКАСУВАННЯ: не видаляй рядок — постав статус «Скасовано». Рядок залишиться для історії, але у «Зведенні» НЕ рахуватиметься (не завищує виручку/прибуток), і нагадування припиняться. (Статуси «Відправлено» і «Завершено» теж зупиняють нагадування, але у фінанси входять.)",
     "ВИДАЛЕННЯ РЯДКА: нагадування не надходитимуть, АЛЕ подія в Google Календарі залишиться — видали її вручну. Тому краще «Скасовано», ніж видалення.",
     "ПОВТОРНЕ НАДСИЛАННЯ: кожне замовлення йде підряднику лише ОДИН раз (щоб не дублювати). Якщо після великих змін потрібно надіслати знову — звернись до розробника.",
-    "СТОРОЖ: якщо замовлення зі статусом «В роботі» чомусь не дійшло підряднику — тобі прийде ⚠️ у чат замовлень (одразу і під час щоденної перевірки о 08:30).",
+    "СТОРОЖ: якщо надіслане замовлення чомусь не дійшло підряднику — тобі прийде ⚠️ у чат замовлень (одразу і під час щоденної перевірки о 08:30).",
     "",
     "Питання чи зміни — звертайся."
   ];
@@ -2422,30 +2454,49 @@ function adminMigrateLegacyPayments_(data) {
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 46; // A–AT (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT)
-var STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
+var ADMIN_ORDER_COLS = 48; // A–AV (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT; опрацювання AU–AV)
+// Статуси замовлення. «В опрацюванні підрядником» — підрядник рахує виробничу
+// вартість / розробляє конструктив; «Виготовлення» — раніше називалось «В роботі».
+var STATUS_PROCESSING = "В опрацюванні підрядником";
+var STATUS_PRODUCTION = "Виготовлення";
+var STATUSES = ["Нове", STATUS_PROCESSING, STATUS_PRODUCTION, "Готове", "Відправлено", "Завершено", "Скасовано"];
+// Стара назва з таблиці, кешу сторінки чи старої версії кабінету → нова.
+var LEGACY_STATUSES = { "В роботі": STATUS_PRODUCTION };
+function canonStatus_(s) {
+  var t = String(s == null ? "" : s).trim();
+  return LEGACY_STATUSES[t] || t;
+}
 
 function applyStatusSideEffects_(sh, row, newStatus, opts) {
+  newStatus = canonStatus_(newStatus);
   if (!newStatus) return;
+  var onum = String(sh.getRange(row, 1).getValue() || "").trim();
   // З CRM підрядник отримує замовлення лише кнопкою «Надіслати підряднику» — з
-  // пташками, що саме надсилати. Автовідправка при «В роботі» лишилась для зміни
-  // статусу прямо в таблиці та для старої версії кабінету (без цього прапорця).
-  if (newStatus === "В роботі" && !(opts && opts.skipContractorSend)) {
-    var onum = sh.getRange(row, 1).getValue();
-    if (onum && !PropertiesService.getScriptProperties().getProperty("thread_" + onum)) {
-      var ord = buildOrderFromRows_(sh, onum);
-      if (ord) {
-        try {
-          var contractorResult = createOrderTopic_(ord);
-          if (!contractorResult || !contractorResult.ok) {
-            console.error("Send to contractor: " + telegramError_(contractorResult));
-          }
-        } catch (er) {
-          console.error("Send to contractor: " + er);
-          alertOwner_("Замовлення " + onum + " НЕ надіслано підряднику.", String(er));
+  // пташками, що саме надсилати. Автовідправка лишилась для зміни статусу прямо в
+  // таблиці та для старої версії кабінету (без прапорця manual_contractor_send).
+  var sendable = newStatus === STATUS_PROCESSING || newStatus === STATUS_PRODUCTION;
+  if (sendable && onum && !(opts && opts.skipContractorSend)
+      && !PropertiesService.getScriptProperties().getProperty("thread_" + onum)) {
+    var ord = buildOrderFromRows_(sh, onum);
+    if (ord) {
+      try {
+        var purpose = newStatus === STATUS_PROCESSING ? "processing" : "production";
+        var contractorResult = createOrderTopic_(ord, null,
+          contractorPrefix_(purpose, false, "", ord.processing_due, ord.processing_task));
+        if (contractorResult && contractorResult.ok) {
+          PropertiesService.getScriptProperties().setProperty("sent_purpose_" + onum, purpose);
+        } else {
+          console.error("Send to contractor: " + telegramError_(contractorResult));
         }
+      } catch (er) {
+        console.error("Send to contractor: " + er);
+        alertOwner_("Замовлення " + onum + " НЕ надіслано підряднику.", String(er));
       }
     }
+  }
+  // Нагадування про термін опрацювання живе, лише поки замовлення в опрацюванні.
+  if (onum) {
+    try { syncProcessingEvent_(sh, onum); } catch (calErr) { console.error("Календар опрацювання: " + calErr); }
   }
   notifyOwnerStatusChange_(sh, row, newStatus);
 }
@@ -2482,13 +2533,13 @@ function ensureDiscountColumns_(sheet) {
 
 function ensureDiscountColumnsOnce_() {
   var props = PropertiesService.getScriptProperties();
-  // V6: після додавання AT «Комісія з маржі, %» заголовки треба проставити ще раз.
-  if (props.getProperty("ORDERS_COLS_V6_READY") === "1") return;
+  // V7: після додавання AU–AV (опрацювання підрядником) заголовки треба проставити ще раз.
+  if (props.getProperty("ORDERS_COLS_V7_READY") === "1") return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) return;
   ensureDiscountColumns_(sheet);
-  props.setProperty("ORDERS_COLS_V6_READY", "1");
+  props.setProperty("ORDERS_COLS_V7_READY", "1");
 }
 
 /** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
@@ -2515,7 +2566,9 @@ function ensureContactColumns_(sheet) {
     { col: 43, title: "Характеристики", key: "Характеристик", width: 320 },
     { col: 44, title: "Одиниця виміру", key: "Одиниц", width: 120 },
     { col: 45, title: "ID запиту", key: "ID запиту", width: 210 },
-    { col: COMMISSION_PCT_COL, title: "Комісія з маржі, %", key: "Комісія з маржі", width: 150 }
+    { col: COMMISSION_PCT_COL, title: "Комісія з маржі, %", key: "Комісія з маржі", width: 150 },
+    { col: PROCESSING_DUE_COL, title: "Термін опрацювання підрядником", key: "Термін опрацювання", width: 150 },
+    { col: PROCESSING_TASK_COL, title: "Завдання підряднику", key: "Завдання підряднику", width: 260 }
   ];
   extra.forEach(function (e) {
     var head = String(sheet.getRange(1, e.col).getValue() || "");
@@ -2597,6 +2650,7 @@ function adminOrdersSheet_() {
     sheet.insertColumnsAfter(sheet.getMaxColumns(), ADMIN_ORDER_COLS - sheet.getMaxColumns());
   }
   ensureDiscountColumnsOnce_();
+  ensureStatusesV2Once_(sheet);
   return sheet;
 }
 
@@ -2630,7 +2684,7 @@ function mapOrderRow_(rowIndex, v) {
     row: rowIndex,
     order_number: String(v[0] || ""),
     created_at: String(v[1] || ""),
-    status: String(v[2] || ""),
+    status: canonStatus_(v[2]),             // «В роботі» зі старих рядків → «Виготовлення»
     source: String(v[3] || ""),
     client: String(v[4] || ""),
     phone: cellPhone_(v[5]),
@@ -2673,7 +2727,9 @@ function mapOrderRow_(rowIndex, v) {
     discount_pct: cellNum_(v[35]),
     discount_uah: cellNum_(v[36]),
     request_id: String(v[44] || ""),
-    commission_pct: cellNum_(v[45])   // AT: ставка комісії партнера/ТОВ, % від маржі
+    commission_pct: cellNum_(v[45]),   // AT: ставка комісії партнера/ТОВ, % від маржі
+    processing_due: toISODate(v[46]) || "",        // AU: термін опрацювання підрядником
+    processing_task: String(v[47] || "").trim()    // AV: що зробити підряднику
   };
 }
 
@@ -2736,6 +2792,8 @@ function adminGroupOrders_(orders, payments) {
         commission: 0,
         net_profit: 0,
         commission_pct: o.commission_pct,  // ставка спільна для позицій замовлення
+        processing_due: o.processing_due,  // термін опрацювання підрядником
+        processing_task: o.processing_task,
         list_price: 0,
         discount_uah: 0
       };
@@ -2766,6 +2824,8 @@ function adminGroupOrders_(orders, payments) {
     var g = byNum[k];
     g.contractor_sent = !!sentProps["thread_" + k];
     g.contractor_sent_at = sentProps["sent_" + k] || "";
+    // Мета останнього надсилання: після «на опрацювання» наступне — «погоджено, у виробництво».
+    g.contractor_purpose = sentProps["sent_purpose_" + k] || "";
     g.margin_pct = g.revenue ? Math.round((g.profit / g.revenue) * 1000) / 10 : null;
     // Комісію утримує підрядник → його борг = валовий прибуток мінус комісія.
     g.margin_due = marginDue_(g.profit, g.commission, g.commission_pct);
@@ -3012,7 +3072,11 @@ function adminUpdateOrder_(data) {
   var manualContractorSend = !!patch.manual_contractor_send;
   delete patch.manual_contractor_send;
 
-  if (patch.status != null && STATUSES.indexOf(String(patch.status).trim()) < 0) {
+  if (patch.status != null) patch.status = canonStatus_(patch.status);   // «В роботі» → «Виготовлення»
+  if (patch.processing_due && !toISODate(patch.processing_due)) {
+    throw new Error("Невірна дата терміну опрацювання");
+  }
+  if (patch.status != null && STATUSES.indexOf(patch.status) < 0) {
     throw new Error("Невідомий статус");
   }
   ["cost_total", "list_price", "discount_pct", "discount_uah", "revenue"].forEach(function (key) {
@@ -3038,7 +3102,7 @@ function adminUpdateOrder_(data) {
   var row = data.row ? Number(data.row) : targetRows[0];
   if (targetRows.indexOf(row) < 0) row = targetRows[0];
 
-  var oldStatus = String(sh.getRange(row, 3).getValue() || "");
+  var oldStatus = canonStatus_(sh.getRange(row, 3).getValue());
 
   // ── Дані клієнта й замовлення: спільні для всіх позицій, тож пишемо в усі рядки ──
   var ORDER_FIELDS = { source: 4, client: 5, city: 7, transport: 27, address: 28,
@@ -3053,6 +3117,19 @@ function adminUpdateOrder_(data) {
     // Апостроф — щоб Google не зʼїв «+» і не перетворив номер у число.
     var ph = String(patch.phone).trim();
     targetRows.forEach(function (r) { sh.getRange(r, 6).setValue(ph ? "'" + ph : ""); });
+  }
+
+  // ── Опрацювання підрядником: термін і завдання — спільні для всього замовлення ──
+  var processingTouched = false;
+  if (patch.processing_due !== undefined) {
+    var procDueIso = patch.processing_due ? toISODate(patch.processing_due) : "";
+    targetRows.forEach(function (r) { sh.getRange(r, PROCESSING_DUE_COL).setValue(procDueIso); });
+    processingTouched = true;
+  }
+  if (patch.processing_task !== undefined) {
+    var procTaskText = String(patch.processing_task || "").trim().slice(0, 500);
+    targetRows.forEach(function (r) { sh.getRange(r, PROCESSING_TASK_COL).setValue(procTaskText); });
+    processingTouched = true;
   }
 
   // ── Характеристики позиції: лише цей рядок ──
@@ -3105,6 +3182,10 @@ function adminUpdateOrder_(data) {
     // Оновлюємо статус у всіх рядках цього замовлення.
     targetRows.forEach(function (r) { sh.getRange(r, 3).setValue(st); });
     if (st !== oldStatus) applyStatusSideEffects_(sh, row, st, { skipContractorSend: manualContractorSend });
+  }
+  // Нагадування в Календарі: термін змінили або замовлення зайшло/вийшло з опрацювання.
+  if (processingTouched || patch.status != null) {
+    try { syncProcessingEvent_(sh, orderNumber); } catch (calErr) { console.error("Календар опрацювання: " + calErr); }
   }
   if (patch.client_paid != null) {
     var cp = !!patch.client_paid;
@@ -3569,26 +3650,162 @@ function withRequestCache_(prefix, requestId, fn) {
   }
 }
 
-/** Надіслане «Нове» замовлення стає «В роботі» (як і раніше при відправці підряднику). */
-function promoteToWork_(sh, num) {
+// ===================== ОПРАЦЮВАННЯ ПІДРЯДНИКОМ → ВИГОТОВЛЕННЯ =====================
+// Інколи замовлення йде підряднику не у виробництво, а на опрацювання: порахувати
+// виробничу вартість, розробити конструктив нової моделі тощо. Для цього є статус
+// «В опрацюванні підрядником», термін (AU) і завдання (AV). На дату терміну в
+// Google Календарі — подія з нагадуванням; поки замовлення в опрацюванні.
+var PROCESSING_DUE_COL = 47;   // AU
+var PROCESSING_TASK_COL = 48;  // AV
+
+/**
+ * Після надсилання підряднику статус іде вперед (назад — ніколи):
+ *  на опрацювання: «Нове» → «В опрацюванні підрядником»;
+ *  у виробництво:  «Нове» / «В опрацюванні підрядником» → «Виготовлення».
+ */
+function advanceStatusAfterSend_(sh, num, purpose) {
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
     var last = sh.getLastRow();
-    if (last < 2) return false;
+    if (last < 2) return null;
     var vals = sh.getRange(2, 1, last - 1, 3).getValues();
-    var rows = [];
+    var rows = [], from = "";
     for (var i = 0; i < vals.length; i++) {
-      if (String(vals[i][0] || "").trim() === num && String(vals[i][2] || "").trim() === "Нове") rows.push(i + 2);
+      if (String(vals[i][0] || "").trim() !== num) continue;
+      if (!from) from = canonStatus_(vals[i][2]);
+      rows.push(i + 2);
     }
-    if (!rows.length) return false;
+    var to = "";
+    if (purpose === "processing" && from === "Нове") to = STATUS_PROCESSING;
+    if (purpose !== "processing" && (from === "Нове" || from === STATUS_PROCESSING)) to = STATUS_PRODUCTION;
+    if (!to || !rows.length) return null;
     // setValue з коду не запускає onEdit — тож повторної автовідправки не буде.
-    rows.forEach(function (r) { sh.getRange(r, 3).setValue("В роботі"); });
-    notifyOwnerStatusChange_(sh, rows[0], "В роботі");
-    return true;
+    rows.forEach(function (r) { sh.getRange(r, 3).setValue(to); });
+    notifyOwnerStatusChange_(sh, rows[0], to);
+    return { from: from, to: to };
   } finally {
     lock.releaseLock();
   }
+}
+
+/** Термін і завдання — в усі рядки замовлення (вони спільні для позицій). */
+function setProcessingFields_(sh, num, due, task) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var last = sh.getLastRow();
+    if (last < 2) return 0;
+    var nums = sh.getRange(2, 1, last - 1, 1).getValues();
+    var n = 0;
+    for (var i = 0; i < nums.length; i++) {
+      if (String(nums[i][0] || "").trim() !== num) continue;
+      sh.getRange(i + 2, PROCESSING_DUE_COL, 1, 2).setValues([[due || "", task || ""]]);
+      n++;
+    }
+    return n;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function processingInfo_(sh, num) {
+  var last = sh.getLastRow();
+  if (last < 2) return null;
+  var maxCols = typeof sh.getMaxColumns === "function" ? sh.getMaxColumns() : ADMIN_ORDER_COLS;
+  var vals = sh.getRange(2, 1, last - 1, Math.min(ADMIN_ORDER_COLS, maxCols)).getValues();
+  for (var i = 0; i < vals.length; i++) {
+    var r = vals[i];
+    if (String(r[0] || "").trim() !== num) continue;
+    return {
+      status: canonStatus_(r[2]),
+      due: toISODate(r[PROCESSING_DUE_COL - 1]),
+      task: String(r[PROCESSING_TASK_COL - 1] || "").trim(),
+      client: String(r[4] || "").trim(),
+      phone: String(r[5] || "").replace(/^'/, ""),
+      city: String(r[6] || "").trim()
+    };
+  }
+  return null;
+}
+
+/**
+ * Подія «⏳ Опрацювання підрядником» у Google Календарі на день терміну (09:00),
+ * нагадування за добу й у сам день. Існує, лише поки замовлення в опрацюванні і
+ * термін задано; змінився термін чи завдання — стара подія замінюється новою.
+ * Повертає: "created" | "same" | "removed" | "none".
+ */
+function syncProcessingEvent_(sh, num) {
+  var info = processingInfo_(sh, num);
+  var p = PropertiesService.getScriptProperties();
+  var key = "proc_evt_" + num, sigKey = "proc_sig_" + num;
+  var oldId = p.getProperty(key);
+  var want = !!(info && info.status === STATUS_PROCESSING && info.due);
+  var sig = want ? [info.due, info.task, info.client].join("|") : "";
+  if (want && oldId && p.getProperty(sigKey) === sig) return "same";
+  if (oldId) {
+    try {
+      var old = CalendarApp.getEventById(oldId);
+      if (old) old.deleteEvent();
+    } catch (e) { /* подію вже прибрали вручну */ }
+    p.deleteProperty(key);
+    p.deleteProperty(sigKey);
+  }
+  if (!want) return oldId ? "removed" : "none";
+  var d = info.due.split("-");
+  var start = new Date(+d[0], +d[1] - 1, +d[2], 9, 0, 0);
+  var end = new Date(+d[0], +d[1] - 1, +d[2], 9, 30, 0);
+  var title = "⏳ Опрацювання підрядником: " + num + (info.client ? " — " + info.client : "");
+  var desc = "Термін опрацювання підрядником для замовлення " + num
+    + "\nЗавдання: " + (info.task || "—")
+    + (info.client ? "\nКлієнт: " + info.client : "")
+    + (info.phone ? "\nТелефон: " + info.phone : "")
+    + (info.city ? "\nМісто: " + info.city : "")
+    + "\n\nЯкщо підрядник ще не відповів — нагадайте йому в гілці замовлення.";
+  var ev = getCal().createEvent(title, start, end, { description: desc });
+  ev.removeAllReminders();
+  ev.addPopupReminder(0);          // у день терміну, о 09:00
+  ev.addPopupReminder(24 * 60);    // за добу
+  ev.addEmailReminder(0);
+  p.setProperty(key, ev.getId());
+  p.setProperty(sigKey, sig);
+  return "created";
+}
+
+/** Заголовок повідомлення підряднику: навіщо йому це замовлення саме зараз. */
+function contractorPrefix_(purpose, update, lastPurpose, due, task) {
+  if (purpose === "processing") {
+    return (update ? "🔄 <b>ОНОВЛЕНО — НА ОПРАЦЮВАННЯ</b>" : "🧮 <b>НА ОПРАЦЮВАННЯ</b> — ще не у виробництво") + "\n"
+      + "• Завдання: <b>" + esc_(task || "опрацювати замовлення") + "</b>\n"
+      + "• Термін: " + (due ? "<b>до " + fmtDate_(due) + "</b>" : "не вказано") + "\n\n";
+  }
+  if (update && lastPurpose === "processing") return "✅ <b>ПОГОДЖЕНО — ЗАПУСКАЄМО У ВИРОБНИЦТВО</b>\n\n";
+  if (update) return "🔄 <b>ОНОВЛЕНО ЗАМОВЛЕННЯ</b>\n\n";
+  return "🏭 <b>У ВИРОБНИЦТВО</b>\n\n";
+}
+
+/**
+ * РАЗОВО: «В роботі» → «Виготовлення» в таблиці + новий список вибору статусу й кольори.
+ * Читання всюди й так приймає стару назву (canonStatus_), тож порядок не критичний.
+ */
+function ensureStatusesV2Once_(sheet) {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty("STATUSES_V2_READY") === "1") return;
+  var rule = SpreadsheetApp.newDataValidation().requireValueInList(STATUSES).setAllowInvalid(false).build();
+  sheet.getRange(2, 3, Math.max(sheet.getMaxRows() - 1, 1), 1).setDataValidation(rule);
+  var last = sheet.getLastRow();
+  if (last >= 2) {
+    var rng = sheet.getRange(2, 3, last - 1, 1);
+    var vals = rng.getValues();
+    var changed = false;
+    for (var i = 0; i < vals.length; i++) {
+      var canon = canonStatus_(vals[i][0]);
+      if (canon && canon !== String(vals[i][0] || "").trim()) { vals[i][0] = canon; changed = true; }
+    }
+    if (changed) rng.setValues(vals);
+  }
+  applyOrderConditionalFormats_(sheet);
+  props.setProperty("STATUSES_V2_READY", "1");
 }
 
 function adminContractorPreview_(data) {
@@ -3598,36 +3815,58 @@ function adminContractorPreview_(data) {
   if (!ord) throw new Error("Замовлення " + num + " не знайдено");
   var p = PropertiesService.getScriptProperties();
   var update = !!p.getProperty("thread_" + num);
-  var text = (update ? "🔄 <b>ОНОВЛЕНО ЗАМОВЛЕННЯ</b>\n\n" : "") + buildProductionMsg_(ord, contractorOptions_(data.options));
+  var purpose = data.purpose === "processing" ? "processing" : "production";
+  // Перегляд показує ще НЕ збережені термін і завдання — так, як їх побачить підрядник.
+  var due = purpose === "processing" ? (toISODate(data.processing_due) || ord.processing_due) : "";
+  var task = purpose === "processing"
+    ? (data.processing_task != null ? String(data.processing_task).trim() : ord.processing_task) : "";
+  var text = contractorPrefix_(purpose, update, p.getProperty("sent_purpose_" + num) || "", due, task)
+    + buildProductionMsg_(ord, contractorOptions_(data.options));
   return { status: "ok", text: text, update: update, sent_at: p.getProperty("sent_" + num) || "" };
 }
 
 function adminContractorSend_(data) {
   var num = String(data.order_number || "").trim();
   if (!orderNumberValid_(num)) throw new Error("Невірний номер замовлення");
+  var purpose = data.purpose === "processing" ? "processing" : "production";
+  var due = "", task = "";
+  if (purpose === "processing") {
+    due = toISODate(data.processing_due);
+    if (!due) throw new Error("Вкажіть термін опрацювання підрядником");
+    task = String(data.processing_task || "").trim().slice(0, 500);
+  }
   return withRequestCache_("csend_", data.request_id, function () {
     var sh = adminOrdersSheet_();
+    // Термін і завдання зберігаємо ДО надсилання — щоб вони потрапили в повідомлення.
+    if (purpose === "processing") setProcessingFields_(sh, num, due, task);
     var ord = buildOrderFromRows_(sh, num);
     if (!ord) throw new Error("Замовлення " + num + " не знайдено");
     var opts = contractorOptions_(data.options);
     var p = PropertiesService.getScriptProperties();
     var thread = p.getProperty("thread_" + num);
     var update = !!thread;
+    var prefix = contractorPrefix_(purpose, update, p.getProperty("sent_purpose_" + num) || "",
+      ord.processing_due, ord.processing_task);
     if (update) {
-      // Уже надсилали — оновлення йде в ту саму гілку замовлення.
+      // Уже надсилали — наступне повідомлення йде в ту саму гілку замовлення.
       var tg = contractorChat_();
-      var sent = tgSendTo_(tg.chat, "🔄 <b>ОНОВЛЕНО ЗАМОВЛЕННЯ</b>\n\n" + buildProductionMsg_(ord, opts),
-        thread === "0" ? null : thread);
+      var sent = tgSendTo_(tg.chat, prefix + buildProductionMsg_(ord, opts), thread === "0" ? null : thread);
       if (!sent || !sent.ok) throw new Error("Telegram не прийняв повідомлення: " + telegramError_(sent));
       p.setProperty("sent_" + num, nowIsoKyiv_());
     } else {
-      var created = createOrderTopic_(ord, opts);
+      var created = createOrderTopic_(ord, opts, prefix);
       if (!created || !created.ok) throw new Error("Не надіслано підряднику: " + telegramError_(created));
     }
+    p.setProperty("sent_purpose_" + num, purpose);
+    var moved = advanceStatusAfterSend_(sh, num, purpose);
+    try { syncProcessingEvent_(sh, num); } catch (calErr) { console.error("Календар опрацювання: " + calErr); }
     return {
       status: "ok",
       update: update,
-      status_changed: promoteToWork_(sh, num),
+      purpose: purpose,
+      status_changed: !!moved,
+      prev_status: moved ? moved.from : "",
+      new_status: moved ? moved.to : "",
       sent_at: p.getProperty("sent_" + num) || ""
     };
   });

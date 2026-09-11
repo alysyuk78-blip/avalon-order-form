@@ -28,6 +28,7 @@
       --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
       /* Середня прозорість колонок воронки (між блідим і насиченим) */
       --st-new-bg: rgba(230, 184, 0, 0.08); --st-new-fg: #856404;
+      --st-proc-bg: rgba(234, 88, 12, 0.08); --st-proc-fg: #9a3412;
       --st-work-bg: rgba(59, 130, 246, 0.08); --st-work-fg: #1d4f91;
       --st-ready-bg: rgba(20, 184, 166, 0.08); --st-ready-fg: #0f6b5c;
       --st-ship-bg: rgba(168, 85, 247, 0.08); --st-ship-fg: #6b21a8;
@@ -36,6 +37,7 @@
       --st-missing-bg: rgba(220, 38, 38, 0.08); --st-missing-fg: #b42318;
       /* Бейджі трохи насиченіші за колонки, щоб читались */
       --st-new-chip: rgba(230, 184, 0, 0.20);
+      --st-proc-chip: rgba(234, 88, 12, 0.16);
       --st-work-chip: rgba(59, 130, 246, 0.18);
       --st-ready-chip: rgba(20, 184, 166, 0.18);
       --st-ship-chip: rgba(168, 85, 247, 0.18);
@@ -198,7 +200,7 @@
     .orders-view-actions > .icon-button { background: #e8ebed; }
     .orders-view-actions > .icon-button.active { background: var(--brand); color: #fff; }
     .kanban {
-      display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 12px;
+      display: grid; grid-template-columns: repeat(7, minmax(150px, 1fr)); gap: 12px;
       overflow-x: visible; padding-bottom: 8px; max-width: 100%;
     }
     .col {
@@ -418,12 +420,17 @@
     }
     .remind-item .tag.debt { color: var(--warn); background: rgba(154, 103, 0, 0.12); }
     .remind-item .tag.stuck { color: var(--st-work-fg); background: var(--st-work-chip); }
+    .remind-item .tag.proc { color: var(--st-proc-fg); background: var(--st-proc-chip); }
     .remind-item .tag.ship { color: var(--st-ship-fg); background: var(--st-ship-chip); }
     .remind-item .tag.data { color: var(--st-missing-fg); background: var(--st-missing-chip); }
     .col.st-new { --col-sticky-bg: #fbf9ea; background: var(--st-new-bg); }
     .col.st-new h3 { color: var(--st-new-fg); }
     .col.st-work { --col-sticky-bg: #edf4fd; background: var(--st-work-bg); }
     .col.st-work h3 { color: var(--st-work-fg); }
+    .col.st-proc { --col-sticky-bg: #fdf1e9; background: var(--st-proc-bg); }
+    .col.st-proc h3 { color: var(--st-proc-fg); }
+    /* Довга назва «В опрацюванні підрядником» переноситься, а не обрізається. */
+    .col h3 .col-title > span:first-child { min-width: 0; white-space: normal; line-height: 1.25; }
     .col.st-ready { --col-sticky-bg: #edf8f6; background: var(--st-ready-bg); }
     .col.st-ready h3 { color: var(--st-ready-fg); }
     .col.st-ship { --col-sticky-bg: #f5effc; background: var(--st-ship-bg); }
@@ -592,6 +599,27 @@
     .send-check small { flex: none; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
     .send-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .send-note { margin: 0 0 10px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    /* Мета надсилання: на опрацювання чи у виробництво. */
+    .send-purpose { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 12px; }
+    .send-purpose button {
+      display: grid; gap: 2px; padding: 10px 12px; border-radius: 12px; cursor: pointer; text-align: left;
+      border: 1.5px solid transparent; background: var(--control-bg); color: var(--ink);
+      font: inherit; font-size: 13.5px; font-weight: 700;
+    }
+    .send-purpose button small { color: var(--muted); font-size: 11.5px; font-weight: 600; }
+    .send-purpose button.active { border-color: var(--brand); background: #fff; }
+    .send-purpose button.proc.active { border-color: var(--st-proc-fg); }
+    .send-processing { margin: 0 0 12px; padding: 10px 12px 12px; border-radius: 12px; background: var(--st-proc-bg); }
+    .send-processing .field { margin-bottom: 10px; }
+    .send-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .send-chips button {
+      border: 0; border-radius: 999px; padding: 5px 10px; cursor: pointer;
+      background: #fff; color: var(--ink); font: inherit; font-size: 12px; font-weight: 650;
+    }
+    .send-chips button.active { background: var(--st-proc-fg); color: #fff; }
+    .send-hint { display: block; margin-top: 4px; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+    .send-hint.ok { color: var(--ok); font-weight: 650; }
+    @media (max-width: 520px) { .send-purpose { grid-template-columns: 1fr; } }
     .send-actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .send-actions .btn { display: inline-flex; align-items: center; gap: 7px; }
     .send-actions .btn svg { width: 16px; height: 16px; flex: none; }
@@ -638,6 +666,8 @@
     .card-delivery.overdue { color: #d92116; font-weight: 800; }  /* червоний  3°, 5.0:1 */
     .card-delivery.today   { color: #c86400; font-weight: 800; }  /* оранжевий 30°, 4.0:1 */
     .card-delivery.soon    { color: #8d7309; font-weight: 750; }  /* жовтий    48°, 4.6:1 */
+    /* Опрацювання без терміну — одразу видно, що термін треба задати. */
+    .card-delivery.none { color: var(--st-proc-fg); font-weight: 700; }
     .list { display: grid; gap: 8px; }
     .row-card {
       display: grid; grid-template-columns: 1.1fr 1.2fr 0.8fr 0.7fr 0.7fr 0.7fr auto;
@@ -686,6 +716,7 @@
     }
     .badge.st-new { background: var(--st-new-chip); color: var(--st-new-fg); }
     .badge.st-work { background: var(--st-work-chip); color: var(--st-work-fg); }
+    .badge.st-proc { background: var(--st-proc-chip); color: var(--st-proc-fg); }
     .badge.st-ready { background: var(--st-ready-chip); color: var(--st-ready-fg); }
     .badge.st-ship { background: var(--st-ship-chip); color: var(--st-ship-fg); }
     .badge.st-done { background: var(--st-done-chip); color: var(--st-done-fg); }
