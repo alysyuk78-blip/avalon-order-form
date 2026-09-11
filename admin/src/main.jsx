@@ -1314,6 +1314,19 @@ import finance from '../../lib/admin-finance.js';
       if (d >= 2 && d <= 4 && (h < 12 || h > 14)) return "файли";
       return "файлів";
     }
+    // Скріпка біля номера замовлення, коли до нього прикріплено файли
+    // (кількість — якщо їх кілька). Контурна іконка, як решта кабінету.
+    function FilesBadge({ count }) {
+      const n = Number(count) || 0;
+      if (!n) return null;
+      const label = "Прикріплено " + n + " " + fileWord(n);
+      return (
+        <span className="files-badge" title={label} aria-label={label}>
+          <Paperclip aria-hidden="true" />
+          {n > 1 ? <span>{n}</span> : null}
+        </span>
+      );
+    }
     function fileIconFor(mime, name) {
       const m = String(mime || "");
       const ext = String(name || "").split(".").pop().toLowerCase();
@@ -1734,7 +1747,7 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
-    function OrderDrawer({ token, orderNumber, initialData, snapshotLoading, onClose, onChanged, focusSend }) {
+    function OrderDrawer({ token, orderNumber, initialData, snapshotLoading, onClose, onChanged, focusSend, onFilesCount }) {
       const [data, setData] = useState(initialData || null);
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
@@ -1766,6 +1779,11 @@ import finance from '../../lib/admin-finance.js';
         setUploads([]);
         loadFiles();
       }, [orderNumber]);
+      // Скріпка на картці воронки зʼявляється/зникає одразу після завантаження чи видалення.
+      const filesCount = files ? files.length : null;
+      useEffect(() => {
+        if (filesCount !== null && onFilesCount) onFilesCount(orderNumber, filesCount);
+      }, [filesCount, orderNumber]);
 
       function focusSendPanel(purpose) {
         if (purpose) setPurposeRequest({ purpose, at: Date.now() });
@@ -3063,7 +3081,10 @@ import finance from '../../lib/admin-finance.js';
                         }}
                       >
                         <div className="card-head">
-                          <div className="num">{g.order_number}</div>
+                          <div className="num">
+                            {g.order_number}
+                            <FilesBadge count={g.files_count} />
+                          </div>
                           <span>{formatDateShort(g.created_at).split(" ")[0]}</span>
                         </div>
                         {g.status === MISSING_STATUS && <div className="meta" style={{ color: "#b54842" }}>{g.status_issue}</div>}
@@ -3168,7 +3189,7 @@ import finance from '../../lib/admin-finance.js';
                   }}
                   onClick={() => onOpenOrder(g.order_number)}
                 >
-                  <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
+                  <div><strong>{g.order_number}</strong><FilesBadge count={g.files_count} /><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
                   <div>{g.client}<div style={{ marginTop: 4 }}><ContactLinks order={g} onClickStop /></div></div>
                   <div><StatusChip status={g.status} /></div>
                   <div>{money(g.revenue)}</div>
@@ -3937,7 +3958,7 @@ import finance from '../../lib/admin-finance.js';
                       style={{ gridTemplateColumns: "1.1fr 1fr 0.8fr 0.7fr", cursor: "pointer" }}
                       onClick={() => onOpenOrder(g.order_number)}
                     >
-                      <div><strong>{g.order_number}</strong><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
+                      <div><strong>{g.order_number}</strong><FilesBadge count={g.files_count} /><div style={{ color: "var(--muted)", fontSize: 12 }}>{formatDateShort(g.created_at)}</div></div>
                       <div>{g.client || "—"}</div>
                       <div><StatusChip status={g.status} /></div>
                       <div>{money(g.revenue)}</div>
@@ -4190,6 +4211,11 @@ import finance from '../../lib/admin-finance.js';
         setOrdersError("");
       }
 
+      // Скріпка на картці воронки: кількість файлів приходить із відкритої картки замовлення.
+      function patchGroupFilesCount(num, n) {
+        setGroups(cur => cur.map(g => (g.order_number === num && (Number(g.files_count) || 0) !== n)
+          ? { ...g, files_count: n } : g));
+      }
       // Картку можна відкрити одразу на блоці «Надіслати підряднику» (після зміни статусу у воронці).
       const [focusSend, setFocusSend] = useState(null);   // { purpose, at } — відкрити блок надсилання
       function openOrder(num, opts) {
@@ -4327,6 +4353,7 @@ import finance from '../../lib/admin-finance.js';
               onClose={closeOrder}
               onChanged={applyOrderUpdate}
               focusSend={focusSend}
+              onFilesCount={patchGroupFilesCount}
             />
           )}
         </div>

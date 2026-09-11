@@ -458,6 +458,13 @@
     .card:hover { transform: translateY(-2px); box-shadow: 0 14px 28px rgba(28,33,36,0.12); }
     .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .card-head > span { color: #8a9298; font-size: 9.5px; font-weight: 620; white-space: nowrap; }
+    /* Скріпка біля номера: до замовлення прикріплено файли. */
+    .card-head .num { display: inline-flex; align-items: center; min-width: 0; }
+    .files-badge {
+      display: inline-flex; align-items: center; gap: 1px; margin-left: 6px; vertical-align: middle;
+      color: var(--muted); font-size: 10.5px; font-weight: 700; line-height: 1;
+    }
+    .files-badge svg { width: 13px; height: 13px; flex: none; stroke-width: 2.2; }
     .card .num { font-weight: 760; font-size: 12.5px; letter-spacing: -.01em; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .card .meta { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.35; }
     .card-client { margin-top: 8px; font-size: 13px; line-height: 1.25; font-weight: 690; color: var(--ink); }

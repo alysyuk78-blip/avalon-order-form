@@ -2826,6 +2826,8 @@ function adminGroupOrders_(orders, payments) {
     g.contractor_sent_at = sentProps["sent_" + k] || "";
     // Мета останнього надсилання: після «на опрацювання» наступне — «погоджено, у виробництво».
     g.contractor_purpose = sentProps["sent_purpose_" + k] || "";
+    // Скріпка на картці: кількість файлів без походу на Google Диск.
+    g.files_count = Number(sentProps["files_count_" + k]) || 0;
     g.margin_pct = g.revenue ? Math.round((g.profit / g.revenue) * 1000) / 10 : null;
     // Комісію утримує підрядник → його борг = валовий прибуток мінус комісія.
     g.margin_due = marginDue_(g.profit, g.commission, g.commission_pct);
@@ -2892,6 +2894,8 @@ function adminGetOrder_(data) {
  * холодні старти Google і дає інтерфейсу позиції для миттєвого відкриття картки.
  */
 function adminBootstrap_(data) {
+  // Разово дорахувати файли, завантажені до появи лічильника (скріпка на картці).
+  try { ensureFilesCountOnce_(); } catch (filesErr) { console.error("Лічильник файлів: " + filesErr); }
   var payments = readPayments_("");
   var listed = adminListOrders_({
     q: data && data.q,
@@ -3486,16 +3490,57 @@ function orderFile_(num, fileId) {
   return file;
 }
 
-function adminFilesList_(data) {
-  var folder = orderFolder_(data.order_number, false);
-  if (!folder) return { status: "ok", files: [] };
-  var out = [], it = folder.getFiles();
-  while (it.hasNext()) {
-    var f = it.next();
-    if (!f.isTrashed()) out.push(fileToJson_(f));
+/**
+ * Скільки файлів у замовлення — щоб воронка показувала скріпку, не питаючи Google
+ * Диск про кожне замовлення. Оновлюється щоразу, коли список файлів пораховано наново.
+ */
+function setFilesCount_(num, n) {
+  var p = PropertiesService.getScriptProperties();
+  if (n > 0) p.setProperty("files_count_" + num, String(n));
+  else p.deleteProperty("files_count_" + num);
+}
+
+/** Файл дозавантажено — перерахувати файли замовлення (для скріпки). */
+function afterUploadStep_(result, num) {
+  if (result && result.done) {
+    try { adminFilesList_({ order_number: num }); } catch (e) { console.error("Лічильник файлів: " + e); }
   }
-  out.sort(function (a, b) { return String(a.created).localeCompare(String(b.created)); });
-  return { status: "ok", files: out };
+  return result;
+}
+
+/** РАЗОВО: порахувати файли, завантажені ще до появи лічильника. */
+function ensureFilesCountOnce_() {
+  var p = PropertiesService.getScriptProperties();
+  if (p.getProperty("FILES_COUNT_V1_READY") === "1") return;
+  // Теки файлів ще немає — рахувати нічого і створювати її заради цього не треба.
+  if (p.getProperty("FILES_ROOT_ID")) {
+    var folders = filesRoot_().getFolders();
+    while (folders.hasNext()) {
+      var folder = folders.next();
+      var num = String(folder.getName() || "").trim();
+      if (!orderNumberValid_(num) || folder.isTrashed()) continue;
+      var n = 0, it = folder.getFiles();
+      while (it.hasNext()) { if (!it.next().isTrashed()) n++; }
+      setFilesCount_(num, n);
+    }
+  }
+  p.setProperty("FILES_COUNT_V1_READY", "1");
+}
+
+function adminFilesList_(data) {
+  var num = String(data.order_number || "").trim();
+  var folder = orderFolder_(num, false);
+  var out = [];
+  if (folder) {
+    var it = folder.getFiles();
+    while (it.hasNext()) {
+      var f = it.next();
+      if (!f.isTrashed()) out.push(fileToJson_(f));
+    }
+    out.sort(function (a, b) { return String(a.created).localeCompare(String(b.created)); });
+  }
+  setFilesCount_(num, out.length);   // список щойно пораховано — лічильник завжди свіжий
+  return { status: "ok", files: out, files_count: out.length };
 }
 
 function adminFileTrash_(data) {
@@ -3584,7 +3629,7 @@ function adminFileUploadChunk_(data) {
     muteHttpExceptions: true,
     followRedirects: false      // 308 тут означає «продовжуй», а не редирект
   });
-  return driveUploadResult_(res, data.upload_id);
+  return afterUploadStep_(driveUploadResult_(res, data.upload_id), s.order);
 }
 
 /** Скільки байтів Диск уже має — щоб після обриву зв'язку продовжити, а не почати знову. */
@@ -3596,7 +3641,7 @@ function adminFileUploadStatus_(data) {
     muteHttpExceptions: true,
     followRedirects: false
   });
-  return driveUploadResult_(res, data.upload_id);
+  return afterUploadStep_(driveUploadResult_(res, data.upload_id), s.order);
 }
 
 // ===================== НАДСИЛАННЯ ПІДРЯДНИКУ З КАБІНЕТУ =====================
