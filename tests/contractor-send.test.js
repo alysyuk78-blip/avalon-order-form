@@ -55,6 +55,7 @@ function makeDrive() {
       getFoldersByName: (nm) => iter(Object.values(folders).filter(x => x.parentId === id && x.name === nm && !x.trashed)),
       createFolder: (nm) => folder(nm, id),
       getFiles: () => iter(Object.values(files).filter(x => x.parentId === id)),
+      getFolders: () => iter(Object.values(folders).filter(x => x.parentId === id && !x.trashed)),
     };
     folders[id] = f;
     return f;
@@ -221,6 +222,7 @@ function testResumableUpload() {
   assert.equal(r2.file.via_link, false);
   assert.equal(calls[2].opts.headers["Content-Range"], "bytes 3145728-3145737/" + size);
   assert.equal(cache.get("upl_up-1"), null, "сесію прибрано після завершення");
+  assert.equal(props.getProperty("files_count_" + ORD), "1", "після завантаження скріпка знає про файл");
 
   // Після обриву зв'язку клієнт питає Диск, скільки вже дійшло.
   cache.put("upl_up-3", JSON.stringify({ uri: "https://upload.test/s3", order: ORD, size: 100, mime: "x" }));
@@ -289,6 +291,7 @@ function testSendFileToContractor() {
   const list = ctx.adminFileTrash_({ order_number: ORD, file_id: photo.id });
   assert.equal(photo.trashed, true);
   assert.deepEqual(list.files.map(f => f.id), [video.id]);
+  assert.equal(props.getProperty("files_count_" + ORD), "1", "після видалення лічильник зменшився");
 }
 
 // ── Повідомлення з CRM: нова гілка або оновлення в ту саму, статус «В роботі» ──
@@ -548,6 +551,41 @@ function testSheetStatusProcessing() {
   assert.equal(tg.filter((x) => x.method === "sendMessage").length, 1, "автоматом удруге не шлемо — гілка вже є");
 }
 
+// ── Лічильник файлів для скріпки на картці воронки ────────────────────────
+function testFilesCountBackfill() {
+  const drive = makeDrive();
+  const props = makeProps();
+  const ctx = load({ DriveApp: drive, PropertiesService: { getScriptProperties: () => props } });
+
+  // Файлів ще не було — теку не створюємо, лише ставимо позначку.
+  ctx.ensureFilesCountOnce_();
+  assert.equal(props.getProperty("FILES_COUNT_V1_READY"), "1");
+  assert.equal(Object.keys(drive._folders).length, 0, "порожню теку файлів не створюємо");
+
+  props.deleteProperty("FILES_COUNT_V1_READY");
+  const root = drive.createFolder("AVALON CRM — файли замовлень");
+  props.setProperty("FILES_ROOT_ID", root.id);
+  const a = root.createFolder(ORD);
+  const b = root.createFolder("ORD-110926-002");
+  drive._file("1.pdf", a.id, 10);
+  drive._file("2.jpg", a.id, 10);
+  drive._file("3.pdf", b.id, 10).trashed = true;
+  root.createFolder("Інша тека");
+  ctx.ensureFilesCountOnce_();
+  assert.equal(props.getProperty("files_count_" + ORD), "2");
+  assert.equal(props.getProperty("files_count_ORD-110926-002"), null, "файли в кошику не рахуються");
+
+  // Воронка бачить кількість без походу на Диск.
+  const groups = ctx.adminGroupOrders_([
+    { order_number: ORD, status: "Нове", quantity: 1, revenue: 100, profit: 10 },
+    { order_number: "ORD-110926-002", status: "Нове", quantity: 1, revenue: 100, profit: 10 },
+  ], []);
+  const byNum = {};
+  groups.forEach((g) => { byNum[g.order_number] = g; });
+  assert.equal(byNum[ORD].files_count, 2);
+  assert.equal(byNum["ORD-110926-002"].files_count, 0);
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
@@ -556,4 +594,5 @@ testContractorSendFlow();
 testStatusesMigrationAndCanon();
 testProcessingFlow();
 testSheetStatusProcessing();
+testFilesCountBackfill();
 console.log("contractor-send tests: OK");
