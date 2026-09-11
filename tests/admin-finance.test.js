@@ -63,6 +63,48 @@ function loadAppsScript(extra) {
 
 // Ковш, пергола, стенд — не кошики: ціну веде менеджер, тож розкладка «м² × ₴/м²»
 // у повідомленні підряднику для них не має зʼявлятися.
+// Підрядник має одразу бачити, скільки перерахувати Avalon, — без власних розрахунків.
+function testContractorMessageShowsMarginToPay() {
+  const context = loadAppsScript({ Utilities: { formatDate: () => "11.09.2026, 10:18" }, Date });
+  const plain = (o) => context.buildProductionMsg_(Object.assign({
+    order_number: "ORD-070926-003", first_name: "Олександр", phone: "+380000000000",
+  }, o)).replace(/<[^>]+>/g, "");
+  const other = (extra) => Object.assign({ product_type: "other", basket_model_name: "Ковш", quantity: 1 }, extra);
+
+  // Ковш через ТОВ, 30% від маржі — цифри з реального ORD-070926-003.
+  const tov = plain({ commission_pct: 30, payment_method: "На рахунок ТОВ",
+    items: [other({ cost_total: 9650, revenue: 13790, profit: 4140, commission: 1242 })] });
+  assert.ok(tov.includes("Ціна для клієнта: 13 790 ₴"));
+  assert.ok(tov.includes("Маржа: 13 790 − 9 650 = 4 140 ₴"), "маржа показана разом з арифметикою");
+  assert.ok(tov.includes("Комісія (30% від маржі): − 1 242 ₴"));
+  assert.ok(tov.includes("До виплати Avalon: 2 898 ₴"));
+  assert.ok(tov.includes("після повної оплати клієнтом"));
+  assert.equal(tov.split("Вартість виробнича").length - 1, 1, "собівартість не дублюється");
+  assert.ok(tov.indexOf("Оплата: На рахунок ТОВ") < tov.indexOf("МАРЖА AVALON"),
+    "спосіб оплати — у фінансах, а не всередині блоку маржі");
+
+  // Половина гривні: рядки мають сходитися до копійки.
+  const half = plain({ commission_pct: 30,
+    items: [other({ cost_total: 9650, revenue: 12545, profit: 2895, commission: 868.5 })] });
+  assert.ok(half.includes("− 868,50 ₴"));
+  assert.ok(half.includes("До виплати Avalon: 2 026,50 ₴"));
+
+  // Дропшиперська комісія (ставки AT немає) борг підрядника не зменшує і не показується.
+  const drop = plain({ items: [other({ cost_total: 3500, revenue: 5000, profit: 1500, commission: 150 })] });
+  assert.ok(!drop.includes("Комісія ("), "дропшиперську комісію підряднику не показуємо");
+  assert.ok(drop.includes("До виплати Avalon: 1 500 ₴"));
+
+  // Ціну ще не погоджено — блоку маржі немає.
+  const noPrice = plain({ items: [other({ cost_total: 0, revenue: 0, profit: 0, commission: 0 })] });
+  assert.ok(!noPrice.includes("МАРЖА AVALON"));
+
+  // Збиткова угода: виплати немає.
+  const loss = plain({ commission_pct: 30,
+    items: [other({ cost_total: 10000, revenue: 9000, profit: -1000, commission: 0 })] });
+  assert.ok(loss.includes("Маржі до виплати немає"));
+  assert.ok(!loss.includes("До виплати Avalon"));
+}
+
 function testProductionMessageSkipsBasketRateForOtherProducts() {
   const context = loadAppsScript({
     Utilities: { formatDate: () => "11.09.2026, 10:18" },
@@ -375,6 +417,7 @@ testContractorDebtIsNetOfCommission();
 testSheetCommissionFormula();
 testSheetMarginDue();
 testProductionMessageSkipsBasketRateForOtherProducts();
+testContractorMessageShowsMarginToPay();
 testStandardRecalculationClearsStaleDiscount();
 testPaymentDeletionChecksStableIdentity();
 testBootstrapReadsPaymentsOnce();

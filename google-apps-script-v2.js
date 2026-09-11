@@ -714,6 +714,19 @@ function esc_(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 function money_(v) { return String(Math.round(Number(v) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, " "); }
+/**
+ * Як money_, але з копійками, коли вони є (868,50). Комісія з маржі часто дає
+ * половину гривні — якщо її округлити, рядки «маржа − комісія = до виплати» у
+ * повідомленні підряднику перестануть сходитися на 1 ₴.
+ */
+function money2_(v) {
+  var n = Math.round((Number(v) || 0) * 100) / 100;
+  var sign = n < 0 ? "−" : "";
+  var abs = Math.abs(n);
+  var whole = Math.floor(abs);
+  var kop = Math.round((abs - whole) * 100);
+  return sign + money_(whole) + (kop ? "," + (kop < 10 ? "0" : "") + kop : "");
+}
 function fmtDate_(v) { var s = toISODate(v); if (!s) return ""; var p = s.split("-"); return p[2] + "." + p[1] + "." + p[0]; }
 function nowKyiv_() {
   var tz = "Europe/Kiev", now = new Date();
@@ -804,7 +817,7 @@ function checkContractorTelegram() {
 function buildOrderFromRows_(sh, orderNumber) {
   var last = sh.getLastRow();
   if (last < 2) return null;
-  var ncol = Math.min(44, sh.getMaxColumns()); // 44 = AR «Одиниця виміру»
+  var ncol = Math.min(COMMISSION_PCT_COL, sh.getMaxColumns()); // до AT «Комісія з маржі, %»
   var vals = sh.getRange(2, 1, last - 1, ncol).getValues();
   var order = null;
   for (var i = 0; i < vals.length; i++) {
@@ -815,7 +828,9 @@ function buildOrderFromRows_(sh, orderNumber) {
         order_number: r[0], first_name: r[4], last_name: "",
         phone: String(r[5] || "").replace(/^'/, ""), city: r[6], referral_source: r[3],
         transport: r[26], delivery_address: r[27],
-        delivery_date: toISODate(r[28]), payment_method: r[29], notes: "", noteLines: {}, items: []
+        delivery_date: toISODate(r[28]), payment_method: r[29], notes: "", noteLines: {}, items: [],
+        // Ставка комісії з маржі — спільна для замовлення (для розрахунку маржі підряднику).
+        commission_pct: ncol >= COMMISSION_PCT_COL ? cellNum_(r[COMMISSION_PCT_COL - 1]) : null
       };
     }
     String(r[31] || "").split(/\n+/).forEach(function (line) {
@@ -844,6 +859,8 @@ function buildOrderFromRows_(sh, orderNumber) {
       basket_type: r[7], construction_type: r[8], has_cover: String(r[8] || "").toLowerCase().indexOf("кришка") >= 0, color: r[9], pattern: r[10],
       ac_brand: r[11], ac_model: r[12], size_w: r[13], size_h: r[14], size_d: r[15],
       quantity: r[16], area_m2: r[17], cost_total: r[19],
+      // V виручка, W валовий прибуток, Y комісія — для блоку «маржа до виплати».
+      revenue: cellNum_(r[21]), profit: cellNum_(r[22]), commission: cellNum_(r[24]),
       bracket_length: lenMatch ? lenMatch[1].trim() : "",
       vibro_pads: /Віброподушки:\s*так/i.test(rowNotes)
     });
@@ -853,6 +870,45 @@ function buildOrderFromRows_(sh, orderNumber) {
     delete order.noteLines;
   }
   return order;
+}
+
+/**
+ * Готовий розрахунок маржі для підрядника: скільки заплатить клієнт, скільки
+ * лишається підряднику, скільки перерахувати Avalon. Щоб він не рахував сам і
+ * міг одразу переказати маржу, щойно клієнт оплатить повністю.
+ *
+ * Сума до виплати — через marginDue_: комісію зі ставки AT віднімаємо (її утримує
+ * підрядник), а дропшиперську — ні (її Avalon платить партнеру сама). Без виручки
+ * в таблиці (ціну ще не погоджено) блок не показуємо — нулі лише заплутали б.
+ */
+function marginForContractorBlock_(items, commissionPct) {
+  var revenue = 0, profit = 0, commission = 0, known = false;
+  (items || []).forEach(function (it) {
+    var rev = Number(it.revenue) || 0;
+    if (rev > 0) known = true;
+    revenue += rev;
+    profit += Number(it.profit) || 0;
+    commission += Number(it.commission) || 0;
+  });
+  if (!known) return { priceLine: "", section: "" };
+
+  // Собівартість беремо з тієї ж пари, що й маржа в таблиці (V − W): тоді рядок
+  // «ціна − собівартість = маржа» сходиться завжди, навіть якщо T не заповнена.
+  var cost = revenue - profit;
+  var priceLine = "• Ціна для клієнта: <b>" + money2_(revenue) + " ₴</b>\n";
+  var s = "\n🧮 <b>МАРЖА AVALON</b>\n";
+  s += "• Маржа: " + money2_(revenue) + " − " + money2_(cost) + " = <b>" + money2_(profit) + " ₴</b>\n";
+  if (profit <= 0) {
+    s += "• <b>Маржі до виплати немає</b> — ціна не покриває собівартість.\n";
+    return { priceLine: priceLine, section: s };
+  }
+  if (Number(commissionPct) > 0) {
+    var rate = Math.round(Number(commissionPct) * 100) / 100;
+    s += "• Комісія (" + String(rate).replace(".", ",") + "% від маржі): − " + money2_(commission) + " ₴\n";
+  }
+  s += "• <b>До виплати Avalon: " + money2_(marginDue_(profit, commission, commissionPct)) + " ₴</b>\n";
+  s += "  <i>після повної оплати клієнтом</i>\n";
+  return { priceLine: priceLine, section: s };
 }
 
 /** Повідомлення-специфікація для підрядника (4 секції) — дзеркало формату з api/order.js. */
@@ -934,6 +990,8 @@ function buildProductionMsg_(data) {
     m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
   });
 
+  // Ціна клієнта йде у «Фінанси», а маржа до виплати — окремим блоком після них.
+  var marginInfo = marginForContractorBlock_(items, data.commission_pct);
   m += "\n💰 <b>ФІНАНСИ</b>\n";
   var grand = 0;
   if (multi) {
@@ -949,7 +1007,9 @@ function buildProductionMsg_(data) {
     if (b.coverCost > 0) m += "• Верхня кришка: " + b.coverArea.toFixed(2) + " м² × <b>" + money_(b.coverRate) + " ₴/м²</b> = <b>" + money_(b.coverCost) + " ₴</b>\n";
     if (c > 0) m += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
   }
+  m += marginInfo.priceLine;
   if (data.payment_method) m += "• Оплата: <b>" + esc_(data.payment_method) + "</b>\n";
+  m += marginInfo.section;
 
   m += "\n🚚 <b>ДОСТАВКА</b>\n";
   var transport = data.transport === "Інше" ? (data.transport_custom || "") : (data.transport || "");
