@@ -26,8 +26,10 @@
   Файл перевіряється на належність до теки замовлення (`orderFile_`) — id із браузера.
 - Ідемпотентність: `contractor_send` / `contractor_send_file` з `request_id` через
   `withRequestCache_` (CacheService: «pending» → результат). `lib/admin-sheets.js`:
-  ці дії повторюються лише після обриву мережі; після тайм-ауту (55 с, `maxDuration` 60 с
-  у `vercel.json`) — ні, повторює клієнт тим самим `request_id`.
+  ці дії повторюються лише після обриву мережі; після тайм-ауту (55 с) — ні, повторює
+  клієнт тим самим `request_id`. ⚠️ НЕ додавайте блок `functions`/`maxDuration` у
+  `vercel.json`: розгортання з ним падає на «Deploying outputs» без тексту помилки. Функції
+  проєкту й так живуть довше 40 с (fluid compute), тож 55 с вкладаються в стандарт.
 - ⚠️ **Нове право Google Диска.** `DriveApp` у коді → Google вимагає разового дозволу
   власника (функція `authorizeDriveAccess` у редакторі). Порядок деплою: `clasp push` →
   власник запускає `authorizeDriveAccess` → `clasp deploy` → злиття PR у Vercel. Між push і
