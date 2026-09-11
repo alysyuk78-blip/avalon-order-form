@@ -739,7 +739,7 @@ function nowKyiv_() {
  * постить туди специфікацію і запам'ятовує message_thread_id (для нагадувань).
  * Якщо групу не налаштовано — нічого не робить. Помилки не валять замовлення.
  */
-function createOrderTopic_(data) {
+function createOrderTopic_(data, opts) {
   var p = PropertiesService.getScriptProperties();
   var chat = p.getProperty("TG_CONTRACTOR_CHAT");
   if (!p.getProperty("TG_TOKEN") || !chat) {
@@ -754,9 +754,10 @@ function createOrderTopic_(data) {
   var r = tgApi_("createForumTopic", { chat_id: chat, name: num || "Замовлення" });
   if (r && r.ok && r.result && r.result.message_thread_id) threadId = r.result.message_thread_id;
   // якщо Теми вимкнені / бот не адмін — threadId лишиться null, повідомлення піде в загальний чат
-  var sent = tgSendTo_(chat, buildProductionMsg_(data), threadId);
+  var sent = tgSendTo_(chat, buildProductionMsg_(data, opts), threadId);
   if (num && sent && sent.ok) {
     p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
+    p.setProperty("sent_" + num, nowIsoKyiv_());                        // коли — показуємо в CRM
   } else {
     // СТОРОЖ: підтверджене замовлення не дійшло підряднику — одразу сигнал власнику
     alertOwner_("Замовлення " + (num || "?") + " НЕ надіслано підряднику в групу.",
@@ -830,7 +831,11 @@ function buildOrderFromRows_(sh, orderNumber) {
         transport: r[26], delivery_address: r[27],
         delivery_date: toISODate(r[28]), payment_method: r[29], notes: "", noteLines: {}, items: [],
         // Ставка комісії з маржі — спільна для замовлення (для розрахунку маржі підряднику).
-        commission_pct: ncol >= COMMISSION_PCT_COL ? cellNum_(r[COMMISSION_PCT_COL - 1]) : null
+        commission_pct: ncol >= COMMISSION_PCT_COL ? cellNum_(r[COMMISSION_PCT_COL - 1]) : null,
+        // AL–AN: спосіб зв'язку, Telegram, e-mail — підряднику лише якщо дозволено пташками.
+        contact_method: String(r[37] || "").trim(),
+        contact_telegram: String(r[38] || "").replace(/^@/, "").trim(),
+        contact_email: String(r[39] || "").trim()
       };
     }
     String(r[31] || "").split(/\n+/).forEach(function (line) {
@@ -868,6 +873,13 @@ function buildOrderFromRows_(sh, orderNumber) {
   if (order) {
     order.notes = Object.keys(order.noteLines).join("\n");
     delete order.noteLines;
+    // Старі заявки з форми тримали контакти лише в примітках — дістаємо їх звідти.
+    if (!order.contact_method) {
+      var parsedContact = parseContactFromNotes_(order.notes);
+      order.contact_method = parsedContact.contact_method;
+      if (!order.contact_telegram) order.contact_telegram = parsedContact.contact_telegram;
+      if (!order.contact_email) order.contact_email = parsedContact.contact_email;
+    }
   }
   return order;
 }
@@ -912,7 +924,9 @@ function marginForContractorBlock_(items, commissionPct) {
 }
 
 /** Повідомлення-специфікація для підрядника (4 секції) — дзеркало формату з api/order.js. */
-function buildProductionMsg_(data) {
+function buildProductionMsg_(data, opts) {
+  // Які дані бачить підрядник — вирішує менеджер пташками в CRM (типово — все).
+  var show = contractorOptions_(opts);
   var items = (Array.isArray(data.items) && data.items.length) ? data.items : [{
     basket_type: data.basket_type, construction_type: data.construction_type,
     color: data.color, color_custom: data.color_custom, pattern: data.pattern, pattern_custom: data.pattern_custom,
@@ -946,10 +960,17 @@ function buildProductionMsg_(data) {
   var m = "📌 <b>Замовлення №" + esc_(data.order_number) + "</b>\n";
   m += "🕐 " + nowKyiv_() + "\n";
 
-  m += "\n👤 <b>ЗАМОВНИК</b>\n";
-  m += esc_(((data.first_name || "") + " " + (data.last_name || "")).trim()) + "\n";
-  if (data.phone) m += "📞 " + esc_(data.phone) + "\n";
-  if (data.city) m += "🏙 " + esc_(data.city) + "\n";
+  var who = [];
+  var fullName = ((data.first_name || "") + " " + (data.last_name || "")).trim();
+  if (show.client_name && fullName) who.push(esc_(fullName));
+  if (show.phone && data.phone) {
+    var via = data.contact_method === "viber" ? " · Viber" : data.contact_method === "whatsapp" ? " · WhatsApp" : "";
+    who.push("📞 " + esc_(data.phone) + via);
+  }
+  if (show.telegram && data.contact_telegram) who.push("✈️ Telegram: @" + esc_(String(data.contact_telegram).replace(/^@/, "")));
+  if (show.email && data.contact_email) who.push("✉️ " + esc_(data.contact_email));
+  if (show.city && data.city) who.push("🏙 " + esc_(data.city));
+  if (who.length) m += "\n👤 <b>ЗАМОВНИК</b>\n" + who.join("\n") + "\n";
 
   m += "\n🏭 <b>ВИРОБНИЦТВО</b>\n";
   items.forEach(function (it, i) {
@@ -991,7 +1012,9 @@ function buildProductionMsg_(data) {
   });
 
   // Ціна клієнта йде у «Фінанси», а маржа до виплати — окремим блоком після них.
-  var marginInfo = marginForContractorBlock_(items, data.commission_pct);
+  var marginInfo = show.finance
+    ? marginForContractorBlock_(items, data.commission_pct)
+    : { priceLine: "", section: "" };
   m += "\n💰 <b>ФІНАНСИ</b>\n";
   var grand = 0;
   if (multi) {
@@ -1014,13 +1037,16 @@ function buildProductionMsg_(data) {
   m += "\n🚚 <b>ДОСТАВКА</b>\n";
   var transport = data.transport === "Інше" ? (data.transport_custom || "") : (data.transport || "");
   if (transport) m += "• Спосіб: <b>" + esc_(transport) + "</b>\n";
-  if (data.delivery_address) m += "• Адреса: " + esc_(data.delivery_address) + "\n";
+  if (show.address && data.delivery_address) m += "• Адреса: " + esc_(data.delivery_address) + "\n";
   if (data.delivery_date) m += "• Дата: <b>" + fmtDate_(data.delivery_date) + "</b>\n";
-  if (data.notes) {
+  if (show.notes && data.notes) {
     // Рядки про довжину/віброподушки вже показані у кожній позиції окремо — у злитих
     // примітках вони лише дублюються (а в багатопозиційних могли б і заплутати).
+    // Контакти (Telegram / E-mail / Viber / WhatsApp) форма теж дописує в примітки —
+    // їх прибираємо завжди: підрядник бачить їх лише в «Замовнику», якщо дозволено.
     var noteLines = String(data.notes).split(/\n+/).filter(function (line) {
-      return String(line || "").trim() && !/^(Довжина кронштейнів|Віброподушки)\s*:/i.test(String(line).trim());
+      var t = String(line || "").trim();
+      return t && !/^(Довжина кронштейнів|Віброподушки|Telegram|E-mail|Viber|WhatsApp)\s*:/i.test(t);
     });
     if (noteLines.length) {
       m += "• Додаткова інформація:\n";
@@ -1028,7 +1054,7 @@ function buildProductionMsg_(data) {
     }
   }
 
-  m += "\n🔖 Джерело заявки: " + esc_(data.referral_source || "direct") + "\n";
+  // Джерело заявки підряднику не потрібне — воно лишається в CRM і в повідомленні власнику.
   return m;
 }
 function ymd_(d, tz) { return Utilities.formatDate(d, tz, "yyyy-MM-dd"); }
@@ -2399,9 +2425,12 @@ function adminMigrateLegacyPayments_(data) {
 var ADMIN_ORDER_COLS = 46; // A–AT (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT)
 var STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
 
-function applyStatusSideEffects_(sh, row, newStatus) {
+function applyStatusSideEffects_(sh, row, newStatus, opts) {
   if (!newStatus) return;
-  if (newStatus === "В роботі") {
+  // З CRM підрядник отримує замовлення лише кнопкою «Надіслати підряднику» — з
+  // пташками, що саме надсилати. Автовідправка при «В роботі» лишилась для зміни
+  // статусу прямо в таблиці та для старої версії кабінету (без цього прапорця).
+  if (newStatus === "В роботі" && !(opts && opts.skipContractorSend)) {
     var onum = sh.getRange(row, 1).getValue();
     if (onum && !PropertiesService.getScriptProperties().getProperty("thread_" + onum)) {
       var ord = buildOrderFromRows_(sh, onum);
@@ -2539,6 +2568,16 @@ function handleAdminRequest_(data) {
     if (action === "add_expense") return jsonOut(adminAddExpense_(data.expense || data));
     if (action === "update_expense") return jsonOut(adminUpdateExpense_(data.expense || data));
     if (action === "list_payouts") return jsonOut(adminListPayouts_());
+    // Файли замовлення (Google Диск) і надсилання підряднику з пташками. Без
+    // загального блокування: вони не пишуть у таблицю (крім короткого запису статусу).
+    if (action === "files_list") return jsonOut(adminFilesList_(data));
+    if (action === "file_upload_init") return jsonOut(adminFileUploadInit_(data));
+    if (action === "file_upload_chunk") return jsonOut(adminFileUploadChunk_(data));
+    if (action === "file_upload_status") return jsonOut(adminFileUploadStatus_(data));
+    if (action === "file_trash") return jsonOut(adminFileTrash_(data));
+    if (action === "contractor_preview") return jsonOut(adminContractorPreview_(data));
+    if (action === "contractor_send") return jsonOut(adminContractorSend_(data));
+    if (action === "contractor_send_file") return jsonOut(adminContractorSendFile_(data));
     if (action === "add_payout") return jsonOut(adminAddPayout_(data.payout || data));
     return jsonOut({ status: "error", message: "Unknown admin_action: " + action });
   } catch (err) {
@@ -2720,8 +2759,13 @@ function adminGroupOrders_(orders, payments) {
     if (!payByOrder[pmt.order_number]) payByOrder[pmt.order_number] = [];
     payByOrder[pmt.order_number].push(pmt);
   });
+  // Чи вже надсилали підряднику: thread_<ORD> ставиться при першому надсиланні.
+  var sentProps = {};
+  try { sentProps = PropertiesService.getScriptProperties().getProperties() || {}; } catch (propsErr) { sentProps = {}; }
   var groups = Object.keys(byNum).map(function (k) {
     var g = byNum[k];
+    g.contractor_sent = !!sentProps["thread_" + k];
+    g.contractor_sent_at = sentProps["sent_" + k] || "";
     g.margin_pct = g.revenue ? Math.round((g.profit / g.revenue) * 1000) / 10 : null;
     // Комісію утримує підрядник → його борг = валовий прибуток мінус комісія.
     g.margin_due = marginDue_(g.profit, g.commission, g.commission_pct);
@@ -2964,6 +3008,9 @@ function adminUpdateOrder_(data) {
   delete patch.admin_action;
   delete patch.admin_secret;
   delete patch.row;
+  // Нова CRM надсилає підряднику окремою кнопкою; стара (без прапорця) — як раніше.
+  var manualContractorSend = !!patch.manual_contractor_send;
+  delete patch.manual_contractor_send;
 
   if (patch.status != null && STATUSES.indexOf(String(patch.status).trim()) < 0) {
     throw new Error("Невідомий статус");
@@ -3057,7 +3104,7 @@ function adminUpdateOrder_(data) {
     var st = String(patch.status).trim();
     // Оновлюємо статус у всіх рядках цього замовлення.
     targetRows.forEach(function (r) { sh.getRange(r, 3).setValue(st); });
-    if (st !== oldStatus) applyStatusSideEffects_(sh, row, st);
+    if (st !== oldStatus) applyStatusSideEffects_(sh, row, st, { skipContractorSend: manualContractorSend });
   }
   if (patch.client_paid != null) {
     var cp = !!patch.client_paid;
@@ -3259,6 +3306,366 @@ function installAdminApiSecret(secret) {
   if (!secret) throw new Error("secret required");
   PropertiesService.getScriptProperties().setProperty("ADMIN_API_SECRET", String(secret));
   return { status: "ok", message: "ADMIN_API_SECRET set" };
+}
+
+// ===================== ФАЙЛИ ЗАМОВЛЕННЯ (Google Диск) =====================
+// Файли лежать на Диску власника: «AVALON CRM — файли замовлень / ORD-…».
+// Великі файли (відео) приходять частинами по 3 МБ: Vercel не пропускає запити
+// понад 4,5 МБ, тож браузер ріже файл, а сюди кожна частина доходить окремо й
+// дописується в сесію «resumable upload» Google Диска. Так розмір не впирається
+// ні в пам'ять скрипта, ні в ліміт Vercel.
+var FILES_ROOT_NAME = "AVALON CRM — файли замовлень";
+var FILE_MAX_BYTES = 300 * 1024 * 1024;       // 300 МБ на файл
+var UPLOAD_CHUNK_BYTES = 3 * 1024 * 1024;     // кратно 256 КБ — вимога Google Диска
+var TG_UPLOAD_MAX_BYTES = 48 * 1024 * 1024;   // бот Telegram приймає файли до 50 МБ
+var SENT_TAG = "avalon_sent_to_contractor:";  // позначка «надіслано» в описі файлу
+
+/**
+ * РАЗОВО після оновлення: дати скрипту доступ до Google Диска (файли замовлень).
+ * Редактор Apps Script → у списку функцій обери «authorizeDriveAccess» → ▶ Виконати → Дозволити.
+ */
+function authorizeDriveAccess() {
+  var root = filesRoot_();
+  Logger.log("Доступ до Google Диска є. Тека файлів замовлень: " + root.getUrl());
+}
+
+function orderNumberValid_(num) {
+  return /^ORD-\d{6}-\d{3}$/.test(String(num || "").trim());
+}
+
+function filesRoot_() {
+  var p = PropertiesService.getScriptProperties();
+  var id = p.getProperty("FILES_ROOT_ID");
+  if (id) {
+    try {
+      var saved = DriveApp.getFolderById(id);
+      if (!saved.isTrashed()) return saved;
+    } catch (e) { /* теку видалили — знайдемо або створимо заново */ }
+  }
+  var found = DriveApp.getFoldersByName(FILES_ROOT_NAME);
+  var root = found.hasNext() ? found.next() : DriveApp.createFolder(FILES_ROOT_NAME);
+  p.setProperty("FILES_ROOT_ID", root.getId());
+  return root;
+}
+
+/** Тека замовлення. create=false — лише знайти (для списку порожніх тек не створюємо). */
+function orderFolder_(num, create) {
+  num = String(num || "").trim();
+  if (!orderNumberValid_(num)) throw new Error("Невірний номер замовлення");
+  var p = PropertiesService.getScriptProperties();
+  var key = "files_folder_" + num;
+  var id = p.getProperty(key);
+  if (id) {
+    try {
+      var saved = DriveApp.getFolderById(id);
+      if (!saved.isTrashed()) return saved;
+    } catch (e) { /* теку прибрали вручну — шукаємо / створюємо заново */ }
+  }
+  var root = filesRoot_();
+  var found = root.getFoldersByName(num);
+  var folder = found.hasNext() ? found.next() : (create ? root.createFolder(num) : null);
+  if (folder) p.setProperty(key, folder.getId());
+  return folder;
+}
+
+function fileSizeLabel_(bytes) {
+  var n = Number(bytes) || 0;
+  if (n >= 1024 * 1024) return String(Math.round(n / 1024 / 1024 * 10) / 10).replace(".", ",") + " МБ";
+  return Math.max(1, Math.round(n / 1024)) + " КБ";
+}
+
+function fileToJson_(file) {
+  var m = String(file.getDescription() || "").match(/avalon_sent_to_contractor:(\S+)(\s+link)?/);
+  var size = Number(file.getSize()) || 0;
+  var created = file.getDateCreated();
+  return {
+    id: file.getId(),
+    name: file.getName(),
+    mime: file.getMimeType(),
+    size: size,
+    created: created ? created.toISOString() : "",
+    url: file.getUrl(),
+    sent_at: m ? m[1] : "",
+    sent_as_link: !!(m && m[2]),
+    via_link: size > TG_UPLOAD_MAX_BYTES     // Telegram не прийме — піде посиланням
+  };
+}
+
+/** Файл, що справді лежить у теці ЦЬОГО замовлення (id приходить із браузера). */
+function orderFile_(num, fileId) {
+  var folder = orderFolder_(num, false);
+  if (!folder) throw new Error("У замовлення немає файлів");
+  var file;
+  try { file = DriveApp.getFileById(String(fileId || "")); } catch (e) { throw new Error("Файл не знайдено"); }
+  var parents = file.getParents(), inFolder = false;
+  while (parents.hasNext()) {
+    if (parents.next().getId() === folder.getId()) { inFolder = true; break; }
+  }
+  if (!inFolder || file.isTrashed()) throw new Error("Файл не належить цьому замовленню");
+  return file;
+}
+
+function adminFilesList_(data) {
+  var folder = orderFolder_(data.order_number, false);
+  if (!folder) return { status: "ok", files: [] };
+  var out = [], it = folder.getFiles();
+  while (it.hasNext()) {
+    var f = it.next();
+    if (!f.isTrashed()) out.push(fileToJson_(f));
+  }
+  out.sort(function (a, b) { return String(a.created).localeCompare(String(b.created)); });
+  return { status: "ok", files: out };
+}
+
+function adminFileTrash_(data) {
+  var file = orderFile_(data.order_number, data.file_id);
+  file.setTrashed(true);   // у кошик Google Диска — його можна відновити ще 30 днів
+  return adminFilesList_(data);
+}
+
+function headerValue_(res, name) {
+  var h = (res.getAllHeaders ? res.getAllHeaders() : res.getHeaders()) || {};
+  var want = String(name).toLowerCase();
+  for (var k in h) {
+    if (String(k).toLowerCase() === want) return String(h[k]);
+  }
+  return "";
+}
+
+function adminFileUploadInit_(data) {
+  var num = String(data.order_number || "").trim();
+  // Імʼя не «чистимо» від дужок і пробілів — Диск їх приймає, а менеджер упізнає свій файл.
+  var name = String(data.name || "").replace(/[\u0000-\u001f\/\\]/g, "_").trim().slice(0, 200) || "файл";
+  var size = Math.floor(Number(data.size) || 0);
+  var mime = String(data.mime || "").trim() || "application/octet-stream";
+  if (!(size > 0)) throw new Error("Порожній файл");
+  if (size > FILE_MAX_BYTES) throw new Error("Файл більший за 300 МБ — завантажте його на Google Диск вручну й додайте посилання в примітки");
+  var folder = orderFolder_(num, true);
+  var res = UrlFetchApp.fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable", {
+    method: "post",
+    contentType: "application/json; charset=UTF-8",
+    headers: {
+      Authorization: "Bearer " + ScriptApp.getOAuthToken(),
+      "X-Upload-Content-Type": mime,
+      "X-Upload-Content-Length": String(size)
+    },
+    payload: JSON.stringify({ name: name, parents: [folder.getId()], mimeType: mime }),
+    muteHttpExceptions: true
+  });
+  var uri = headerValue_(res, "Location");
+  if (res.getResponseCode() !== 200 || !uri) {
+    throw new Error("Google Диск не відкрив завантаження (HTTP " + res.getResponseCode() + ")");
+  }
+  var uploadId = Utilities.getUuid();
+  CacheService.getScriptCache().put("upl_" + uploadId,
+    JSON.stringify({ uri: uri, order: num, size: size, mime: mime }), 21600);
+  return { status: "ok", upload_id: uploadId, chunk_size: UPLOAD_CHUNK_BYTES };
+}
+
+function uploadSession_(uploadId, orderNumber) {
+  var raw = CacheService.getScriptCache().get("upl_" + String(uploadId || ""));
+  if (!raw) throw new Error("Сесія завантаження застаріла — завантажте файл заново");
+  var s = JSON.parse(raw);
+  if (String(orderNumber || "").trim() !== s.order) throw new Error("Сесія завантаження належить іншому замовленню");
+  return s;
+}
+
+function driveUploadResult_(res, uploadId) {
+  var code = res.getResponseCode();
+  if (code === 200 || code === 201) {
+    var meta = {};
+    try { meta = JSON.parse(res.getContentText()); } catch (e) { meta = {}; }
+    if (!meta.id) throw new Error("Google Диск не повернув файл");
+    CacheService.getScriptCache().remove("upl_" + uploadId);
+    return { status: "ok", done: true, file: fileToJson_(DriveApp.getFileById(meta.id)) };
+  }
+  if (code === 308) {
+    // «Продовжуй»: Диск каже, скільки байтів уже має (якщо заголовка немає — нічого).
+    var m = headerValue_(res, "Range").match(/bytes=0-(\d+)/);
+    return { status: "ok", done: false, next_offset: m ? Number(m[1]) + 1 : 0 };
+  }
+  if (code === 404 || code === 410) throw new Error("Сесія завантаження на Google Диску завершилась — завантажте файл заново");
+  throw new Error("Google Диск відхилив частину файлу (HTTP " + code + ")");
+}
+
+function adminFileUploadChunk_(data) {
+  var s = uploadSession_(data.upload_id, data.order_number);
+  var offset = Math.floor(Number(data.offset) || 0);
+  var bytes = Utilities.base64Decode(String(data.data || ""));
+  if (!bytes.length) throw new Error("Порожня частина файлу");
+  var end = offset + bytes.length - 1;
+  if (offset < 0 || end >= s.size) throw new Error("Частина виходить за межі файлу");
+  var res = UrlFetchApp.fetch(s.uri, {
+    method: "put",
+    contentType: s.mime,
+    payload: bytes,
+    headers: { "Content-Range": "bytes " + offset + "-" + end + "/" + s.size },
+    muteHttpExceptions: true,
+    followRedirects: false      // 308 тут означає «продовжуй», а не редирект
+  });
+  return driveUploadResult_(res, data.upload_id);
+}
+
+/** Скільки байтів Диск уже має — щоб після обриву зв'язку продовжити, а не почати знову. */
+function adminFileUploadStatus_(data) {
+  var s = uploadSession_(data.upload_id, data.order_number);
+  var res = UrlFetchApp.fetch(s.uri, {
+    method: "put",
+    headers: { "Content-Range": "bytes */" + s.size },
+    muteHttpExceptions: true,
+    followRedirects: false
+  });
+  return driveUploadResult_(res, data.upload_id);
+}
+
+// ===================== НАДСИЛАННЯ ПІДРЯДНИКУ З КАБІНЕТУ =====================
+// Менеджер пташками обирає, що бачить підрядник. Номер, виріб, собівартість і
+// доставка йдуть завжди; джерело заявки — ніколи.
+var CONTRACTOR_OPTION_KEYS = ["client_name", "phone", "telegram", "email", "city", "address", "finance", "notes"];
+
+function contractorOptions_(raw) {
+  var o = {};
+  CONTRACTOR_OPTION_KEYS.forEach(function (k) {
+    var v = raw ? raw[k] : undefined;
+    o[k] = (v === undefined || v === null) ? true : (v === true || v === "true");
+  });
+  return o;
+}
+
+function nowIsoKyiv_() {
+  return Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd'T'HH:mm");
+}
+
+function contractorChat_() {
+  var p = PropertiesService.getScriptProperties();
+  var token = p.getProperty("TG_TOKEN"), chat = p.getProperty("TG_CONTRACTOR_CHAT");
+  if (!token || !chat) {
+    throw new Error("Telegram підрядника не налаштовано: немає " + (!token ? "TG_TOKEN" : "TG_CONTRACTOR_CHAT") + " у властивостях скрипта");
+  }
+  return { token: token, chat: chat };
+}
+
+/**
+ * Повтор того самого запиту (тайм-аут Vercel, подвійний клік) не шле підряднику
+ * дубль: поки перший ще триває — відповідаємо «pending», потім — збереженим результатом.
+ */
+function withRequestCache_(prefix, requestId, fn) {
+  var rid = String(requestId || "").trim().slice(0, 120);
+  var cache = CacheService.getScriptCache();
+  var key = prefix + rid;
+  if (rid) {
+    var prev = cache.get(key);
+    if (prev === "pending") return { status: "ok", pending: true };
+    if (prev) return JSON.parse(prev);
+    cache.put(key, "pending", 600);
+  }
+  try {
+    var out = fn();
+    if (rid) cache.put(key, JSON.stringify(out), 3600);
+    return out;
+  } catch (err) {
+    if (rid) cache.remove(key);
+    throw err;
+  }
+}
+
+/** Надіслане «Нове» замовлення стає «В роботі» (як і раніше при відправці підряднику). */
+function promoteToWork_(sh, num) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var last = sh.getLastRow();
+    if (last < 2) return false;
+    var vals = sh.getRange(2, 1, last - 1, 3).getValues();
+    var rows = [];
+    for (var i = 0; i < vals.length; i++) {
+      if (String(vals[i][0] || "").trim() === num && String(vals[i][2] || "").trim() === "Нове") rows.push(i + 2);
+    }
+    if (!rows.length) return false;
+    // setValue з коду не запускає onEdit — тож повторної автовідправки не буде.
+    rows.forEach(function (r) { sh.getRange(r, 3).setValue("В роботі"); });
+    notifyOwnerStatusChange_(sh, rows[0], "В роботі");
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function adminContractorPreview_(data) {
+  var num = String(data.order_number || "").trim();
+  if (!orderNumberValid_(num)) throw new Error("Невірний номер замовлення");
+  var ord = buildOrderFromRows_(adminOrdersSheet_(), num);
+  if (!ord) throw new Error("Замовлення " + num + " не знайдено");
+  var p = PropertiesService.getScriptProperties();
+  var update = !!p.getProperty("thread_" + num);
+  var text = (update ? "🔄 <b>ОНОВЛЕНО ЗАМОВЛЕННЯ</b>\n\n" : "") + buildProductionMsg_(ord, contractorOptions_(data.options));
+  return { status: "ok", text: text, update: update, sent_at: p.getProperty("sent_" + num) || "" };
+}
+
+function adminContractorSend_(data) {
+  var num = String(data.order_number || "").trim();
+  if (!orderNumberValid_(num)) throw new Error("Невірний номер замовлення");
+  return withRequestCache_("csend_", data.request_id, function () {
+    var sh = adminOrdersSheet_();
+    var ord = buildOrderFromRows_(sh, num);
+    if (!ord) throw new Error("Замовлення " + num + " не знайдено");
+    var opts = contractorOptions_(data.options);
+    var p = PropertiesService.getScriptProperties();
+    var thread = p.getProperty("thread_" + num);
+    var update = !!thread;
+    if (update) {
+      // Уже надсилали — оновлення йде в ту саму гілку замовлення.
+      var tg = contractorChat_();
+      var sent = tgSendTo_(tg.chat, "🔄 <b>ОНОВЛЕНО ЗАМОВЛЕННЯ</b>\n\n" + buildProductionMsg_(ord, opts),
+        thread === "0" ? null : thread);
+      if (!sent || !sent.ok) throw new Error("Telegram не прийняв повідомлення: " + telegramError_(sent));
+      p.setProperty("sent_" + num, nowIsoKyiv_());
+    } else {
+      var created = createOrderTopic_(ord, opts);
+      if (!created || !created.ok) throw new Error("Не надіслано підряднику: " + telegramError_(created));
+    }
+    return {
+      status: "ok",
+      update: update,
+      status_changed: promoteToWork_(sh, num),
+      sent_at: p.getProperty("sent_" + num) || ""
+    };
+  });
+}
+
+function adminContractorSendFile_(data) {
+  var num = String(data.order_number || "").trim();
+  if (!orderNumberValid_(num)) throw new Error("Невірний номер замовлення");
+  return withRequestCache_("csendf_", data.request_id, function () {
+    var file = orderFile_(num, data.file_id);
+    var thread = PropertiesService.getScriptProperties().getProperty("thread_" + num);
+    if (!thread) throw new Error("Спершу надішліть підряднику саме замовлення");
+    var tg = contractorChat_();
+    var threadId = thread === "0" ? null : thread;
+    var how = "file";
+    if (file.getSize() <= TG_UPLOAD_MAX_BYTES) {
+      var payload = { chat_id: String(tg.chat), document: file.getBlob().setName(file.getName()) };
+      if (threadId) payload.message_thread_id = String(threadId);
+      else payload.caption = "📎 " + num;          // без гілок — щоб було видно, до чого файл
+      var res = UrlFetchApp.fetch("https://api.telegram.org/bot" + tg.token + "/sendDocument", {
+        method: "post", payload: payload, muteHttpExceptions: true
+      });
+      var parsed;
+      try { parsed = JSON.parse(res.getContentText()); } catch (e) { parsed = { ok: false }; }
+      if (!parsed.ok) {
+        throw new Error("Telegram не прийняв файл «" + file.getName() + "»: " + (parsed.description || ("HTTP " + res.getResponseCode())));
+      }
+    } else {
+      // Бот Telegram не завантажує файли понад 50 МБ — підрядник отримає посилання на Диск.
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      var sentLink = tgSendTo_(tg.chat, "📎 <b>" + esc_(file.getName()) + "</b> (" + fileSizeLabel_(file.getSize()) + ")\n"
+        + "Файл завеликий для Telegram — відкрити на Google Диску:\n" + file.getUrl(), threadId);
+      if (!sentLink || !sentLink.ok) throw new Error("Telegram не прийняв посилання на файл: " + telegramError_(sentLink));
+      how = "link";
+    }
+    file.setDescription(SENT_TAG + nowIsoKyiv_() + (how === "link" ? " link" : ""));
+    return { status: "ok", how: how, file: fileToJson_(file) };
+  });
 }
 
 function jsonOut(obj) {

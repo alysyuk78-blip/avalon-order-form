@@ -524,6 +524,94 @@
     .margin-calc-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; color: var(--ink); }
     .margin-calc-note { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
 
+    /* ── Файли замовлення ── */
+    .files-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .file-add {
+      width: 30px; height: 30px; flex: none; border: 0; border-radius: 50%;
+      background: var(--brand); color: #fff; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .file-add svg { width: 17px; height: 17px; }
+    .file-drop {
+      width: 100%; display: grid; justify-items: center; gap: 4px; margin: 4px 0 10px; padding: 16px 12px;
+      border: 1.5px dashed rgba(56,62,66,.28); border-radius: 12px; background: #fafbfb;
+      color: var(--muted); font: inherit; font-size: 13px; text-align: center; cursor: pointer;
+    }
+    .file-drop:hover { border-color: var(--brand); color: var(--ink); }
+    .file-drop svg { width: 20px; height: 20px; }
+    .file-drop b { color: var(--ink); }
+    .file-drop small { font-size: 11.5px; }
+    .files-empty { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; }
+    .file-list { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; }
+    .file-row {
+      display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+      padding: 6px 6px 6px 10px; border-radius: 10px; background: var(--control-bg);
+    }
+    .file-row-icon { width: 20px; height: 20px; color: var(--brand-soft); }
+    .file-row-main { min-width: 0; display: grid; gap: 1px; }
+    .file-row-main a {
+      color: var(--ink); font-size: 13px; font-weight: 650; text-decoration: none;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .file-row-main a:hover { text-decoration: underline; }
+    .file-row-meta { color: var(--muted); font-size: 11.5px; }
+    .upload-row { margin-bottom: 6px; padding: 8px 10px; border-radius: 10px; background: var(--control-bg); font-size: 12.5px; }
+    .upload-row-top { display: flex; justify-content: space-between; gap: 10px; }
+    .upload-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+    .upload-bar { height: 4px; margin-top: 6px; border-radius: 4px; background: rgba(0,0,0,.08); overflow: hidden; }
+    .upload-bar i { display: block; height: 100%; background: var(--ok); transition: width .3s ease; }
+    .upload-row.failed .upload-bar i { background: var(--danger); }
+    .upload-error { margin-top: 6px; color: var(--danger); line-height: 1.4; }
+    .link-btn {
+      border: 0; background: none; padding: 0; cursor: pointer;
+      color: var(--brand); font: inherit; font-weight: 700; text-decoration: underline;
+    }
+    .link-btn:disabled { opacity: .5; cursor: default; }
+    /* Файл перетягують на картку: підказка поверх усієї картки (картка прокручується). */
+    .drawer-drop-overlay {
+      position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); z-index: 30;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+      background: rgba(255,255,255,.92); border: 2px dashed var(--brand); border-radius: 4px;
+      color: var(--ink); font-size: 15px; font-weight: 700; pointer-events: none;
+    }
+    .drawer-drop-overlay svg { width: 30px; height: 30px; }
+
+    /* ── Надіслати підряднику ── */
+    .contractor-send {
+      margin: 0 -10px 14px; padding: 0 10px 12px; border-radius: 14px;
+      transition: background .4s ease, box-shadow .4s ease;
+    }
+    .contractor-send.highlight { background: rgba(59,130,246,.07); box-shadow: 0 0 0 2px rgba(59,130,246,.35); }
+    .send-status { margin: 0 0 10px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+    .send-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin-bottom: 10px; }
+    .send-group { display: grid; gap: 2px; align-content: start; min-width: 0; }
+    .send-files { grid-column: 1 / -1; }
+    .send-group-title { margin-bottom: 2px; color: var(--muted); font-size: 11.5px; font-weight: 700; }
+    .send-check { display: flex; align-items: center; gap: 8px; min-height: 30px; min-width: 0; font-size: 13.5px; cursor: pointer; }
+    .send-check input { width: 18px; height: 18px; flex: none; accent-color: var(--brand); }
+    .send-check small { flex: none; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+    .send-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .send-note { margin: 0 0 10px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .send-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .send-actions .btn { display: inline-flex; align-items: center; gap: 7px; }
+    .send-actions .btn svg { width: 16px; height: 16px; flex: none; }
+    .send-phase { margin-top: 10px; color: var(--brand-soft); font-size: 13px; font-weight: 650; }
+    .send-result {
+      margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+      background: rgba(27,122,74,.09); color: var(--ok); font-size: 13px; line-height: 1.5;
+    }
+    .send-result.partial { background: rgba(154,103,0,.10); color: var(--warn); }
+    .send-result .failed { color: var(--danger); }
+    .send-result .link-btn { margin-top: 4px; }
+    /* Перегляд — схожий на повідомлення в Telegram. */
+    .send-preview {
+      margin-top: 10px; padding: 12px 14px; border-radius: 14px 14px 14px 4px;
+      background: #eef3f8; color: var(--ink); font-size: 13px; line-height: 1.5;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .card-payment.unsent { background: rgba(59,130,246,.10); color: #1d4ed8; }
+    @media (max-width: 520px) { .send-options { grid-template-columns: 1fr; } }
+
     .login-credits { margin-top: 14px; font-size: 11px; color: #9aa49d; text-align: center; }
     .login-credits a { color: #9aa49d; text-decoration: underline; }
 

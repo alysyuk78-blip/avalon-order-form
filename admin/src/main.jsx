@@ -5,16 +5,26 @@ import {
   Check,
   ClipboardList,
   Columns3,
+  Eye,
+  EyeOff,
+  File as FileGeneric,
+  FileArchive,
+  FileImage,
   FilePenLine,
+  FileSpreadsheet,
+  FileText,
+  FileVideo,
   Info,
   List,
   ListFilter,
   LogOut,
   PanelTopClose,
   PanelTopOpen,
+  Paperclip,
   Plus,
   RefreshCw,
   Search,
+  Send,
   Truck,
   UsersRound,
 } from 'lucide-react';
@@ -997,9 +1007,8 @@ import finance from '../../lib/admin-finance.js';
       if (toStatus === "Скасовано") {
         return window.confirm("Скасувати замовлення?");
       }
-      if (toStatus === "В роботі" && fromStatus === "Нове") {
-        return window.confirm("Перевести в роботу? Підряднику може надійти повідомлення в Telegram.");
-      }
+      // «В роботі» з CRM більше нічого не надсилає сам: підряднику — лише кнопкою з
+      // пташками, що саме показувати. Тож і попереджати тут нема про що.
       return true;
     }
 
@@ -1214,12 +1223,512 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
-    function OrderDrawer({ token, orderNumber, initialData, snapshotLoading, onClose, onChanged }) {
+    // ── Файли замовлення та надсилання підряднику ─────────────────────────────
+    const FILE_MAX_BYTES = 300 * 1024 * 1024;
+    // 3 МБ сирих байтів ≈ 4 МБ у base64 — під ліміт Vercel 4,5 МБ на запит. Кратно
+    // 256 КБ: Google Диск приймає проміжні частини лише такого розміру.
+    const UPLOAD_CHUNK = 3 * 1024 * 1024;
+    const SEND_OPTIONS_KEY = "avalon.contractorSendOptions.v1";
+    const SEND_OPTION_LABELS = [
+      { key: "client_name", label: "Імʼя замовника", group: "Замовник" },
+      { key: "phone", label: "Телефон", group: "Замовник" },
+      { key: "telegram", label: "Telegram", group: "Замовник" },
+      { key: "email", label: "E-mail", group: "Замовник" },
+      { key: "city", label: "Місто", group: "Замовник" },
+      { key: "address", label: "Адреса доставки", group: "Доставка" },
+      { key: "finance", label: "Ціна для клієнта і маржа", group: "Фінанси" },
+      { key: "notes", label: "Примітки", group: "Примітки" },
+    ];
+    const SEND_GROUPS = ["Замовник", "Доставка", "Фінанси", "Примітки"];
+
+    const pause = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    // Вибір пташок запамʼятовуємо: якщо зазвичай контакти не надсилаєте — наступного
+    // разу вони вже будуть зняті. Перед кожним надсиланням пташки видно.
+    function readSendOptions() {
+      const out = {};
+      SEND_OPTION_LABELS.forEach(o => { out[o.key] = true; });
+      try {
+        const saved = JSON.parse(localStorage.getItem(SEND_OPTIONS_KEY) || "{}");
+        SEND_OPTION_LABELS.forEach(o => { if (typeof saved[o.key] === "boolean") out[o.key] = saved[o.key]; });
+      } catch (e) { /* сховище недоступне — типові пташки */ }
+      return out;
+    }
+    function saveSendOptions(opts) {
+      try { localStorage.setItem(SEND_OPTIONS_KEY, JSON.stringify(opts)); } catch (e) { /* не критично */ }
+    }
+
+    function fileSizeLabel(bytes) {
+      const n = Number(bytes) || 0;
+      if (n >= 1024 * 1024) return (Math.round(n / 1024 / 1024 * 10) / 10).toLocaleString("uk-UA") + " МБ";
+      return Math.max(1, Math.round(n / 1024)).toLocaleString("uk-UA") + " КБ";
+    }
+    function fileWord(n) {
+      const d = n % 10, h = n % 100;
+      if (d === 1 && h !== 11) return "файл";
+      if (d >= 2 && d <= 4 && (h < 12 || h > 14)) return "файли";
+      return "файлів";
+    }
+    function fileIconFor(mime, name) {
+      const m = String(mime || "");
+      const ext = String(name || "").split(".").pop().toLowerCase();
+      if (m.startsWith("image/")) return FileImage;
+      if (m.startsWith("video/")) return FileVideo;
+      if (/sheet|excel|csv/.test(m) || ["xlsx", "xls", "csv", "ods"].includes(ext)) return FileSpreadsheet;
+      if (m === "application/pdf" || /word|text/.test(m) || ["pdf", "doc", "docx", "txt"].includes(ext)) return FileText;
+      if (/zip|rar|7z|compressed/.test(m) || ["zip", "rar", "7z"].includes(ext)) return FileArchive;
+      return FileGeneric;
+    }
+    // «2026-09-11T12:30» (київський час зі скрипта) → «11.09 о 12:30».
+    function sentLabel(stamp) {
+      const m = String(stamp || "").match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
+      return m ? m[3] + "." + m[2] + (m[4] ? " о " + m[4] + ":" + m[5] : "") : "";
+    }
+    function createdLabel(iso) {
+      const d = new Date(iso);
+      return isNaN(d.getTime()) ? "" : d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit" });
+    }
+    function hasDraggedFiles(e) {
+      return Array.from((e.dataTransfer && e.dataTransfer.types) || []).includes("Files");
+    }
+    function blobToBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || "").replace(/^data:[^,]*,/, ""));
+        reader.onerror = () => reject(reader.error || new Error("Не вдалося прочитати файл"));
+        reader.readAsDataURL(blob);
+      });
+    }
+    // Перегляд повідомлення: Telegram-HTML (лише <b>/<i>) → React без innerHTML.
+    function renderTgHtml(html) {
+      const out = [];
+      let bold = false, italic = false;
+      String(html || "").split(/(<\/?[bi]>)/).forEach((part, i) => {
+        if (part === "<b>") { bold = true; return; }
+        if (part === "</b>") { bold = false; return; }
+        if (part === "<i>") { italic = true; return; }
+        if (part === "</i>") { italic = false; return; }
+        if (!part) return;
+        const text = part.replace(/<[^>]*>/g, "")
+          .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+        let node = text;
+        if (italic) node = <em>{node}</em>;
+        if (bold) node = <strong>{node}</strong>;
+        out.push(<React.Fragment key={i}>{node}</React.Fragment>);
+      });
+      return out;
+    }
+
+    function OrderFilesSection({ files, filesError, uploads, onAdd, onRemove, onRetry, onDismiss }) {
+      const inputRef = useRef(null);
+      const list = files || [];
+      const pick = () => { if (inputRef.current) inputRef.current.click(); };
+      return (
+        <section className="files-section" aria-labelledby="files-section-title">
+          <div className="section-title files-title" id="files-section-title">
+            <span>Файли{list.length ? " (" + list.length + ")" : ""}</span>
+            <button type="button" className="file-add" aria-label="Додати файли" data-tooltip="Додати файли" onClick={pick}>
+              <Plus aria-hidden="true" />
+            </button>
+          </div>
+          <input ref={inputRef} type="file" multiple hidden
+            onChange={e => { onAdd(e.target.files); e.target.value = ""; }} />
+          <button type="button" className="file-drop" onClick={pick}>
+            <Paperclip aria-hidden="true" />
+            <span><b>Перетягніть файли сюди</b> або натисніть «+»</span>
+            <small>Фото, PDF, Excel, відео — будь-який формат, до 300 МБ</small>
+          </button>
+          {uploads.map(u => (
+            <div key={u.key} className={"upload-row" + (u.error ? " failed" : "")}>
+              <div className="upload-row-top">
+                <span className="upload-name">{u.name}</span>
+                <span>{u.error ? "не завантажено" : Math.round((u.progress || 0) * 100) + "%"}</span>
+              </div>
+              <div className="upload-bar"><i style={{ width: Math.round((u.error ? 1 : (u.progress || 0)) * 100) + "%" }} /></div>
+              {u.error && (
+                <div className="upload-error">
+                  {u.error}{" "}
+                  <button type="button" className="link-btn" onClick={() => onRetry(u)}>Повторити</button>
+                  {" · "}
+                  <button type="button" className="link-btn" onClick={() => onDismiss(u.key)}>Прибрати</button>
+                </div>
+              )}
+            </div>
+          ))}
+          {files === null && <p className="files-empty">Завантаження списку файлів…</p>}
+          {filesError && <div className="error">{filesError}</div>}
+          {list.length > 0 && (
+            <ul className="file-list">
+              {list.map(f => {
+                const TypeIcon = fileIconFor(f.mime, f.name);
+                return (
+                  <li key={f.id} className="file-row">
+                    <TypeIcon className="file-row-icon" aria-hidden="true" />
+                    <div className="file-row-main">
+                      <a href={f.url} target="_blank" rel="noopener noreferrer">{f.name}</a>
+                      <span className="file-row-meta">
+                        {fileSizeLabel(f.size)}
+                        {f.created ? " · " + createdLabel(f.created) : ""}
+                        {f.sent_at ? " · надіслано " + sentLabel(f.sent_at) : ""}
+                      </span>
+                    </div>
+                    <IconButton icon="trash" label={"Прибрати «" + f.name + "»"} onClick={() => onRemove(f)} />
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      );
+    }
+
+    function ContractorSendSection({ token, orderNumber, order, items, files, sectionRef, highlight, onSent }) {
+      const [opts, setOpts] = useState(readSendOptions);
+      const [picked, setPicked] = useState({});           // явний вибір файлів: id → true/false
+      const [phase, setPhase] = useState("");             // що відбувається просто зараз
+      const [result, setResult] = useState(null);
+      const [error, setError] = useState("");
+      const [previewOpen, setPreviewOpen] = useState(false);
+      const [preview, setPreview] = useState({ text: "", error: "" });
+      const pendingRef = useRef({ fp: "", rid: "" });
+      const previewSeq = useRef(0);
+
+      const rows = items || [];
+      // Показуємо лише ті пташки, для яких у замовленні взагалі є дані.
+      const available = {
+        client_name: !!order.client,
+        phone: !!order.phone,
+        telegram: !!order.contact_telegram,
+        email: !!order.contact_email,
+        city: !!order.city,
+        address: rows.some(it => String(it.address || "").trim()),
+        finance: Number(order.revenue) > 0,
+        notes: rows.some(it => String(it.notes || "").trim()),
+      };
+      const shown = SEND_OPTION_LABELS.filter(o => available[o.key]);
+      const options = {};
+      SEND_OPTION_LABELS.forEach(o => { options[o.key] = !!opts[o.key]; });
+      const optionsKey = JSON.stringify(options);
+
+      const fileList = files || [];
+      // Типово позначені ті файли, що підрядник ще не отримував.
+      const isPicked = (f) => (picked[f.id] !== undefined ? picked[f.id] : !f.sent_at);
+      const chosen = fileList.filter(isPicked);
+      const sent = !!order.contractor_sent;
+
+      function toggle(key) {
+        const next = { ...opts, [key]: !opts[key] };
+        setOpts(next);
+        saveSendOptions(next);
+      }
+
+      useEffect(() => {
+        if (!previewOpen) return undefined;
+        const seq = ++previewSeq.current;
+        const timer = setTimeout(async () => {
+          try {
+            const r = await api("/api/admin/order?resource=contractor", {
+              method: "POST", token,
+              body: { action: "preview", order_number: orderNumber, options: JSON.parse(optionsKey) },
+            });
+            if (seq === previewSeq.current) setPreview({ text: r.text || "", error: "" });
+          } catch (e) {
+            if (seq === previewSeq.current) setPreview({ text: "", error: e.message || "Не вдалося сформувати перегляд" });
+          }
+        }, 350);
+        return () => clearTimeout(timer);
+      }, [previewOpen, optionsKey, orderNumber, sent]);
+
+      // Повтор із тим самим request_id безпечний: скрипт не надішле дубль, а поки
+      // перший запит ще триває — відповідає «pending». Повторюємо лише тайм-аути й
+      // обрив мережі; відмову Telegram показуємо одразу.
+      async function callContractor(body) {
+        let transientRetries = 0;
+        for (let i = 0; i < 40; i += 1) {
+          let r;
+          try {
+            r = await api("/api/admin/order?resource=contractor", { method: "POST", token, body });
+          } catch (e) {
+            const transient = e.status === 504 || e.status === undefined;
+            if (!transient || transientRetries >= 4) throw e;
+            transientRetries += 1;
+            await pause(4000);
+            continue;
+          }
+          if (!r || !r.pending) return r;
+          await pause(3000);
+        }
+        throw new Error("Надсилання триває задовго — перевірте чат підрядника й оновіть картку");
+      }
+
+      async function sendFiles(targets, rid, lines, failed) {
+        for (let i = 0; i < targets.length; i += 1) {
+          const f = targets[i];
+          setPhase("Надсилаю файл " + (i + 1) + " з " + targets.length + ": " + f.name);
+          try {
+            const fr = await callContractor({
+              action: "send_file", order_number: orderNumber, file_id: f.id, request_id: rid + ":" + f.id,
+            });
+            lines.push("📎 " + f.name + (fr && fr.how === "link" ? " — посиланням на Google Диск" : ""));
+          } catch (e) {
+            failed.push({ id: f.id, name: f.name, error: e.message || "помилка" });
+          }
+        }
+      }
+
+      async function send() {
+        setError("");
+        setResult(null);
+        const fp = JSON.stringify({ o: options, f: chosen.map(f => f.id) });
+        if (pendingRef.current.fp !== fp) pendingRef.current = { fp, rid: newRequestId() };
+        const rid = pendingRef.current.rid;
+        const lines = [], failed = [];
+        try {
+          setPhase("Надсилаю повідомлення…");
+          const r = await callContractor({ action: "send", order_number: orderNumber, options, request_id: rid });
+          lines.push(r.update ? "Оновлення замовлення надіслано" : "Замовлення надіслано підряднику");
+          if (r.status_changed) lines.push("Статус змінено: «Нове» → «В роботі»");
+          await sendFiles(chosen, rid, lines, failed);
+          pendingRef.current = { fp: "", rid: "" };
+          setPicked({});
+          setResult({ lines, failed });
+          if (onSent) onSent();
+        } catch (e) {
+          setError(e.message || "Не вдалося надіслати підряднику");
+        } finally {
+          setPhase("");
+        }
+      }
+
+      async function retryFailed() {
+        const failedIds = ((result && result.failed) || []).map(x => x.id);
+        const targets = fileList.filter(f => failedIds.includes(f.id));
+        if (!targets.length) return;
+        const lines = [], failed = [];
+        try {
+          await sendFiles(targets, newRequestId(), lines, failed);
+          setResult({ lines, failed });
+          if (onSent) onSent();
+        } finally {
+          setPhase("");
+        }
+      }
+
+      return (
+        <section ref={sectionRef} className={"contractor-send" + (highlight ? " highlight" : "")} aria-labelledby="contractor-send-title">
+          <div className="section-title" id="contractor-send-title">Надіслати підряднику</div>
+          <p className="send-status">
+            {sent
+              ? "Уже надсилалось" + (order.contractor_sent_at ? " " + sentLabel(order.contractor_sent_at) : "")
+                + ". Наступне піде в ту саму гілку як «Оновлено замовлення»."
+              : "Ще не надсилалось. Позначте, що саме побачить підрядник."}
+          </p>
+          <div className="send-options">
+            {SEND_GROUPS.map(groupName => {
+              const groupItems = shown.filter(o => o.group === groupName);
+              if (!groupItems.length) return null;
+              return (
+                <div className="send-group" key={groupName}>
+                  <div className="send-group-title">{groupName}</div>
+                  {groupItems.map(o => (
+                    <label className="send-check" key={o.key}>
+                      <input type="checkbox" checked={!!opts[o.key]} onChange={() => toggle(o.key)} />
+                      <span>{o.label}</span>
+                    </label>
+                  ))}
+                </div>
+              );
+            })}
+            {fileList.length > 0 && (
+              <div className="send-group send-files">
+                <div className="send-group-title">Файли</div>
+                {fileList.map(f => (
+                  <label className="send-check" key={f.id}>
+                    <input type="checkbox" checked={isPicked(f)}
+                      onChange={() => setPicked(cur => ({ ...cur, [f.id]: !isPicked(f) }))} />
+                    <span className="send-file-name">{f.name}</span>
+                    <small>
+                      {fileSizeLabel(f.size)}
+                      {f.via_link ? " · піде посиланням" : ""}
+                      {f.sent_at ? " · уже надсилався" : ""}
+                    </small>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <p className="send-note">
+            Завжди надсилається: номер замовлення, виріб і характеристики, собівартість, спосіб і дата доставки.
+            Джерело заявки підряднику не надсилається.
+          </p>
+          <div className="send-actions">
+            <button className="btn" type="button" disabled={!!phase} onClick={send}>
+              <Send aria-hidden="true" />
+              {sent ? "Надіслати оновлення" : "Надіслати підряднику"}
+              {chosen.length ? " + " + chosen.length + " " + fileWord(chosen.length) : ""}
+            </button>
+            <button className="btn secondary" type="button" onClick={() => setPreviewOpen(v => !v)}>
+              {previewOpen ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+              {previewOpen ? "Сховати перегляд" : "Як побачить підрядник"}
+            </button>
+          </div>
+          {phase && <div className="send-phase" role="status">{phase}</div>}
+          {error && <div className="error">{error}</div>}
+          {result && (
+            <div className={"send-result" + (result.failed.length ? " partial" : "")} role="status">
+              {result.lines.map((line, i) => <div key={i}>✓ {line}</div>)}
+              {result.failed.map(f => <div key={f.id} className="failed">✕ {f.name}: {f.error}</div>)}
+              {result.failed.length > 0 && (
+                <button type="button" className="link-btn" disabled={!!phase} onClick={retryFailed}>
+                  Надіслати ці файли ще раз
+                </button>
+              )}
+            </div>
+          )}
+          {previewOpen && (
+            <div className="send-preview" aria-live="polite">
+              {preview.error
+                ? <span className="error">{preview.error}</span>
+                : (preview.text ? renderTgHtml(preview.text) : "Формую повідомлення…")}
+            </div>
+          )}
+        </section>
+      );
+    }
+
+    function OrderDrawer({ token, orderNumber, initialData, snapshotLoading, onClose, onChanged, focusSend }) {
       const [data, setData] = useState(initialData || null);
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
       const [form, setForm] = useState(null);
       const [itemIdx, setItemIdx] = useState(0);
+
+      // ── Файли замовлення (Google Диск) і блок «Надіслати підряднику» ──
+      const [files, setFiles] = useState(null);
+      const [filesError, setFilesError] = useState("");
+      const [uploads, setUploads] = useState([]);
+      const [fileDrag, setFileDrag] = useState(false);
+      const [sendHighlight, setSendHighlight] = useState(false);
+      const uploadQueueRef = useRef(Promise.resolve());
+      const sendSectionRef = useRef(null);
+
+      async function loadFiles() {
+        setFilesError("");
+        try {
+          const res = await api("/api/admin/order?resource=files&order_number=" + encodeURIComponent(orderNumber), { token });
+          setFiles(res.files || []);
+        } catch (e) {
+          setFiles(cur => cur || []);
+          setFilesError(e.message || "Не вдалося завантажити список файлів");
+        }
+      }
+      useEffect(() => {
+        setFiles(null);
+        setUploads([]);
+        loadFiles();
+      }, [orderNumber]);
+
+      function focusSendPanel() {
+        setSendHighlight(true);
+        setTimeout(() => {
+          if (sendSectionRef.current) sendSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 80);
+        setTimeout(() => setSendHighlight(false), 2600);
+      }
+      const formReady = !!form;
+      useEffect(() => {
+        if (focusSend && formReady) focusSendPanel();
+      }, [focusSend, formReady, orderNumber]);
+
+      // Файл іде частинами: після обриву зв'язку питаємо Диск, скільки він уже має,
+      // і продовжуємо з того місця, а не з нуля.
+      async function uploadOne(file, key) {
+        const setProgress = (progress) => setUploads(list => list.map(u => u.key === key ? { ...u, progress } : u));
+        if (!file.size) throw new Error("Порожній файл");
+        if (file.size > FILE_MAX_BYTES) {
+          throw new Error("Файл більший за 300 МБ — завантажте його на Google Диск вручну й додайте посилання в примітки");
+        }
+        const init = await api("/api/admin/order?resource=files", {
+          method: "POST", token,
+          body: { action: "init", order_number: orderNumber, name: file.name, mime: file.type || "", size: file.size },
+        });
+        let offset = 0, done = null, failures = 0;
+        while (!done) {
+          try {
+            const data64 = await blobToBase64(file.slice(offset, Math.min(offset + UPLOAD_CHUNK, file.size)));
+            const r = await api("/api/admin/order?resource=files", {
+              method: "POST", token,
+              body: { action: "chunk", order_number: orderNumber, upload_id: init.upload_id, offset, data: data64 },
+            });
+            failures = 0;
+            if (r.done) done = r.file;
+            else offset = Number(r.next_offset) || 0;
+          } catch (e) {
+            failures += 1;
+            if (failures > 3) throw e;
+            await pause(1500 * failures);
+            const st = await api("/api/admin/order?resource=files", {
+              method: "POST", token,
+              body: { action: "status", order_number: orderNumber, upload_id: init.upload_id },
+            }).catch(() => null);
+            if (st && st.done) done = st.file;
+            else if (st) offset = Number(st.next_offset) || 0;
+          }
+          setProgress(done ? 1 : offset / file.size);
+        }
+        return done;
+      }
+
+      // Файли вантажимо по черзі: так сесії Диска не змагаються і прогрес зрозумілий.
+      function enqueueUpload(entry) {
+        uploadQueueRef.current = uploadQueueRef.current.then(async () => {
+          try {
+            const saved = await uploadOne(entry.file, entry.key);
+            setFiles(cur => (cur || []).filter(x => x.id !== saved.id).concat(saved));
+            setUploads(list => list.filter(u => u.key !== entry.key));
+          } catch (e) {
+            setUploads(list => list.map(u => u.key === entry.key
+              ? { ...u, error: e.message || "Не вдалося завантажити файл" } : u));
+          }
+        });
+      }
+      function addFiles(fileList) {
+        const picked = Array.from(fileList || []);
+        if (!picked.length) return;
+        const entries = picked.map((file, i) => ({
+          key: Date.now().toString(36) + "-" + i + "-" + Math.random().toString(36).slice(2, 7),
+          name: file.name, size: file.size, progress: 0, error: "", file,
+        }));
+        setUploads(list => list.concat(entries));
+        entries.forEach(enqueueUpload);
+      }
+      function retryUpload(u) {
+        setUploads(list => list.map(x => x.key === u.key ? { ...x, error: "", progress: 0 } : x));
+        enqueueUpload(u);
+      }
+      function dismissUpload(key) {
+        setUploads(list => list.filter(u => u.key !== key));
+      }
+      async function removeFile(f) {
+        if (!window.confirm("Прибрати файл «" + f.name + "»? Він переміститься в кошик Google Диска.")) return;
+        try {
+          const res = await api("/api/admin/order?resource=files&order_number=" + encodeURIComponent(orderNumber)
+            + "&file_id=" + encodeURIComponent(f.id), { method: "DELETE", token });
+          setFiles(res.files || []);
+        } catch (e) {
+          setFilesError(e.message || "Не вдалося прибрати файл");
+        }
+      }
+      // Після надсилання: свіжий статус («В роботі»), позначка «надіслано» й файли.
+      async function refreshAfterSend() {
+        try {
+          const res = await api("/api/admin/order?order_number=" + encodeURIComponent(orderNumber), { token });
+          setData(res);
+          applyItemToForm(res, itemIdx);
+          if (onChanged) onChanged(res);
+        } catch (e) { /* картку оновить наступне відкриття */ }
+        loadFiles();
+      }
 
       function applyItemToForm(res, idx) {
         const item = (res.items && res.items[idx]) || {};
@@ -1315,8 +1824,11 @@ import finance from '../../lib/admin-finance.js';
 
       async function changeStatus(newStatus) {
         if (!confirmStatusChange(form.status, newStatus)) return;
+        const alreadySent = !!(data && data.order && data.order.contractor_sent);
         setForm({ ...form, status: newStatus });
-        await save({ status: newStatus });
+        // Підряднику надсилає лише кнопка «Надіслати підряднику» — з пташками.
+        await save({ status: newStatus, manual_contractor_send: true });
+        if (newStatus === "В роботі" && !alreadySent) focusSendPanel();
       }
 
       const order = data.order || {};
@@ -1384,8 +1896,38 @@ import finance from '../../lib/admin-finance.js';
         : null;
 
       return (
-        <div className="drawer-backdrop" onClick={onClose}>
-          <div className="drawer" onClick={e => e.stopPropagation()}>
+        <div
+          className="drawer-backdrop"
+          onClick={onClose}
+          // Файл, кинутий повз картку, браузер інакше відкрив би замість CRM.
+          onDragOver={e => { if (hasDraggedFiles(e)) e.preventDefault(); }}
+          onDrop={e => { if (hasDraggedFiles(e)) e.preventDefault(); }}
+        >
+          <div
+            className="drawer"
+            onClick={e => e.stopPropagation()}
+            onDragEnter={e => { if (hasDraggedFiles(e)) { e.preventDefault(); setFileDrag(true); } }}
+            onDragOver={e => {
+              if (!hasDraggedFiles(e)) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
+              if (!fileDrag) setFileDrag(true);
+            }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFileDrag(false); }}
+            onDrop={e => {
+              if (!hasDraggedFiles(e)) return;
+              e.preventDefault();
+              e.stopPropagation();
+              setFileDrag(false);
+              addFiles(e.dataTransfer.files);
+            }}
+          >
+            {fileDrag && (
+              <div className="drawer-drop-overlay" aria-hidden="true">
+                <Paperclip />
+                <span>Відпустіть, щоб прикріпити до {orderNumber}</span>
+              </div>
+            )}
             <header>
               <div>
                 <h2>{orderNumber}</h2>
@@ -1439,6 +1981,28 @@ import finance from '../../lib/admin-finance.js';
                 У таблиці не задано коректний статус. Оберіть фактичний статус замовлення.
               </div>
             )}
+
+            <OrderFilesSection
+              files={files}
+              filesError={filesError}
+              uploads={uploads}
+              onAdd={addFiles}
+              onRemove={removeFile}
+              onRetry={retryUpload}
+              onDismiss={dismissUpload}
+            />
+
+            <ContractorSendSection
+              key={orderNumber}
+              token={token}
+              orderNumber={orderNumber}
+              order={order}
+              items={items}
+              files={files}
+              sectionRef={sendSectionRef}
+              highlight={sendHighlight}
+              onSent={refreshAfterSend}
+            />
 
             <div className="section-title">Клієнт і контакти</div>
             <div className="grid2">
@@ -2106,9 +2670,14 @@ import finance from '../../lib/admin-finance.js';
           const result = await api("/api/admin/order", {
             method: "PATCH",
             token,
-            body: { order_number: orderNumber, patch: { status: newStatus } },
+            // Статус із CRM більше не шле підряднику сам — для цього є кнопка з пташками.
+            body: { order_number: orderNumber, patch: { status: newStatus, manual_contractor_send: true } },
           });
           onOrderChanged && onOrderChanged(result);
+          // «В роботі», а підряднику ще не надсилали → одразу відкриваємо картку на блоці надсилання.
+          if (newStatus === "В роботі" && !current.contractor_sent && onOpenOrder) {
+            onOpenOrder(orderNumber, { focus: "send" });
+          }
         } catch (e) {
           setGroups(prev);
           setError(e.message || "Не вдалося змінити статус");
@@ -2352,6 +2921,10 @@ import finance from '../../lib/admin-finance.js';
                             )}
                             {g.margin_left > 0 && g.client_left === 0 && (
                               <div className="card-payment margin">Маржа до отримання: {money(g.margin_left)}</div>
+                            )}
+                            {/* Лише явне false зі свіжих даних — старий кеш сторінки не знає цього поля. */}
+                            {g.contractor_sent === false && (g.status === "В роботі" || g.status === "Готове") && (
+                              <div className="card-payment unsent">Не надіслано підряднику</div>
                             )}
                             <select
                               className="card-status mobile-only"
@@ -3416,11 +3989,15 @@ import finance from '../../lib/admin-finance.js';
         setOrdersError("");
       }
 
-      function openOrder(num) {
+      // Картку можна відкрити одразу на блоці «Надіслати підряднику» (після «В роботі»).
+      const [focusSend, setFocusSend] = useState(false);
+      function openOrder(num, opts) {
+        setFocusSend(!!(opts && opts.focus === "send"));
         setSelectedOrder(num);
         window.location.hash = "order/" + encodeURIComponent(num);
       }
       function closeOrder() {
+        setFocusSend(false);
         setSelectedOrder(null);
         if (window.location.hash.startsWith("#order/")) {
           history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -3548,6 +4125,7 @@ import finance from '../../lib/admin-finance.js';
               snapshotLoading={dataLoading}
               onClose={closeOrder}
               onChanged={applyOrderUpdate}
+              focusSend={focusSend}
             />
           )}
         </div>

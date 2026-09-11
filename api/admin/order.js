@@ -1,7 +1,20 @@
 const { requireAdmin, setAdminCors, handleOptions } = require("../../lib/admin-auth");
 const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
+const filesHandler = require("../../lib/admin-files-handler");
+const contractorHandler = require("../../lib/admin-contractor-handler");
+
+// Тариф Vercel Hobby дозволяє не більше 12 серверних функцій, і в проєкті їх
+// рівно 12. Тому файли замовлення й надсилання підряднику живуть тут:
+// /api/admin/order?resource=files|contractor.
+function resourceOf(req) {
+  return String((req.query && req.query.resource) || (req.body && req.body.resource) || "");
+}
 
 module.exports = async function handler(req, res) {
+  const resource = resourceOf(req);
+  if (resource === "files") return filesHandler(req, res);
+  if (resource === "contractor") return contractorHandler(req, res);
+
   setAdminCors(req, res);
   if (req.method === "OPTIONS") return handleOptions(req, res);
   if (!requireAdmin(req, res)) return;
