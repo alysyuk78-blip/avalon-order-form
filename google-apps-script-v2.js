@@ -158,8 +158,11 @@ function writeOrderToSheet_(data) {
       // Собівартість, вписана вручну в CRM, має пріоритет і НЕ перетирається авто-розрахунком.
       var manualCost = (it.cost_total != null && it.cost_total !== "") ? Math.round(Number(it.cost_total)) : null;
       var areaM2 = 0, total = 0, costTotal = 0, hasMoney = false;
-      // Площа: кошик + верхня кришка (кришка — окрема площа w×d).
-      if (w && h) areaM2 = ((w * h + 2 * d * h) + (it.has_cover ? w * d : 0)) / 1000000;
+      // Площа: кошик + верхня кришка (кришка — окрема площа w×d). Для кронштейнів і
+      // довільних виробів цю формулу не застосовуємо — «площа ковша» за розкроєм
+      // кошика нічого не означає і лише збиває з пантелику в таблиці та звітах.
+      var areaApplies = it.product_type !== "bracket" && it.product_type !== "other";
+      if (areaApplies && w && h) areaM2 = ((w * h + 2 * d * h) + (it.has_cover ? w * d : 0)) / 1000000;
       if (it.price_total != null && it.price_total !== "") {
         total = Math.round(Number(it.price_total));
         if (it.area_m2 != null) areaM2 = Number(it.area_m2);
@@ -865,6 +868,11 @@ function buildProductionMsg_(data) {
     return esc_(String(it.unit || (it.product_type === "bracket" ? "комп." : "шт.")).trim() || "шт.");
   }
   function breakdown(it) {
+    var zero = { basketArea: 0, coverArea: 0, basketRate: 0, coverRate: 0, basketCost: 0, coverCost: 0, total: 0 };
+    // Розкладка «м² × ₴/м²» чинна ЛИШЕ для кошиків. Кронштейни й довільні вироби
+    // (ковш, пергола, стенд…) мають ціну від менеджера, тож рахувати їх за площею
+    // кошика — вигадувати цифри, яких підрядник не бачив.
+    if (it.product_type === "other" || it.product_type === "bracket") return zero;
     var qty = Number(it.quantity) || 1;
     var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
     var hasCover = !!it.has_cover || String(it.construction_type || "").toLowerCase().indexOf("кришка") >= 0;
