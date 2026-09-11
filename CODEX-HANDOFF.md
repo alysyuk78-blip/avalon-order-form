@@ -1,5 +1,44 @@
 # CODEX HANDOFF — avalon-order-form
 
+## Надсилання підряднику з пташками + файли в картці замовлення — 11.09.2026
+
+- ⚠️ **З CRM підряднику надсилає ЛИШЕ кнопка «Надіслати підряднику»** (блок у картці
+  замовлення). Зміна статусу з CRM передає `patch.manual_contractor_send: true`, і
+  `applyStatusSideEffects_` тоді НЕ шле повідомлення. Без прапорця (зміна статусу в
+  таблиці, стара версія кабінету) — автовідправка, як і раніше. Не прибирайте прапорець:
+  саме він робить деплой безпечним у будь-якому порядку.
+- Пташки: `client_name, phone, telegram, email, city, address, finance, notes`
+  (`contractorOptions_`, типово — усе `true`). Завжди йдуть: номер, виріб, собівартість,
+  спосіб і дата доставки. **Джерело заявки — ніколи** (прибрано з `buildProductionMsg_`).
+  Контактні рядки (Telegram/E-mail/Viber/WhatsApp) з приміток вирізаються завжди —
+  контакти видно лише в «Замовнику» за пташками. Вибір пташок CRM памʼятає в
+  `localStorage` (`avalon.contractorSendOptions.v1`).
+- Надіслане «Нове» стає «В роботі» (`promoteToWork_`, короткий lock). Вдруге — в ту саму
+  гілку з «🔄 ОНОВЛЕНО ЗАМОВЛЕННЯ». `sent_<ORD>` — час надсилання; групи мають
+  `contractor_sent` / `contractor_sent_at`, картка у воронці показує «Не надіслано підряднику».
+- **Файли — на Google Диску власника:** «AVALON CRM — файли замовлень / ORD-…»
+  (`FILES_ROOT_ID`, `files_folder_<ORD>` у властивостях). Завантаження частинами по
+  3 МБ (ліміт Vercel 4,5 МБ на запит) через Drive resumable upload: `file_upload_init` →
+  `file_upload_chunk` (308 + Range = продовжуй) → `file_upload_status` після обриву.
+  До 300 МБ на файл. Прибрати = у кошик Диска (`setTrashed`).
+- Надсилання файлу підряднику: до 48 МБ — `sendDocument` у гілку; більше — доступ «за
+  посиланням» і посилання повідомленням. Позначка в описі файлу `avalon_sent_to_contractor:`.
+  Файл перевіряється на належність до теки замовлення (`orderFile_`) — id із браузера.
+- Ідемпотентність: `contractor_send` / `contractor_send_file` з `request_id` через
+  `withRequestCache_` (CacheService: «pending» → результат). `lib/admin-sheets.js`:
+  ці дії повторюються лише після обриву мережі; після тайм-ауту (55 с, `maxDuration` 60 с
+  у `vercel.json`) — ні, повторює клієнт тим самим `request_id`.
+- ⚠️ **Нове право Google Диска.** `DriveApp` у коді → Google вимагає разового дозволу
+  власника (функція `authorizeDriveAccess` у редакторі). Порядок деплою: `clasp push` →
+  власник запускає `authorizeDriveAccess` → `clasp deploy` → злиття PR у Vercel. Між push і
+  дозволом тригери таблиці (onEdit, нагадування) можуть не спрацювати.
+- API: `api/admin/files.js` (GET список, POST init/chunk/status, DELETE у кошик),
+  `api/admin/contractor.js` (preview / send / send_file; лише відомі пташки true/false).
+- Тести: `tests/contractor-send.test.js` (пташки, без автовідправки з CRM, завантаження
+  частинами, файл/посилання, чужий файл, повтор без дубля, статус «В роботі»),
+  `tests/admin-files-api.test.js` (перевірка вхідних даних, 413 для завеликої частини),
+  доповнено `tests/admin-sheets.test.js` (політика повторів).
+
 ## Розрахунок маржі в повідомленні підряднику — 11.09.2026
 
 - Власник попросив, щоб підрядник одразу бачив, скільки перерахувати Avalon, без

@@ -45,6 +45,38 @@ async function run() {
   };
   await callAdminSheets("create_order", { order: { request_id: "req-1" } });
   assert.equal(calls, 2, "ідемпотентне створення замовлення можна безпечно повторити");
+
+  // Надсилання підряднику з request_id Apps Script не дублює — мережевий збій можна повторити.
+  calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    if (calls === 1) throw new TypeError("temporary network error");
+    return jsonResponse({ status: "ok" });
+  };
+  await callAdminSheets("contractor_send", { order_number: "ORD-110926-001", request_id: "rid-1" });
+  assert.equal(calls, 2, "надсилання з request_id повторюється після обриву мережі");
+
+  // Після тайм-ауту довга дія не повторюється: другий запит вийшов би за ліміт функції
+  // Vercel. Повторює клієнт тим самим request_id і отримує «pending» або результат.
+  calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    throw Object.assign(new Error("aborted"), { name: "AbortError" });
+  };
+  await assert.rejects(
+    () => callAdminSheets("contractor_send_file", { order_number: "ORD-110926-001", request_id: "rid-2" }),
+    err => err.code === "SHEETS_TIMEOUT" && /55 секунд/.test(err.message)
+  );
+  assert.equal(calls, 1, "довга дія після тайм-ауту не повторюється на сервері");
+
+  // Частина файлу сама не повторюється — клієнт спершу питає Диск, скільки вже дійшло.
+  calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    throw new TypeError("temporary network error");
+  };
+  await assert.rejects(() => callAdminSheets("file_upload_chunk", { upload_id: "u" }));
+  assert.equal(calls, 1, "частина файлу не дописується двічі наосліп");
 }
 
 run().then(() => console.log("admin-sheets tests: OK")).catch(err => {
