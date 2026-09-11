@@ -199,10 +199,19 @@
     .orders-view-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
     .orders-view-actions > .icon-button { background: #e8ebed; }
     .orders-view-actions > .icon-button.active { background: var(--brand); color: #fff; }
+    /* Воронка — горизонтальна дошка: колонки зручної ширини, гортається вліво-вправо
+       (як на телефоні), а не стискається в один екран. Висота — до низу екрана
+       (--kanban-top міряє CRM), тож смуга прокрутки видна, а кожна колонка гортає
+       свої картки окремо — заголовок із сумами завжди на місці. */
     .kanban {
-      display: grid; grid-template-columns: repeat(7, minmax(150px, 1fr)); gap: 12px;
-      overflow-x: visible; padding-bottom: 8px; max-width: 100%;
+      display: flex; gap: 12px; align-items: stretch;
+      overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+      scroll-snap-type: x proximity;
+      height: calc(100dvh - var(--kanban-top, 300px) - 16px); min-height: 460px;
+      padding-bottom: 10px; max-width: 100%;
     }
+    .kanban .col { flex: 0 0 290px; width: 290px; min-height: 0; overflow: hidden; scroll-snap-align: start; }
+    .kanban .col-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start; }
     .col {
       background: rgba(255,255,255,0.45); border: 0; border-radius: var(--radius);
       min-height: 280px; display: flex; flex-direction: column; overflow: visible;
@@ -211,7 +220,7 @@
       margin: 0; padding: 11px 12px 9px; font-size: 12px; letter-spacing: 0.06em;
       text-transform: uppercase; color: var(--muted);
       display: flex; flex-direction: column; gap: 5px;
-      position: sticky; top: var(--app-header-height); z-index: 8;
+      position: relative; z-index: 1;   /* колонка гортає картки сама — заголовок і так на місці */
       background: var(--col-sticky-bg, #f7f8f9);
       border-radius: var(--radius) var(--radius) 0 0;
     }
@@ -782,9 +791,6 @@
     }
     .desktop-only { display: initial; }
     .mobile-only { display: none; }
-    @media (max-width: 1180px) {
-      .kanban { grid-template-columns: repeat(3, minmax(200px, 1fr)); }
-    }
     @media (max-width: 1100px) {
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .row-card { grid-template-columns: 1fr 1fr; }
@@ -875,6 +881,7 @@
       .summary-info { margin-left: 0; position: static; padding-left: 0; background: transparent; transform: none; }
       .kanban {
         display: flex; gap: 10px;
+        height: auto; min-height: 0;
         overflow-x: auto; scroll-snap-type: x mandatory;
         -webkit-overflow-scrolling: touch;
         padding-bottom: 12px;

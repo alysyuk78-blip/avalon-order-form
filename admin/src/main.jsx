@@ -2891,6 +2891,28 @@ import finance from '../../lib/admin-finance.js';
         return { revenue, profit, count, clientLeft, marginLeft };
       }, [filteredGroups]);
 
+      // Дошка займає висоту до низу екрана: тоді горизонтальна смуга прокрутки видна
+      // одразу, а кожна колонка гортає свої картки. Міряємо, де дошка починається
+      // (над нею панель пошуку, підсумок, фільтри — їхня висота змінюється).
+      const kanbanRef = useRef(null);
+      const showKanban = filteredGroups.length > 0 && view === "kanban";
+      useEffect(() => {
+        const el = kanbanRef.current;
+        if (!el) return undefined;
+        const measure = () => {
+          const top = Math.round(el.getBoundingClientRect().top + window.scrollY);
+          if (el.style.getPropertyValue("--kanban-top") !== top + "px") el.style.setProperty("--kanban-top", top + "px");
+        };
+        measure();
+        window.addEventListener("resize", measure);
+        const ro = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+        if (ro && el.parentElement) ro.observe(el.parentElement);
+        return () => {
+          window.removeEventListener("resize", measure);
+          if (ro) ro.disconnect();
+        };
+      }, [showKanban]);
+
       return (
         <div>
           <div className="toolbar orders-toolbar">
@@ -2965,7 +2987,7 @@ import finance from '../../lib/admin-finance.js';
           )}
 
           {filteredGroups.length > 0 && view === "kanban" && (
-            <div className="kanban">
+            <div className="kanban" ref={kanbanRef}>
               {funnelStatuses.map(s => (
                 <div
                   className={"col " + statusClass(s) + (dragOver === s ? " drag-over" : "")}
