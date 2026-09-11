@@ -155,7 +155,7 @@ function testStatusChangeFromCrmDoesNotAutoSend() {
   ctx.buildOrderFromRows_ = () => ({ order_number: ORD, items: [] });
   ctx.createOrderTopic_ = () => { created += 1; return { ok: true }; };
   ctx.notifyOwnerStatusChange_ = () => { notified += 1; };
-  const sheet = { getRange: () => ({ getValue: () => ORD }) };
+  const sheet = { getRange: () => ({ getValue: () => ORD }), getLastRow: () => 1 };
 
   ctx.applyStatusSideEffects_(sheet, 2, "В роботі", { skipContractorSend: true });
   assert.equal(created, 0, "з CRM підряднику надсилає лише кнопка з пташками");
@@ -322,11 +322,12 @@ function testContractorSendFlow() {
   const first = ctx.adminContractorSend_({ order_number: ORD, options: { phone: false }, request_id: "s1" });
   assert.equal(first.update, false);
   assert.equal(first.status_changed, true, "надіслане «Нове» стає «В роботі»");
-  assert.deepEqual(statuses.map(x => x[2]), ["В роботі", "В роботі", "Нове"], "лише рядки цього замовлення");
+  assert.deepEqual(statuses.map(x => x[2]), ["Виготовлення", "Виготовлення", "Нове"], "лише рядки цього замовлення");
   assert.equal(props.getProperty("thread_" + ORD), "55");
   assert.equal(props.getProperty("sent_" + ORD), "2026-09-11T12:30");
   const firstText = tg.find(x => x.method === "sendMessage").payload.text;
   assert.ok(!firstText.includes("+380"), "пташки з CRM застосовані до повідомлення");
+  assert.ok(firstText.startsWith("🏭 <b>У ВИРОБНИЦТВО</b>"), "перше надсилання — у виробництво");
 
   assert.deepEqual(ctx.adminContractorSend_({ order_number: ORD, request_id: "s1" }), first,
     "повтор із тим самим request_id повертає той самий результат без нового повідомлення");
@@ -340,9 +341,219 @@ function testContractorSendFlow() {
   assert.equal(second.status_changed, false, "статус уже «В роботі» — не чіпаємо");
 }
 
+// ── Аркуш «Замовлення» в памʼяті (сценарії зі статусами й терміном) ─────────
+function makeSheet(rows) {
+  const W = 48;
+  const pad = (r) => { const a = r.slice(); while (a.length < W) a.push(""); return a; };
+  const data = [new Array(W).fill("")].concat(rows.map(pad));
+  return {
+    data,
+    getLastRow: () => data.length,
+    getMaxColumns: () => W,
+    getMaxRows: () => 1000,
+    setConditionalFormatRules: () => {},
+    getRange(r, c, nr, nc) {
+      if (typeof r === "string") return { setDataValidation() { return this; } };
+      const rowsN = nr || 1, colsN = nc || 1;
+      const rng = {
+        getValues: () => {
+          const out = [];
+          for (let i = 0; i < rowsN; i++) out.push((data[r - 1 + i] || new Array(W).fill("")).slice(c - 1, c - 1 + colsN));
+          return out;
+        },
+        setValues: (vals) => {
+          vals.forEach((vr, i) => {
+            while (data.length < r + i) data.push(new Array(W).fill(""));
+            vr.forEach((v, j) => { data[r - 1 + i][c - 1 + j] = v; });
+          });
+          return rng;
+        },
+        getValue: () => (data[r - 1] || [])[c - 1],
+        setValue: (v) => rng.setValues([[v]]),
+        setDataValidation: () => rng,
+      };
+      return rng;
+    },
+  };
+}
+
+function orderRow(num, status, extra) {
+  const r = new Array(48).fill("");
+  r[0] = num; r[2] = status; r[4] = "Олександр Заєць"; r[5] = "'+380673406685"; r[6] = "Київ";
+  r[16] = 1; r[19] = 9650; r[21] = 13790; r[22] = 4140; r[40] = "Ковш для трактора"; r[41] = "Інший виріб";
+  Object.keys(extra || {}).forEach((k) => { r[Number(k)] = extra[k]; });
+  return r;
+}
+
+function makeCalendar() {
+  const events = {};
+  let n = 0;
+  const cal = {
+    getName: () => "Замовлення AVALON",
+    createEvent: (title, start, end, opts) => {
+      const id = "ev" + (++n);
+      const ev = {
+        id, title, start, end, description: opts && opts.description, reminders: [], deleted: false,
+        getId: () => id,
+        removeAllReminders() { ev.reminders = []; },
+        addPopupReminder(m) { ev.reminders.push("popup:" + m); },
+        addEmailReminder(m) { ev.reminders.push("email:" + m); },
+        deleteEvent() { ev.deleted = true; },
+      };
+      events[id] = ev;
+      return ev;
+    },
+  };
+  return { events, api: { getAllCalendars: () => [cal], getDefaultCalendar: () => cal, getEventById: (id) => events[id] || null } };
+}
+
+function makeSpreadsheetApp() {
+  const chain = () => {
+    const b = {};
+    ["requireValueInList", "setAllowInvalid", "whenTextEqualTo", "whenFormulaSatisfied", "setBackground",
+      "setFontColor", "setBold", "setRanges"].forEach((m) => { b[m] = () => b; });
+    b.build = () => ({});
+    return b;
+  };
+  return { newDataValidation: chain, newConditionalFormatRule: chain };
+}
+
+function processingContext(sheet, props, calendar, tg) {
+  const cache = makeCache();
+  const ctx = load({
+    CacheService: { getScriptCache: () => cache },
+    PropertiesService: { getScriptProperties: () => props },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    CalendarApp: calendar.api,
+    Utilities: { formatDate: () => "2026-09-11T12:30" },
+  });
+  ctx.adminOrdersSheet_ = () => sheet;
+  ctx.notifyOwnerStatusChange_ = () => {};
+  ctx.tgApi_ = (method, payload) => {
+    tg.push({ method, payload });
+    return method === "createForumTopic" ? { ok: true, result: { message_thread_id: 55 } } : { ok: true, result: {} };
+  };
+  return ctx;
+}
+
+// ── Нові статуси: «В роботі» → «Виготовлення», міграція разова ────────────
+function testStatusesMigrationAndCanon() {
+  const props = makeProps();
+  const sheet = makeSheet([orderRow("ORD-110926-101", "В роботі"), orderRow("ORD-110926-102", "Нове"), orderRow("ORD-110926-103", "Завершено")]);
+  const ctx = load({ PropertiesService: { getScriptProperties: () => props }, SpreadsheetApp: makeSpreadsheetApp() });
+
+  assert.deepEqual(Array.from(ctx.STATUSES),
+    ["Нове", "В опрацюванні підрядником", "Виготовлення", "Готове", "Відправлено", "Завершено", "Скасовано"]);
+  assert.equal(ctx.canonStatus_("В роботі"), "Виготовлення");
+  assert.equal(ctx.canonStatus_(" Нове "), "Нове");
+
+  ctx.ensureStatusesV2Once_(sheet);
+  assert.deepEqual(sheet.data.slice(1).map((r) => r[2]), ["Виготовлення", "Нове", "Завершено"]);
+  assert.equal(props.getProperty("STATUSES_V2_READY"), "1");
+  sheet.data[1][2] = "В роботі";
+  ctx.ensureStatusesV2Once_(sheet);
+  assert.equal(sheet.data[1][2], "В роботі", "міграція разова");
+
+  // Навіть до міграції кабінет бачить нову назву; термін і завдання доходять до CRM.
+  const mapped = ctx.mapOrderRow_(2, orderRow("ORD-110926-101", "В роботі", { 46: "2026-09-15", 47: "Розробити конструктив" }));
+  assert.equal(mapped.status, "Виготовлення");
+  assert.equal(mapped.processing_due, "2026-09-15");
+  assert.equal(mapped.processing_task, "Розробити конструктив");
+
+  const widths = CODE.match(/var widths = \[([^\]]+)\]/)[1].split(",").length;
+  assert.equal(ctx.ADMIN_ORDER_COLS, 48);
+  assert.equal(widths, ctx.ADMIN_ORDER_COLS, "ширин колонок стільки ж, скільки колонок");
+}
+
+// ── На опрацювання → Календар → погоджено, у виробництво ───────────────────
+function testProcessingFlow() {
+  const props = makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" });
+  const calendar = makeCalendar();
+  const tg = [];
+  const sheet = makeSheet([orderRow(ORD, "Нове"), orderRow(ORD, "Нове"), orderRow("ORD-110926-009", "Нове")]);
+  const ctx = processingContext(sheet, props, calendar, tg);
+  const messages = () => tg.filter((x) => x.method === "sendMessage").map((x) => x.payload.text);
+
+  assert.throws(() => ctx.adminContractorSend_({ order_number: ORD, purpose: "processing", request_id: "p0" }),
+    /термін опрацювання/i, "без терміну на опрацювання не надсилаємо");
+
+  const r1 = ctx.adminContractorSend_({
+    order_number: ORD, purpose: "processing", processing_due: "2026-09-15",
+    processing_task: "Порахувати виробничу вартість", request_id: "p1",
+  });
+  assert.equal(r1.status_changed, true);
+  assert.equal(r1.prev_status, "Нове");
+  assert.equal(r1.new_status, "В опрацюванні підрядником");
+  assert.deepEqual(sheet.data.slice(1).map((r) => r[2]),
+    ["В опрацюванні підрядником", "В опрацюванні підрядником", "Нове"], "лише рядки цього замовлення");
+  assert.equal(sheet.data[1][46], "2026-09-15");
+  assert.equal(sheet.data[2][47], "Порахувати виробничу вартість");
+  assert.equal(sheet.data[3][46], "", "чужі замовлення не чіпаємо");
+  assert.ok(messages()[0].startsWith("🧮 <b>НА ОПРАЦЮВАННЯ</b>"), "підрядник бачить, що це ще не у виробництво");
+  assert.ok(messages()[0].includes("Порахувати виробничу вартість"));
+  assert.ok(messages()[0].includes("до 15.09.2026"));
+
+  // Подія в Google Календарі на день терміну, нагадування за добу й у сам день.
+  const ev1 = calendar.events[props.getProperty("proc_evt_" + ORD)];
+  assert.ok(ev1, "подію створено");
+  assert.ok(ev1.title.includes(ORD) && ev1.title.includes("Опрацювання підрядником"));
+  assert.deepEqual([ev1.start.getFullYear(), ev1.start.getMonth(), ev1.start.getDate(), ev1.start.getHours()], [2026, 8, 15, 9]);
+  assert.deepEqual(ev1.reminders.slice().sort(), ["email:0", "popup:0", "popup:1440"]);
+  assert.ok(ev1.description.includes("Порахувати виробничу вартість"));
+  assert.equal(ctx.syncProcessingEvent_(sheet, ORD), "same", "той самий термін — подію не перестворюємо");
+
+  // Підрядник попросив більше часу: новий термін — стара подія зникає, нова на нову дату.
+  ctx.setProcessingFields_(sheet, ORD, "2026-09-18", "Порахувати виробничу вартість");
+  assert.equal(ctx.syncProcessingEvent_(sheet, ORD), "created");
+  assert.equal(ev1.deleted, true);
+  const ev2 = calendar.events[props.getProperty("proc_evt_" + ORD)];
+  assert.equal(ev2.start.getDate(), 18);
+
+  // Погодили — у виробництво: інший заголовок, статус «Виготовлення», нагадування прибрано.
+  const r2 = ctx.adminContractorSend_({ order_number: ORD, purpose: "production", request_id: "p2" });
+  assert.equal(r2.update, true);
+  assert.equal(r2.prev_status, "В опрацюванні підрядником");
+  assert.equal(r2.new_status, "Виготовлення");
+  assert.ok(messages()[1].startsWith("✅ <b>ПОГОДЖЕНО — ЗАПУСКАЄМО У ВИРОБНИЦТВО</b>"));
+  assert.equal(ev2.deleted, true, "після опрацювання нагадування в Календарі не потрібне");
+  assert.equal(props.getProperty("proc_evt_" + ORD), null);
+
+  // Статус назад не відкочується; наступне — звичайне оновлення.
+  const r3 = ctx.adminContractorSend_({ order_number: ORD, purpose: "processing", processing_due: "2026-09-20", request_id: "p3" });
+  assert.equal(r3.status_changed, false);
+  assert.ok(messages()[2].startsWith("🔄 <b>ОНОВЛЕНО — НА ОПРАЦЮВАННЯ</b>"));
+  assert.equal(sheet.data[1][2], "Виготовлення");
+  assert.equal(Object.values(calendar.events).filter((e) => !e.deleted).length, 0, "не в опрацюванні — подій немає");
+}
+
+// ── Статус прямо в таблиці: опрацювання теж надсилає, вихід прибирає нагадування ──
+function testSheetStatusProcessing() {
+  const props = makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" });
+  const calendar = makeCalendar();
+  const tg = [];
+  const sheet = makeSheet([orderRow(ORD, "В опрацюванні підрядником", { 46: "2026-09-16", 47: "Розробити конструктив нової моделі" })]);
+  const ctx = processingContext(sheet, props, calendar, tg);
+
+  ctx.applyStatusSideEffects_(sheet, 2, "В опрацюванні підрядником");
+  const text = tg.find((x) => x.method === "sendMessage").payload.text;
+  assert.ok(text.startsWith("🧮 <b>НА ОПРАЦЮВАННЯ</b>"));
+  assert.ok(text.includes("Розробити конструктив нової моделі") && text.includes("до 16.09.2026"));
+  assert.equal(props.getProperty("sent_purpose_" + ORD), "processing");
+  const ev = calendar.events[props.getProperty("proc_evt_" + ORD)];
+  assert.ok(ev && ev.start.getDate() === 16, "нагадування створено з таблиці");
+
+  sheet.data[1][2] = "Виготовлення";
+  ctx.applyStatusSideEffects_(sheet, 2, "Виготовлення");
+  assert.equal(ev.deleted, true, "вийшли з опрацювання — нагадування прибрано");
+  assert.equal(tg.filter((x) => x.method === "sendMessage").length, 1, "автоматом удруге не шлемо — гілка вже є");
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
 testSendFileToContractor();
 testContractorSendFlow();
+testStatusesMigrationAndCanon();
+testProcessingFlow();
+testSheetStatusProcessing();
 console.log("contractor-send tests: OK");

@@ -155,7 +155,7 @@ function testStandardRecalculationClearsStaleDiscount() {
   row[16] = 2;
 
   const sheet = {
-    getMaxColumns: () => 46,
+    getMaxColumns: () => 48,
     getRange(_row, column, _rows, columns) {
       if (column === 42) return { getValue: () => "Кошик" };
       if (column === 1 && columns === 17) return { getValues: () => [row] };
@@ -225,7 +225,7 @@ function testBootstrapReadsPaymentsOnce() {
 
 function testOrderDetailReadsOnlyMatchedRows() {
   const context = loadAppsScript();
-  const row = new Array(46).fill("");
+  const row = new Array(48).fill("");
   row[0] = "ORD-010126-001";
   row[2] = "В роботі";
   row[4] = "Тест";
@@ -250,7 +250,7 @@ function testOrderDetailReadsOnlyMatchedRows() {
           }),
         };
       }
-      if (r === 7 && c === 1 && rows === 1 && cols === 46) {
+      if (r === 7 && c === 1 && rows === 1 && cols === 48) {
         fullReads.push(r);
         return { getValues: () => [row] };
       }
@@ -401,11 +401,11 @@ function testSheetCommissionFormula() {
   assert.equal(formulas[26], '=IF($W7="";"";$W7-$Y7)', "чистий прибуток = валовий − комісія");
 
   // Схема таблиці розширена до AT (46) — інакше читання картки впаде.
-  assert.equal(context.ADMIN_ORDER_COLS, 46);
+  assert.equal(context.ADMIN_ORDER_COLS, 48);
   assert.equal(context.COMMISSION_PCT_COL, 46);
 
   // mapOrderRow_ має віддавати ставку в CRM.
-  const row = new Array(46).fill("");
+  const row = new Array(48).fill("");
   row[0] = "ORD-010126-001";
   row[45] = 30;
   assert.equal(context.mapOrderRow_(7, row).commission_pct, 30);

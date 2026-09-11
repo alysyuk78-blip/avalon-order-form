@@ -14,6 +14,7 @@ import {
   FileSpreadsheet,
   FileText,
   FileVideo,
+  Hourglass,
   Info,
   List,
   ListFilter,
@@ -32,12 +33,22 @@ import finance from '../../lib/admin-finance.js';
 
     const { groupPaymentMetrics } = finance;
 
-    const STATUSES = ["Нове","В роботі","Готове","Відправлено","Завершено","Скасовано"];
+    // «В опрацюванні підрядником» — підрядник рахує вартість / розробляє конструктив;
+    // «Виготовлення» — раніше «В роботі» (стару назву читаємо як нову).
+    const STATUS_PROCESSING = "В опрацюванні підрядником";
+    const STATUS_PRODUCTION = "Виготовлення";
+    const STATUSES = ["Нове", STATUS_PROCESSING, STATUS_PRODUCTION, "Готове", "Відправлено", "Завершено", "Скасовано"];
+    const LEGACY_STATUS = { "В роботі": STATUS_PRODUCTION };
+    function canonStatus(s) {
+      const t = String(s || "").trim();
+      return LEGACY_STATUS[t] || t;
+    }
     const MISSING_STATUS = "Без статусу";
     const DISPLAY_STATUSES = [...STATUSES, MISSING_STATUS];
     const STATUS_CLASS = {
       "Нове": "st-new",
-      "В роботі": "st-work",
+      [STATUS_PROCESSING]: "st-proc",
+      [STATUS_PRODUCTION]: "st-work",
       "Готове": "st-ready",
       "Відправлено": "st-ship",
       "Завершено": "st-done",
@@ -358,6 +369,22 @@ import finance from '../../lib/admin-finance.js';
       return { kind: "ok", label, days: diffDays, text: label, hint: "Дата доставки / відправлення" };
     }
 
+    // Термін опрацювання підрядником — на картці замовлень у статусі «В опрацюванні підрядником».
+    function processingState(due, status) {
+      if (status !== STATUS_PROCESSING) return null;
+      const st = deliveryState(due, status);
+      if (!st) return { kind: "none", text: "Термін опрацювання не задано", hint: "Задайте термін у картці замовлення" };
+      const tail = st.kind === "overdue" ? " · прострочено " + st.days + " дн."
+        : st.kind === "today" ? " · сьогодні" : st.kind === "soon" ? " · завтра" : "";
+      return { kind: st.kind, label: st.label, days: st.days, text: "до " + st.label + tail, hint: "Термін опрацювання підрядником" };
+    }
+    // Для опрацювання головна дата — термін підрядника, для решти — доставка.
+    function urgencyState(g) {
+      return g.status === STATUS_PROCESSING
+        ? deliveryState(g.processing_due, g.status)
+        : deliveryState(g.delivery_date, g.status);
+    }
+
     // Іконки, надані власником (Flaticon, PNG). Малюємо їх CSS-маскою, щоб вони
     // успадковували колір тексту — інакше на активній темній вкладці чорний PNG
     // був би невидимий. Решта іконок кабінету — з lucide-react.
@@ -380,8 +407,8 @@ import finance from '../../lib/admin-finance.js';
     // Усередині однакового стану новіші замовлення вище.
     const DELIVERY_RANK = { overdue: 0, today: 1, soon: 2, ok: 3 };
     function compareByUrgency(a, b) {
-      const da = deliveryState(a.delivery_date, a.status);
-      const db = deliveryState(b.delivery_date, b.status);
+      const da = urgencyState(a);
+      const db = urgencyState(b);
       const ra = da ? DELIVERY_RANK[da.kind] : 4;
       const rb = db ? DELIVERY_RANK[db.kind] : 4;
       if (ra !== rb) return ra - rb;
@@ -414,7 +441,7 @@ import finance from '../../lib/admin-finance.js';
     // Порожній, нестандартний або різний у рядках одного замовлення статус не можна
     // мовчки вважати «Новим»: це окремий стан якості даних, який менеджер виправляє явно.
     function resolveOrderStatus(values) {
-      const raw = [...new Set((values || []).map(v => String(v || "").trim()))];
+      const raw = [...new Set((values || []).map(canonStatus))];
       if (raw.length === 1 && STATUSES.includes(raw[0])) {
         return { status: raw[0], raw_statuses: raw, status_issue: "" };
       }
@@ -545,9 +572,11 @@ import finance from '../../lib/admin-finance.js';
       const [bm, by] = String(b).split(".").map(Number);
       return (by - ay) || (bm - am);
     }
-    /** Одне нагадування на замовлення; пріоритет: борг маржі → в роботі → без дати. */
+    /** Одне нагадування на замовлення; пріоритет: статус → прострочене опрацювання /
+     *  борг маржі → опрацювання й виготовлення → без дати доставки. */
     function buildReminders(groups) {
-      const active = ["Нове", "В роботі", "Готове", "Відправлено"];
+      // Без дати доставки нагадуємо, коли вона вже потрібна; в опрацюванні її ще може не бути.
+      const needsDelivery = ["Нове", STATUS_PRODUCTION, "Готове", "Відправлено"];
       const byOrder = {};
       (groups || []).forEach(g => {
         if (g.status === "Скасовано") return;
@@ -570,11 +599,27 @@ import finance from '../../lib/admin-finance.js';
             tagClass = "debt";
           }
         }
-        if (g.status === "В роботі") {
-          reasons.push("Статус «В роботі» · " + money(g.revenue));
-          if (priority > 2) { priority = 2; tag = "В роботі"; tagClass = "stuck"; }
+        if (g.status === STATUS_PROCESSING) {
+          const st = deliveryState(g.processing_due, g.status);
+          if (!st) {
+            reasons.push("Не задано термін опрацювання підрядником");
+            if (priority > 2) { priority = 2; tag = "Опрацювання"; tagClass = "proc"; }
+          } else if (st.kind === "overdue") {
+            reasons.push("Опрацювання підрядником прострочено: термін був " + st.label);
+            if (priority > 1) { priority = 1; tag = "Опрацювання"; tagClass = "proc"; }
+          } else if (st.kind === "today" || st.kind === "soon") {
+            reasons.push("Термін опрацювання підрядником — " + (st.kind === "today" ? "сьогодні" : "завтра"));
+            if (priority > 2) { priority = 2; tag = "Опрацювання"; tagClass = "proc"; }
+          } else {
+            reasons.push("В опрацюванні підрядником до " + st.label);
+            if (priority > 4) { priority = 4; tag = "Опрацювання"; tagClass = "proc"; }
+          }
         }
-        if (active.indexOf(g.status) >= 0 && !String(g.delivery_date || "").trim()) {
+        if (g.status === STATUS_PRODUCTION) {
+          reasons.push("Виготовлення · " + money(g.revenue));
+          if (priority > 2) { priority = 2; tag = "Виготовлення"; tagClass = "stuck"; }
+        }
+        if (needsDelivery.indexOf(g.status) >= 0 && !String(g.delivery_date || "").trim()) {
           reasons.push("Немає дати доставки");
           if (priority > 3) { priority = 3; tag = "Дата"; tagClass = "ship"; }
         }
@@ -1007,7 +1052,7 @@ import finance from '../../lib/admin-finance.js';
       if (toStatus === "Скасовано") {
         return window.confirm("Скасувати замовлення?");
       }
-      // «В роботі» з CRM більше нічого не надсилає сам: підряднику — лише кнопкою з
+      // Зміна статусу з CRM нічого не надсилає сама: підряднику — лише кнопкою з
       // пташками, що саме показувати. Тож і попереджати тут нема про що.
       return true;
     }
@@ -1284,6 +1329,12 @@ import finance from '../../lib/admin-finance.js';
       const m = String(stamp || "").match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
       return m ? m[3] + "." + m[2] + (m[4] ? " о " + m[4] + ":" + m[5] : "") : "";
     }
+    function todayIsoLocal() {
+      const d = new Date();
+      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    }
+    // Швидкі варіанти завдання для «На опрацювання» — можна вписати й своє.
+    const PROCESSING_TASKS = ["Порахувати виробничу вартість", "Розробити конструктив нової моделі", "Підготувати креслення"];
     function createdLabel(iso) {
       const d = new Date(iso);
       return isNaN(d.getTime()) ? "" : d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit" });
@@ -1382,7 +1433,7 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
-    function ContractorSendSection({ token, orderNumber, order, items, files, sectionRef, highlight, onSent }) {
+    function ContractorSendSection({ token, orderNumber, order, items, files, sectionRef, highlight, onSent, purposeRequest, onSaveProcessing }) {
       const [opts, setOpts] = useState(readSendOptions);
       const [picked, setPicked] = useState({});           // явний вибір файлів: id → true/false
       const [phase, setPhase] = useState("");             // що відбувається просто зараз
@@ -1392,6 +1443,28 @@ import finance from '../../lib/admin-finance.js';
       const [preview, setPreview] = useState({ text: "", error: "" });
       const pendingRef = useRef({ fp: "", rid: "" });
       const previewSeq = useRef(0);
+
+      // Мета надсилання: на опрацювання (вартість, конструктив — ще не у виробництво)
+      // чи у виробництво. Типово — за поточним статусом; зміна статусу може попросити іншу.
+      const isProcessingStatus = order.status === STATUS_PROCESSING;
+      const lastWasProcessing = order.contractor_purpose === "processing";
+      const [purpose, setPurpose] = useState(
+        (purposeRequest && purposeRequest.purpose) || (isProcessingStatus ? "processing" : "production")
+      );
+      useEffect(() => {
+        if (purposeRequest && purposeRequest.purpose) setPurpose(purposeRequest.purpose);
+      }, [purposeRequest]);
+      const [procDue, setProcDue] = useState(String(order.processing_due || "").slice(0, 10));
+      const [procTask, setProcTask] = useState(order.processing_task || "");
+      const [procSaved, setProcSaved] = useState("");
+      useEffect(() => {
+        setProcDue(String(order.processing_due || "").slice(0, 10));
+        setProcTask(order.processing_task || "");
+      }, [order.processing_due, order.processing_task]);
+      const purposeBody = purpose === "processing"
+        ? { purpose, processing_due: procDue, processing_task: procTask.trim() }
+        : { purpose };
+      const purposeKey = JSON.stringify(purposeBody);
 
       const rows = items || [];
       // Показуємо лише ті пташки, для яких у замовленні взагалі є дані.
@@ -1415,6 +1488,10 @@ import finance from '../../lib/admin-finance.js';
       const isPicked = (f) => (picked[f.id] !== undefined ? picked[f.id] : !f.sent_at);
       const chosen = fileList.filter(isPicked);
       const sent = !!order.contractor_sent;
+      const sendLabel = purpose === "processing"
+        ? (sent ? "Надіслати оновлення на опрацювання" : "Надіслати на опрацювання")
+        : (sent && lastWasProcessing ? "Погодити й надіслати у виробництво"
+          : sent ? "Надіслати оновлення" : "Надіслати у виробництво");
 
       function toggle(key) {
         const next = { ...opts, [key]: !opts[key] };
@@ -1429,7 +1506,7 @@ import finance from '../../lib/admin-finance.js';
           try {
             const r = await api("/api/admin/order?resource=contractor", {
               method: "POST", token,
-              body: { action: "preview", order_number: orderNumber, options: JSON.parse(optionsKey) },
+              body: { action: "preview", order_number: orderNumber, options: JSON.parse(optionsKey), ...JSON.parse(purposeKey) },
             });
             if (seq === previewSeq.current) setPreview({ text: r.text || "", error: "" });
           } catch (e) {
@@ -1437,7 +1514,7 @@ import finance from '../../lib/admin-finance.js';
           }
         }, 350);
         return () => clearTimeout(timer);
-      }, [previewOpen, optionsKey, orderNumber, sent]);
+      }, [previewOpen, optionsKey, purposeKey, orderNumber, sent]);
 
       // Повтор із тим самим request_id безпечний: скрипт не надішле дубль, а поки
       // перший запит ще триває — відповідає «pending». Повторюємо лише тайм-аути й
@@ -1479,15 +1556,22 @@ import finance from '../../lib/admin-finance.js';
       async function send() {
         setError("");
         setResult(null);
-        const fp = JSON.stringify({ o: options, f: chosen.map(f => f.id) });
+        if (purpose === "processing" && !procDue) {
+          setError("Вкажіть термін опрацювання — на цю дату в Google Календарі буде нагадування");
+          return;
+        }
+        const fp = JSON.stringify({ o: options, f: chosen.map(f => f.id), p: purposeKey });
         if (pendingRef.current.fp !== fp) pendingRef.current = { fp, rid: newRequestId() };
         const rid = pendingRef.current.rid;
         const lines = [], failed = [];
         try {
-          setPhase("Надсилаю повідомлення…");
-          const r = await callContractor({ action: "send", order_number: orderNumber, options, request_id: rid });
-          lines.push(r.update ? "Оновлення замовлення надіслано" : "Замовлення надіслано підряднику");
-          if (r.status_changed) lines.push("Статус змінено: «Нове» → «В роботі»");
+          setPhase(purpose === "processing" ? "Надсилаю на опрацювання…" : "Надсилаю повідомлення…");
+          const r = await callContractor({ action: "send", order_number: orderNumber, options, request_id: rid, ...purposeBody });
+          lines.push(purpose === "processing"
+            ? "Надіслано на опрацювання, термін до " + sentLabel(procDue) + " — нагадування в Google Календарі"
+            : (r.update && lastWasProcessing ? "Погоджено — надіслано у виробництво"
+              : r.update ? "Оновлення замовлення надіслано" : "Замовлення надіслано у виробництво"));
+          if (r.status_changed) lines.push("Статус змінено: «" + (r.prev_status || "—") + "» → «" + (r.new_status || "—") + "»");
           await sendFiles(chosen, rid, lines, failed);
           pendingRef.current = { fp: "", rid: "" };
           setPicked({});
@@ -1514,6 +1598,19 @@ import finance from '../../lib/admin-finance.js';
         }
       }
 
+      // Підрядник попросив більше часу — міняємо термін без нового повідомлення в чат.
+      async function saveProcessingOnly() {
+        if (!procDue) { setError("Вкажіть термін опрацювання"); return; }
+        setError("");
+        setProcSaved("");
+        try {
+          await onSaveProcessing({ processing_due: procDue, processing_task: procTask.trim() });
+          setProcSaved("Термін збережено — нагадування в Google Календарі оновлено.");
+        } catch (e) {
+          setError(e.message || "Не вдалося зберегти термін");
+        }
+      }
+
       return (
         <section ref={sectionRef} className={"contractor-send" + (highlight ? " highlight" : "")} aria-labelledby="contractor-send-title">
           <div className="section-title" id="contractor-send-title">Надіслати підряднику</div>
@@ -1523,6 +1620,47 @@ import finance from '../../lib/admin-finance.js';
                 + ". Наступне піде в ту саму гілку як «Оновлено замовлення»."
               : "Ще не надсилалось. Позначте, що саме побачить підрядник."}
           </p>
+          <div className="send-purpose" role="radiogroup" aria-label="Навіщо надсилаємо підряднику">
+            <button type="button" role="radio" aria-checked={purpose === "processing"}
+              className={"proc" + (purpose === "processing" ? " active" : "")}
+              onClick={() => setPurpose("processing")}>
+              На опрацювання
+              <small>вартість, конструктив — ще не у виробництво</small>
+            </button>
+            <button type="button" role="radio" aria-checked={purpose === "production"}
+              className={purpose === "production" ? "active" : ""}
+              onClick={() => setPurpose("production")}>
+              У виробництво
+              <small>{lastWasProcessing ? "погоджено після опрацювання" : "виготовлення замовлення"}</small>
+            </button>
+          </div>
+          {purpose === "processing" && (
+            <div className="send-processing">
+              <div className="field">
+                <label htmlFor="proc-task">Що зробити підряднику</label>
+                <input id="proc-task" value={procTask} maxLength={500}
+                  placeholder="Напр. порахувати виробничу вартість"
+                  onChange={e => setProcTask(e.target.value)} />
+                <div className="send-chips">
+                  {PROCESSING_TASKS.map(t => (
+                    <button type="button" key={t} className={procTask === t ? "active" : ""} onClick={() => setProcTask(t)}>{t}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="field">
+                <label htmlFor="proc-due">Термін опрацювання *</label>
+                <input id="proc-due" type="date" value={procDue} min={todayIsoLocal()}
+                  onChange={e => setProcDue(e.target.value)} />
+                <small className="send-hint">У Google Календарі зʼявиться нагадування — за добу й у сам день о 09:00.</small>
+              </div>
+              {sent && isProcessingStatus && (
+                <button type="button" className="link-btn" disabled={!!phase || !procDue} onClick={saveProcessingOnly}>
+                  Зберегти термін без повторного надсилання
+                </button>
+              )}
+              {procSaved && <div className="send-hint ok">{procSaved}</div>}
+            </div>
+          )}
           <div className="send-options">
             {SEND_GROUPS.map(groupName => {
               const groupItems = shown.filter(o => o.group === groupName);
@@ -1564,7 +1702,7 @@ import finance from '../../lib/admin-finance.js';
           <div className="send-actions">
             <button className="btn" type="button" disabled={!!phase} onClick={send}>
               <Send aria-hidden="true" />
-              {sent ? "Надіслати оновлення" : "Надіслати підряднику"}
+              {sendLabel}
               {chosen.length ? " + " + chosen.length + " " + fileWord(chosen.length) : ""}
             </button>
             <button className="btn secondary" type="button" onClick={() => setPreviewOpen(v => !v)}>
@@ -1609,6 +1747,7 @@ import finance from '../../lib/admin-finance.js';
       const [uploads, setUploads] = useState([]);
       const [fileDrag, setFileDrag] = useState(false);
       const [sendHighlight, setSendHighlight] = useState(false);
+      const [purposeRequest, setPurposeRequest] = useState(null);   // «на опрацювання» / «у виробництво»
       const uploadQueueRef = useRef(Promise.resolve());
       const sendSectionRef = useRef(null);
 
@@ -1628,7 +1767,8 @@ import finance from '../../lib/admin-finance.js';
         loadFiles();
       }, [orderNumber]);
 
-      function focusSendPanel() {
+      function focusSendPanel(purpose) {
+        if (purpose) setPurposeRequest({ purpose, at: Date.now() });
         setSendHighlight(true);
         setTimeout(() => {
           if (sendSectionRef.current) sendSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1637,7 +1777,7 @@ import finance from '../../lib/admin-finance.js';
       }
       const formReady = !!form;
       useEffect(() => {
-        if (focusSend && formReady) focusSendPanel();
+        if (focusSend && formReady) focusSendPanel(focusSend.purpose);
       }, [focusSend, formReady, orderNumber]);
 
       // Файл іде частинами: після обриву зв'язку питаємо Диск, скільки він уже має,
@@ -1719,7 +1859,7 @@ import finance from '../../lib/admin-finance.js';
           setFilesError(e.message || "Не вдалося прибрати файл");
         }
       }
-      // Після надсилання: свіжий статус («В роботі»), позначка «надіслано» й файли.
+      // Після надсилання: свіжий статус (опрацювання / виготовлення), позначка «надіслано» й файли.
       async function refreshAfterSend() {
         try {
           const res = await api("/api/admin/order?order_number=" + encodeURIComponent(orderNumber), { token });
@@ -1728,6 +1868,17 @@ import finance from '../../lib/admin-finance.js';
           if (onChanged) onChanged(res);
         } catch (e) { /* картку оновить наступне відкриття */ }
         loadFiles();
+      }
+      // Термін і завдання опрацювання без повторного надсилання (кидає помилку — її покаже блок).
+      async function saveProcessing(patch) {
+        const res = await api("/api/admin/order", {
+          method: "PATCH",
+          token,
+          body: { order_number: orderNumber, row: form && form.row, patch },
+        });
+        setData(res);
+        applyItemToForm(res, itemIdx);
+        if (onChanged) onChanged(res);
       }
 
       function applyItemToForm(res, idx) {
@@ -1824,11 +1975,20 @@ import finance from '../../lib/admin-finance.js';
 
       async function changeStatus(newStatus) {
         if (!confirmStatusChange(form.status, newStatus)) return;
-        const alreadySent = !!(data && data.order && data.order.contractor_sent);
+        const prevOrder = (data && data.order) || {};
+        const alreadySent = !!prevOrder.contractor_sent;
+        const prevStatus = form.status;
         setForm({ ...form, status: newStatus });
         // Підряднику надсилає лише кнопка «Надіслати підряднику» — з пташками.
         await save({ status: newStatus, manual_contractor_send: true });
-        if (newStatus === "В роботі" && !alreadySent) focusSendPanel();
+        // Опрацювання — завжди блок надсилання (потрібні завдання й термін).
+        // Виготовлення — якщо ще не надсилали або підрядник щойно опрацьовував:
+        // йому треба сказати, що погоджено й можна виготовляти.
+        if (newStatus === STATUS_PROCESSING) focusSendPanel("processing");
+        else if (newStatus === STATUS_PRODUCTION
+          && (!alreadySent || prevStatus === STATUS_PROCESSING || prevOrder.contractor_purpose === "processing")) {
+          focusSendPanel("production");
+        }
       }
 
       const order = data.order || {};
@@ -2002,6 +2162,8 @@ import finance from '../../lib/admin-finance.js';
               sectionRef={sendSectionRef}
               highlight={sendHighlight}
               onSent={refreshAfterSend}
+              purposeRequest={purposeRequest}
+              onSaveProcessing={saveProcessing}
             />
 
             <div className="section-title">Клієнт і контакти</div>
@@ -2674,9 +2836,14 @@ import finance from '../../lib/admin-finance.js';
             body: { order_number: orderNumber, patch: { status: newStatus, manual_contractor_send: true } },
           });
           onOrderChanged && onOrderChanged(result);
-          // «В роботі», а підряднику ще не надсилали → одразу відкриваємо картку на блоці надсилання.
-          if (newStatus === "В роботі" && !current.contractor_sent && onOpenOrder) {
-            onOpenOrder(orderNumber, { focus: "send" });
+          // Опрацювання — завжди відкриваємо блок надсилання (потрібні завдання й термін).
+          // Виготовлення — якщо підряднику ще не надсилали або він щойно опрацьовував:
+          // йому треба сказати, що погоджено й можна виготовляти.
+          const toProcessing = newStatus === STATUS_PROCESSING;
+          const toProduction = newStatus === STATUS_PRODUCTION && (!current.contractor_sent
+            || current.status === STATUS_PROCESSING || current.contractor_purpose === "processing");
+          if ((toProcessing || toProduction) && onOpenOrder) {
+            onOpenOrder(orderNumber, { focus: "send", purpose: toProcessing ? "processing" : "production" });
           }
         } catch (e) {
           setGroups(prev);
@@ -2900,6 +3067,17 @@ import finance from '../../lib/admin-finance.js';
                                 <div><span>Маржа</span><strong>{money(g.profit)}</strong></div>
                               )}
                             </div>
+                            {/* Термін опрацювання підрядником: прострочений — червоним, не заданий — помаранчевим. */}
+                            {(() => {
+                              const ps = processingState(g.processing_due, g.status);
+                              if (!ps) return null;
+                              return (
+                                <div className={"card-delivery card-processing " + ps.kind} title={ps.hint}>
+                                  <Hourglass aria-hidden="true" />
+                                  <span>{ps.text}</span>
+                                </div>
+                              );
+                            })()}
                             {/* Дата доставки/відправлення: протермінована — червоним. */}
                             {(() => {
                               const dl = deliveryState(g.delivery_date, g.status);
@@ -2923,7 +3101,7 @@ import finance from '../../lib/admin-finance.js';
                               <div className="card-payment margin">Маржа до отримання: {money(g.margin_left)}</div>
                             )}
                             {/* Лише явне false зі свіжих даних — старий кеш сторінки не знає цього поля. */}
-                            {g.contractor_sent === false && (g.status === "В роботі" || g.status === "Готове") && (
+                            {g.contractor_sent === false && [STATUS_PROCESSING, STATUS_PRODUCTION, "Готове"].includes(g.status) && (
                               <div className="card-payment unsent">Не надіслано підряднику</div>
                             )}
                             <select
@@ -2995,7 +3173,8 @@ import finance from '../../lib/admin-finance.js';
 
     const STATUS_CHART_COLORS = {
       "Нове": "#c9a227",
-      "В роботі": "#3b82f6",
+      [STATUS_PROCESSING]: "#f97316",
+      [STATUS_PRODUCTION]: "#3b82f6",
       "Готове": "#14b8a6",
       "Відправлено": "#a855f7",
       "Завершено": "#22c55e",
@@ -3989,15 +4168,15 @@ import finance from '../../lib/admin-finance.js';
         setOrdersError("");
       }
 
-      // Картку можна відкрити одразу на блоці «Надіслати підряднику» (після «В роботі»).
-      const [focusSend, setFocusSend] = useState(false);
+      // Картку можна відкрити одразу на блоці «Надіслати підряднику» (після зміни статусу у воронці).
+      const [focusSend, setFocusSend] = useState(null);   // { purpose, at } — відкрити блок надсилання
       function openOrder(num, opts) {
-        setFocusSend(!!(opts && opts.focus === "send"));
+        setFocusSend(opts && opts.focus === "send" ? { purpose: opts.purpose || "", at: Date.now() } : null);
         setSelectedOrder(num);
         window.location.hash = "order/" + encodeURIComponent(num);
       }
       function closeOrder() {
-        setFocusSend(false);
+        setFocusSend(null);
         setSelectedOrder(null);
         if (window.location.hash.startsWith("#order/")) {
           history.replaceState(null, "", window.location.pathname + window.location.search);
