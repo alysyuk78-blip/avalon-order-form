@@ -54,11 +54,50 @@ function testPaymentMetrics() {
   assert.equal(repriced.marginDebt, 200, "після перерахунку борг має дорівнювати новому залишку");
 }
 
-function loadAppsScript() {
+function loadAppsScript(extra) {
   const code = fs.readFileSync(path.join(__dirname, "..", "google-apps-script-v2.js"), "utf8");
-  const context = vm.createContext({ console });
+  const context = vm.createContext(Object.assign({ console }, extra || {}));
   vm.runInContext(code, context);
   return context;
+}
+
+// Ковш, пергола, стенд — не кошики: ціну веде менеджер, тож розкладка «м² × ₴/м²»
+// у повідомленні підряднику для них не має зʼявлятися.
+function testProductionMessageSkipsBasketRateForOtherProducts() {
+  const context = loadAppsScript({
+    Utilities: { formatDate: () => "11.09.2026, 10:18" },
+    Date,
+  });
+  const base = { order_number: "ORD-070926-003", first_name: "Олександр", phone: "+380000000000" };
+
+  const other = context.buildProductionMsg_(Object.assign({}, base, {
+    items: [{
+      product_type: "other", basket_model_name: "Ковш для трактора",
+      size_w: 1000, size_h: 500, size_d: 660, quantity: 1, unit: "шт.", cost_total: 9650,
+    }],
+  }));
+  assert.ok(!/₴\/м²/.test(other), "для довільного виробу не має бути ціни за м²");
+  assert.ok(!/Кошик:/.test(other), "довільний виріб не можна називати кошиком");
+  assert.ok(/Вартість виробнича/.test(other) && /9\s*650/.test(other), "собівартість менеджера лишається");
+
+  const bracket = context.buildProductionMsg_(Object.assign({}, base, {
+    items: [{
+      product_type: "bracket", basket_model_name: "AVL-K-01",
+      size_w: 500, size_h: 500, size_d: 500, quantity: 3, unit: "комп.", cost_total: 1800,
+    }],
+  }));
+  assert.ok(!/₴\/м²/.test(bracket), "кронштейни теж не рахуються за площею кошика");
+
+  // Кошик рахується як раніше.
+  const basket = context.buildProductionMsg_(Object.assign({}, base, {
+    items: [{
+      product_type: "basket", basket_type: "Стандарт",
+      construction_type: "Суцільний · AVL-01 + кришка", has_cover: true,
+      size_w: 1000, size_h: 500, size_d: 300, quantity: 2, unit: "шт.",
+    }],
+  }));
+  assert.ok(/Кошик: 0\.80 м² × <b>2 030 ₴\/м²<\/b>/.test(basket), "кошик має лишитись із розкладкою по м²");
+  assert.ok(/Верхня кришка: 0\.30 м²/.test(basket));
 }
 
 function testStandardRecalculationClearsStaleDiscount() {
@@ -335,6 +374,7 @@ testCommissionFromMargin();
 testContractorDebtIsNetOfCommission();
 testSheetCommissionFormula();
 testSheetMarginDue();
+testProductionMessageSkipsBasketRateForOtherProducts();
 testStandardRecalculationClearsStaleDiscount();
 testPaymentDeletionChecksStableIdentity();
 testBootstrapReadsPaymentsOnce();

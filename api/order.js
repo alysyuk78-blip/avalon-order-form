@@ -22,6 +22,12 @@ const MARKUP = 1 / (1 - 0.2593); // ~1.3503 — та сама націнка, щ
 const COVER_COST_PER_M2 = 1920;
 
 function productionBreakdown(it) {
+  // Розкладка «м² × ₴/м²» чинна ЛИШЕ для кошиків. Кронштейни й довільні вироби
+  // мають ціну від менеджера — рахувати їх за площею кошика означало б показати
+  // підряднику вигадану суму.
+  if (it.product_type === "bracket" || it.product_type === "other") {
+    return { hasCover: false, basketArea: 0, coverArea: 0, basketRate: 0, coverRate: 0, basketCost: 0, coverCost: 0, total: 0 };
+  }
   const qty = Number(it.quantity) || 1;
   const w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
   const hasCover = Boolean(it.has_cover) || String(it.construction_type || "").toLowerCase().includes("кришка");
