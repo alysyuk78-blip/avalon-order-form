@@ -210,7 +210,8 @@
       height: calc(100dvh - var(--kanban-top, 300px) - 16px); min-height: 460px;
       padding-bottom: 10px; max-width: 100%;
     }
-    .kanban .col { flex: 0 0 290px; width: 290px; min-height: 0; overflow: hidden; scroll-snap-align: start; }
+    /* 240 px: номер, скріпка й дата ще в один рядок, а порожнього поля менше (власник). */
+    .kanban .col { flex: 0 0 240px; width: 240px; min-height: 0; overflow: hidden; scroll-snap-align: start; }
     .kanban .col-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start; }
     .col {
       background: rgba(255,255,255,0.45); border: 0; border-radius: var(--radius);
