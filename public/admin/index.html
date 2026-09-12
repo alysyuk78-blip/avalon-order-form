@@ -669,6 +669,9 @@
     .card-payment.unsent { background: rgba(59,130,246,.10); color: #1d4ed8; }
     @media (max-width: 520px) { .send-options { grid-template-columns: 1fr; } }
 
+    /* «Запамʼятати вхід»: на своєму компʼютері кабінет відкривається без пароля. */
+    .login-remember { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--muted); cursor: pointer; }
+    .login-remember input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
     .login-credits { margin-top: 14px; font-size: 11px; color: #9aa49d; text-align: center; }
     .login-credits a { color: #9aa49d; text-decoration: underline; }
 

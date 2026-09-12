@@ -477,6 +477,30 @@ import finance from '../../lib/admin-finance.js';
         ...resolveOrderStatus(statusesByOrder[group.order_number] || [group.status]),
       }));
     }
+    /**
+     * Токен входу. «Запамʼятати вхід» кладе його в localStorage (живе 30 днів, тож
+     * кабінет відкривається одразу), без галочки — у sessionStorage, і він зникає
+     * разом із вікном.
+     */
+    function readToken() {
+      try {
+        return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || "";
+      } catch (_) {
+        return "";
+      }
+    }
+    function saveToken(token, remember) {
+      try {
+        clearToken();
+        (remember ? localStorage : sessionStorage).setItem(TOKEN_KEY, token);
+      } catch (_) {}
+    }
+    function clearToken() {
+      try {
+        localStorage.removeItem(TOKEN_KEY);
+        sessionStorage.removeItem(TOKEN_KEY);
+      } catch (_) {}
+    }
     function readAdminCache() {
       try {
         const cached = JSON.parse(localStorage.getItem(ORDERS_CACHE_KEY) || "null");
@@ -970,7 +994,7 @@ import finance from '../../lib/admin-finance.js';
       }
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) {
-        sessionStorage.removeItem(TOKEN_KEY);
+        clearToken();
         window.dispatchEvent(new Event("admin-unauthorized"));
       }
       if (!res.ok) {
@@ -1141,12 +1165,14 @@ import finance from '../../lib/admin-finance.js';
       const [password, setPassword] = useState("");
       const [error, setError] = useState("");
       const [loading, setLoading] = useState(false);
+      // Свій компʼютер: вхід памʼятається 30 днів, і кабінет відкривається одразу з даними.
+      const [remember, setRemember] = useState(true);
       async function submit(e) {
         e.preventDefault();
         setLoading(true); setError("");
         try {
-          const data = await api("/api/admin/login", { method: "POST", body: { password } });
-          onLogin(data.token);
+          const data = await api("/api/admin/login", { method: "POST", body: { password, remember } });
+          onLogin(data.token, remember);
         } catch (err) {
           setError(err.message || "Помилка входу");
         } finally {
@@ -1163,6 +1189,10 @@ import finance from '../../lib/admin-finance.js';
               <label>Пароль</label>
               <input type="password" autoFocus value={password} onChange={e => setPassword(e.target.value)} placeholder="ADMIN_PASSWORD" />
             </div>
+            <label className="login-remember">
+              <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
+              <span>Запамʼятати вхід на цьому компʼютері</span>
+            </label>
             {error && <div className="error">{error}</div>}
             <button className="btn" style={{ width: "100%", marginTop: 12 }} disabled={loading || !password}>
               {loading ? "Перевірка…" : "Увійти"}
@@ -4129,7 +4159,7 @@ import finance from '../../lib/admin-finance.js';
     }
 
     function App() {
-      const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) || "");
+      const [token, setToken] = useState(() => readToken());
       const [tab, setTab] = useState("orders");
       const [groups, setGroups] = useState(() => {
         const cached = readAdminCache();
@@ -4162,13 +4192,13 @@ import finance from '../../lib/admin-finance.js';
       // поверх щойно збереженого замовлення.
       const mutationRevisionRef = useRef(0);
 
-      function login(t) {
-        sessionStorage.setItem(TOKEN_KEY, t);
+      function login(t, remember) {
+        saveToken(t, remember);
         setToken(t);
         setSessionMsg("");
       }
       function logout(msg) {
-        sessionStorage.removeItem(TOKEN_KEY);
+        clearToken();
         clearAdminCache();
         setToken("");
         setGroups([]);

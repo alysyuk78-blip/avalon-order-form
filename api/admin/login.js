@@ -1,4 +1,4 @@
-const { checkPassword, issueToken, setAdminCors, handleOptions } = require("../../lib/admin-auth");
+const { checkPassword, issueToken, setAdminCors, handleOptions, TOKEN_TTL_MS, REMEMBER_TTL_MS } = require("../../lib/admin-auth");
 
 const loginAttempts = new Map();
 const MAX_ATTEMPTS = 5;
@@ -54,12 +54,14 @@ module.exports = async function handler(req, res) {
 
   loginAttempts.delete(key);
 
-  const token = issueToken();
-  const maxAge = 12 * 60 * 60;
+  // «Запамʼятати вхід» — довгий токен (30 днів) для власного компʼютера.
+  const remember = !!(req.body && req.body.remember);
+  const token = issueToken(remember);
+  const maxAge = Math.round((remember ? REMEMBER_TTL_MS : TOKEN_TTL_MS) / 1000);
   const secure = process.env.NODE_ENV === "production" || process.env.VERCEL ? "; Secure" : "";
   res.setHeader(
     "Set-Cookie",
     `avalon_admin=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`
   );
-  return res.status(200).json({ ok: true, token, expires_in: maxAge });
+  return res.status(200).json({ ok: true, token, expires_in: maxAge, remember });
 };
