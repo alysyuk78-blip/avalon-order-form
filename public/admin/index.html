@@ -230,7 +230,7 @@
       min-height: 280px; display: flex; flex-direction: column; overflow: visible;
     }
     .col h3 {
-      margin: 0; padding: 11px 12px 9px; font-size: 12px; letter-spacing: 0.06em;
+      margin: 0; padding: 11px 8px 9px; font-size: 12px; letter-spacing: 0.06em;
       text-transform: uppercase; color: var(--muted);
       display: flex; flex-direction: column; gap: 5px;
       position: relative; z-index: 1;   /* колонка гортає картки сама — заголовок і так на місці */
@@ -258,7 +258,10 @@
     .col-metric.debt { color: #b54842; }
     .col-metric.margin { color: #8f7340; }
     .col-metrics.is-cancelled .col-metric { color: var(--muted); }
-    .col-body { padding: 8px; display: grid; gap: 8px; }
+    /* minmax(0, 1fr): картка ніколи не ширша за стовпчик, тож поля зліва й справа
+       однакові. Без цього довгий номер зі скріпкою розпирав картку, і вона зміщувалась
+       управо (8 px зліва проти 4 справа). */
+    .col-body { padding: 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
     .orders-totals {
       display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center;
       gap: 0; margin-bottom: 10px;
@@ -465,16 +468,18 @@
     .col.st-missing h3 { color: var(--st-missing-fg); }
     .card {
       background: var(--panel); border: 0; border-radius: 12px;
-      padding: 12px; box-shadow: 0 7px 22px rgba(28,33,36,.075); cursor: pointer; text-align: left;
+      /* Бічні поля 10 px (зверху/знизу 12): у стовпчику 240 px номер, скріпка з
+         двозначною кількістю файлів і дата лишаються в один рядок. */
+      padding: 12px 10px; box-shadow: 0 7px 22px rgba(28,33,36,.075); cursor: pointer; text-align: left;
       transition: transform .18s ease, box-shadow .18s ease;
     }
     .card:hover { transform: translateY(-2px); box-shadow: 0 14px 28px rgba(28,33,36,0.12); }
-    .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .card-head { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
     .card-head > span { color: #8a9298; font-size: 9.5px; font-weight: 620; white-space: nowrap; }
     /* Скріпка біля номера: до замовлення прикріплено файли. */
     .card-head .num { display: inline-flex; align-items: center; min-width: 0; }
     .files-badge {
-      display: inline-flex; align-items: center; gap: 1px; margin-left: 6px; vertical-align: middle;
+      display: inline-flex; align-items: center; gap: 1px; margin-left: 3px; vertical-align: middle;
       color: var(--muted); font-size: 10.5px; font-weight: 700; line-height: 1;
     }
     .files-badge svg { width: 13px; height: 13px; flex: none; stroke-width: 2.2; }

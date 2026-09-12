@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 
 const OUT_FILE = "public/admin/assets/admin.js";
+const PAGE_FILE = "public/admin/index.html";
 const VERSION_FILE = "public/admin/version.json";
 const PLACEHOLDER = "__BUILD_ID_PLACEHOLDER__";
 
@@ -24,8 +25,11 @@ await build({
   define: { __ADMIN_BUILD__: JSON.stringify(PLACEHOLDER) },
 });
 
+// У хеш входить і index.html: усі стилі кабінету лежать там, і зміна лише стилів
+// теж має вмикати кнопку «Оновити».
 const bundle = await readFile(OUT_FILE, "utf8");
-const buildId = createHash("sha256").update(bundle).digest("hex").slice(0, 12);
+const page = await readFile(PAGE_FILE, "utf8");
+const buildId = createHash("sha256").update(bundle).update("\n").update(page).digest("hex").slice(0, 12);
 
 await writeFile(OUT_FILE, bundle.split(PLACEHOLDER).join(buildId));
 await writeFile(VERSION_FILE, JSON.stringify({ build: buildId }) + "\n");
