@@ -79,7 +79,21 @@ import finance from '../../lib/admin-finance.js';
     const PAYMENT_METHODS = ["Готівка","На карту","На рахунок ФО-П","На рахунок ТОВ","Накладений платіж","Інше"];
     const TOKEN_KEY = "avalon_admin_token";
     const CARDS_COLLAPSED_KEY = "avalon_admin_cards_collapsed_v1";
-    const ORDERS_CACHE_KEY = "avalon_admin_orders_cache_v1";
+    // Кеш даних живе в localStorage (раніше sessionStorage): після закриття вікна він
+    // зберігається, тож наступного разу кабінет малює замовлення одразу, а свіжі дані
+    // підвантажує вже у фоні.
+    const ORDERS_CACHE_KEY = "avalon_admin_orders_cache_v2";
+    const FILES_CACHE_KEY = "avalon_admin_files_cache_v1";
+    // Версія цієї збірки (підставляє scripts/build-admin.mjs) — порівнюється з
+    // /admin/version.json, щоб запропонувати оновлення після деплою.
+    const BUILD_ID = typeof __ADMIN_BUILD__ === "string" ? __ADMIN_BUILD__ : "dev";
+    // Скільки кабінет чекає на відповідь, перш ніж показати помилку з кнопкою повтору.
+    // Без цього зависла відповідь лишала вікно в стані «вічного завантаження».
+    const API_READ_TIMEOUT_MS = 60000;
+    const API_WRITE_TIMEOUT_MS = 90000;
+    // Дані, старші за цей час, оновлюються самі, коли власник повертається у вікно.
+    const STALE_AFTER_MS = 3 * 60 * 1000;
+    const VERSION_CHECK_MS = 5 * 60 * 1000;
     const TODO_COLLAPSED_KEY = "avalon_admin_todo_collapsed_v1";
     const ICON_COMPONENTS = {
       search: Search,
@@ -465,7 +479,7 @@ import finance from '../../lib/admin-finance.js';
     }
     function readAdminCache() {
       try {
-        const cached = JSON.parse(sessionStorage.getItem(ORDERS_CACHE_KEY) || "null");
+        const cached = JSON.parse(localStorage.getItem(ORDERS_CACHE_KEY) || "null");
         return cached && typeof cached === "object" ? cached : {};
       } catch (_) {
         return {};
@@ -473,11 +487,42 @@ import finance from '../../lib/admin-finance.js';
     }
     function writeAdminCache(patch) {
       try {
-        sessionStorage.setItem(ORDERS_CACHE_KEY, JSON.stringify({
+        localStorage.setItem(ORDERS_CACHE_KEY, JSON.stringify({
           ...readAdminCache(),
           ...patch,
           savedAt: Date.now(),
         }));
+      } catch (_) {}
+    }
+    function clearAdminCache() {
+      try {
+        localStorage.removeItem(ORDERS_CACHE_KEY);
+        localStorage.removeItem(FILES_CACHE_KEY);
+      } catch (_) {}
+    }
+    /** Список файлів замовлення з минулого разу — щоб картка не чекала на Google Диск. */
+    function readFilesCache(orderNumber) {
+      try {
+        const all = JSON.parse(localStorage.getItem(FILES_CACHE_KEY) || "null");
+        const entry = all && typeof all === "object" ? all[orderNumber] : null;
+        return entry && Array.isArray(entry.files) ? entry.files : null;
+      } catch (_) {
+        return null;
+      }
+    }
+    function writeFilesCache(orderNumber, files) {
+      try {
+        const all = JSON.parse(localStorage.getItem(FILES_CACHE_KEY) || "null") || {};
+        all[orderNumber] = { files, savedAt: Date.now() };
+        // Тримаємо лише 60 останніх замовлень, щоб сховище не росло безмежно.
+        const keys = Object.keys(all);
+        if (keys.length > 60) {
+          keys
+            .sort((a, b) => (all[a].savedAt || 0) - (all[b].savedAt || 0))
+            .slice(0, keys.length - 60)
+            .forEach(k => { delete all[k]; });
+        }
+        localStorage.setItem(FILES_CACHE_KEY, JSON.stringify(all));
       } catch (_) {}
     }
     function orderDetailFromSnapshot(orderNumber, groups, orderItems, payments) {
@@ -879,15 +924,50 @@ import finance from '../../lib/admin-finance.js';
       }).sort((a, b) => b.orders_count - a.orders_count || String(a.primary_name).localeCompare(String(b.primary_name), "uk"));
     }
 
-    async function api(path, { method = "GET", body, token } = {}) {
+    async function api(path, { method = "GET", body, token, timeoutMs } = {}) {
       const headers = { "Content-Type": "application/json" };
       if (token) headers.Authorization = "Bearer " + token;
-      const res = await fetch(path, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-        credentials: "same-origin",
-      });
+      const isRead = method === "GET";
+      const limit = timeoutMs || (isRead ? API_READ_TIMEOUT_MS : API_WRITE_TIMEOUT_MS);
+
+      async function once() {
+        // Без тайм-ауту зависла відповідь лишала кабінет у «вічному завантаженні»,
+        // і вікно доводилось закривати та відкривати знову.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), limit);
+        try {
+          return await fetch(path, {
+            method,
+            headers,
+            body: body ? JSON.stringify(body) : undefined,
+            credentials: "same-origin",
+            signal: controller.signal,
+          });
+        } catch (e) {
+          if (e && e.name === "AbortError") {
+            const err = new Error(`Сервер не відповів за ${Math.round(limit / 1000)} с`);
+            err.code = "TIMEOUT";
+            throw err;
+          }
+          const err = new Error("Немає звʼязку з сервером");
+          err.code = "NETWORK";
+          throw err;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      let res;
+      try {
+        res = await once();
+      } catch (e) {
+        // Читання безпечно повторити: другий запит нічого не змінює, а короткий збій
+        // мережі трапляється частіше за реальну недоступність. Після повного
+        // тайм-ауту не повторюємо — інакше чекати довелось би вдвічі довше.
+        if (!isRead || e.code === "TIMEOUT") throw e;
+        await new Promise(r => setTimeout(r, 700));
+        res = await once();
+      }
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) {
         sessionStorage.removeItem(TOKEN_KEY);
@@ -1768,14 +1848,18 @@ import finance from '../../lib/admin-finance.js';
         setFilesError("");
         try {
           const res = await api("/api/admin/order?resource=files&order_number=" + encodeURIComponent(orderNumber), { token });
-          setFiles(res.files || []);
+          const next = res.files || [];
+          setFiles(next);
+          writeFilesCache(orderNumber, next);
         } catch (e) {
           setFiles(cur => cur || []);
           setFilesError(e.message || "Не вдалося завантажити список файлів");
         }
       }
       useEffect(() => {
-        setFiles(null);
+        // Google Диск відповідає кілька секунд, тому спершу показуємо список із
+        // минулого разу, а тоді мовчки замінюємо його свіжим.
+        setFiles(readFilesCache(orderNumber));
         setUploads([]);
         loadFiles();
       }, [orderNumber]);
@@ -1842,7 +1926,11 @@ import finance from '../../lib/admin-finance.js';
         uploadQueueRef.current = uploadQueueRef.current.then(async () => {
           try {
             const saved = await uploadOne(entry.file, entry.key);
-            setFiles(cur => (cur || []).filter(x => x.id !== saved.id).concat(saved));
+            setFiles(cur => {
+              const next = (cur || []).filter(x => x.id !== saved.id).concat(saved);
+              writeFilesCache(orderNumber, next);
+              return next;
+            });
             setUploads(list => list.filter(u => u.key !== entry.key));
           } catch (e) {
             setUploads(list => list.map(u => u.key === entry.key
@@ -1873,6 +1961,7 @@ import finance from '../../lib/admin-finance.js';
           const res = await api("/api/admin/order?resource=files&order_number=" + encodeURIComponent(orderNumber)
             + "&file_id=" + encodeURIComponent(f.id), { method: "DELETE", token });
           setFiles(res.files || []);
+          writeFilesCache(orderNumber, res.files || []);
         } catch (e) {
           setFilesError(e.message || "Не вдалося прибрати файл");
         }
@@ -2784,7 +2873,7 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
-    function OrdersView({ token, groups, setGroups, loading, error, setError, refreshOrders, onOrderChanged, onOpenOrder }) {
+    function OrdersView({ token, groups, setGroups, loading, error, setError, refreshOrders, onRetry, onOrderChanged, onOpenOrder }) {
       const [q, setQ] = useState("");
       const [status, setStatus] = useState("");
       const [view, setView] = useState("kanban");
@@ -2965,7 +3054,7 @@ import finance from '../../lib/admin-finance.js';
               </div>
             </div>
           </div>
-          {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
+          <ErrorBar text={error} onRetry={onRetry} style={{ marginBottom: 12 }} />
           {creating && (
             <NewOrderDrawer
               token={token}
@@ -2977,10 +3066,12 @@ import finance from '../../lib/admin-finance.js';
               }}
             />
           )}
-          {loading && <div className="empty">Завантаження замовлень…</div>}
+          {/* Поки є збережений знімок — не ховаємо картки за написом «Завантаження»:
+              дані оновлюються у фоні, а обертання іконки ↻ показує, що триває запит. */}
+          {loading && !groups.length && <div className="empty">Завантаження замовлень…</div>}
           {!loading && !error && !filteredGroups.length && <div className="empty">Замовлень не знайдено</div>}
 
-          {(!loading || filteredGroups.length > 0) && filteredGroups.length > 0 && (
+          {filteredGroups.length > 0 && (
             <div className="orders-totals" role="group" aria-label="Підсумок замовлень">
               <div className="summary-metric summary-count" title="Кількість замовлень без скасованих">
                 <span>Замовлень</span>
@@ -3430,7 +3521,7 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
-    function DashboardView({ token, groups, expenses, payments, payouts, loading, error, refreshData, onOpenOrder }) {
+    function DashboardView({ token, groups, expenses, payments, payouts, loading, error, refreshData, onRetry, onOpenOrder }) {
       const [period, setPeriod] = useState("all");
       // Замовлення, де оплата позначена галочкою, але журналу платежів немає.
       const legacyPayments = useMemo(() => {
@@ -3507,8 +3598,8 @@ import finance from '../../lib/admin-finance.js';
 
       const reminders = useMemo(() => buildReminders(groups), [groups]);
 
-      if (error) return <div className="error">{error}</div>;
-      if (loading) return <div className="empty">Завантаження зведення…</div>;
+      if (error && !groups.length) return <ErrorBar text={error} onRetry={onRetry} />;
+      if (loading && !groups.length) return <div className="empty">Завантаження зведення…</div>;
 
       const periodLabels = [
         { id: "all", label: "Увесь час" },
@@ -3538,6 +3629,7 @@ import finance from '../../lib/admin-finance.js';
           <div className="dashboard-basis">
             Виручка, собівартість і валова маржа — за датою замовлення. Надходження, виплати та витрати — за датою операції.
           </div>
+          <ErrorBar text={error} onRetry={onRetry} style={{ marginBottom: 12 }} />
 
           {reminders.length > 0 && (
             <div className="panel">
@@ -3861,7 +3953,7 @@ import finance from '../../lib/admin-finance.js';
     }
 
 
-    function ClientsView({ token, groups, loading, error, refreshOrders, onOpenOrder }) {
+    function ClientsView({ token, groups, loading, error, refreshOrders, onRetry, onOpenOrder }) {
       const [q, setQ] = useState("");
       const [selected, setSelected] = useState(null);
       const clients = useMemo(() => buildClientsDirectory(groups), [groups]);
@@ -3896,10 +3988,10 @@ import finance from '../../lib/admin-finance.js';
               <span style={{ color: "var(--muted)", fontSize: 13 }}>{filtered.length} клієнтів</span>
             </div>
           </div>
-          {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
-          {loading && <div className="empty">Завантаження довідника…</div>}
+          <ErrorBar text={error} onRetry={onRetry} style={{ marginBottom: 12 }} />
+          {loading && !groups.length && <div className="empty">Завантаження довідника…</div>}
           {!loading && !filtered.length && <div className="empty">Клієнтів не знайдено</div>}
-          {!loading && !!filtered.length && (
+          {!!filtered.length && (
             <div className="panel">
               <div className="table-scroll">
               <table>
@@ -3972,6 +4064,70 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
+    /** Помилка завантаження з кнопкою повтору — щоб не перезавантажувати вікно вручну. */
+    function ErrorBar({ text, onRetry, style }) {
+      if (!text) return null;
+      return (
+        <div className="error error-bar" style={style}>
+          <span>{text}</span>
+          {onRetry && (
+            <button type="button" className="ghost error-retry" onClick={onRetry}>
+              Спробувати ще раз
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    /**
+     * Слідкує за версією кабінету: після деплою браузер може лишити в памʼяті стару
+     * сторінку, і власник бачить CRM «без змін». Порівнюємо /admin/version.json із
+     * версією цієї збірки й пропонуємо оновитись.
+     */
+    function useNewVersion() {
+      const [stale, setStale] = useState(false);
+      useEffect(() => {
+        if (BUILD_ID === "dev") return;
+        let alive = true;
+        async function check({ skipHidden = true } = {}) {
+          // У прихованому вікні не опитуємо сервер даремно, але перша перевірка після
+          // відкриття кабінету робиться завжди.
+          if (!alive || (skipHidden && document.visibilityState === "hidden")) return;
+          try {
+            const res = await fetch("/admin/version.json", { cache: "no-store" });
+            if (!res.ok) return;
+            const data = await res.json();
+            if (alive && data && data.build && data.build !== BUILD_ID) setStale(true);
+          } catch (_) {
+            /* немає мережі — просто спробуємо наступного разу */
+          }
+        }
+        const onWake = () => check();
+        const timer = setInterval(onWake, VERSION_CHECK_MS);
+        document.addEventListener("visibilitychange", onWake);
+        window.addEventListener("focus", onWake);
+        check({ skipHidden: false });
+        return () => {
+          alive = false;
+          clearInterval(timer);
+          document.removeEventListener("visibilitychange", onWake);
+          window.removeEventListener("focus", onWake);
+        };
+      }, []);
+      return stale;
+    }
+
+    function UpdateBanner() {
+      const stale = useNewVersion();
+      if (!stale) return null;
+      return (
+        <div className="update-banner">
+          <span>Вийшла нова версія CRM.</span>
+          <button type="button" onClick={() => window.location.reload()}>Оновити</button>
+        </div>
+      );
+    }
+
     function App() {
       const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) || "");
       const [tab, setTab] = useState("orders");
@@ -4013,7 +4169,7 @@ import finance from '../../lib/admin-finance.js';
       }
       function logout(msg) {
         sessionStorage.removeItem(TOKEN_KEY);
-        sessionStorage.removeItem(ORDERS_CACHE_KEY);
+        clearAdminCache();
         setToken("");
         setGroups([]);
         setOrderItems([]);
@@ -4246,6 +4402,24 @@ import finance from '../../lib/admin-finance.js';
         }
       }, [token]);
 
+      // Повернувся у вікно CRM — тихо підтягуємо дані, якщо вони вже застаріли.
+      // На екрані при цьому лишається попередній знімок, тож нічого не «блимає».
+      useEffect(() => {
+        if (!token) return;
+        function maybeRefresh() {
+          if (document.visibilityState === "hidden") return;
+          const savedAt = Number(readAdminCache().savedAt) || 0;
+          if (Date.now() - savedAt < STALE_AFTER_MS) return;
+          refreshData().catch(() => {});
+        }
+        document.addEventListener("visibilitychange", maybeRefresh);
+        window.addEventListener("focus", maybeRefresh);
+        return () => {
+          document.removeEventListener("visibilitychange", maybeRefresh);
+          window.removeEventListener("focus", maybeRefresh);
+        };
+      }, [token]);
+
       useEffect(() => {
         const header = topRef.current;
         if (!token || !header) return;
@@ -4264,6 +4438,7 @@ import finance from '../../lib/admin-finance.js';
 
       if (!token) return (
         <>
+          <UpdateBanner />
           {sessionMsg && <div className="error" style={{ textAlign: "center", padding: 12 }}>{sessionMsg}</div>}
           <Login onLogin={login} />
         </>
@@ -4272,6 +4447,7 @@ import finance from '../../lib/admin-finance.js';
       return (
         <>
         <TooltipLayer />
+        <UpdateBanner />
         <div className="app">
           <div className="top" ref={topRef}>
             <div className="brand">
@@ -4308,6 +4484,7 @@ import finance from '../../lib/admin-finance.js';
                 error={ordersError}
                 setError={setOrdersError}
                 refreshOrders={refreshOrders}
+                onRetry={() => refreshData().catch(() => {})}
                 onOrderChanged={applyOrderUpdate}
                 onOpenOrder={openOrder}
               />
@@ -4319,6 +4496,7 @@ import finance from '../../lib/admin-finance.js';
                 loading={dataLoading}
                 error={ordersError}
                 refreshOrders={refreshOrders}
+                onRetry={() => refreshData().catch(() => {})}
                 onOpenOrder={openOrder}
               />
             </div>
@@ -4332,6 +4510,7 @@ import finance from '../../lib/admin-finance.js';
                 loading={dataLoading}
                 error={ordersError}
                 refreshData={refreshData}
+                onRetry={() => refreshData().catch(() => {})}
                 onOpenOrder={openOrder}
               />
             </div>

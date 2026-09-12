@@ -161,6 +161,18 @@
     }
     .field textarea { min-height: 80px; resize: vertical; }
     .error { color: var(--danger); font-size: 13px; margin: 8px 0 0; }
+    /* Помилка завантаження з кнопкою повтору: дані не зникають, і вікно не треба перезапускати. */
+    .error-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .error-retry { font-size: 12px; padding: 4px 10px; }
+    /* Після деплою: пропозиція перезавантажити сторінку (стара лишається в памʼяті вікна). */
+    .update-banner {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      padding: 8px 14px; background: #1f2937; color: #fff; font-size: 13px;
+    }
+    .update-banner button {
+      border: 0; border-radius: 6px; padding: 4px 12px; font-size: 13px; font-weight: 600;
+      background: #fff; color: #111827; cursor: pointer;
+    }
     .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
     .toolbar input[type="search"], .toolbar select {
       border: 0; outline: none; border-radius: 10px; padding: 10px 12px; background: #fff; min-width: 180px;
