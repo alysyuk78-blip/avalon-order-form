@@ -161,7 +161,7 @@ function writeOrderToSheet_(data) {
       // Площа: кошик + верхня кришка (кришка — окрема площа w×d). Для кронштейнів і
       // довільних виробів цю формулу не застосовуємо — «площа ковша» за розкроєм
       // кошика нічого не означає і лише збиває з пантелику в таблиці та звітах.
-      var areaApplies = it.product_type !== "bracket" && it.product_type !== "other";
+      var areaApplies = it.product_type !== "bracket" && it.product_type !== "other" && it.product_type !== "service";
       if (areaApplies && w && h) areaM2 = ((w * h + 2 * d * h) + (it.has_cover ? w * d : 0)) / 1000000;
       if (it.price_total != null && it.price_total !== "") {
         total = Math.round(Number(it.price_total));
@@ -174,7 +174,7 @@ function writeOrderToSheet_(data) {
         costTotal = manualCost;
         total = Math.round(manualCost * MARKUP);
         hasMoney = total > 0;
-      } else if (w && h && it.product_type !== "bracket" && it.product_type !== "other") {
+      } else if (w && h && areaApplies) {
         // Площинна формула — лише для кошиків. Кронштейни й довільні вироби
         // (пергола, стенд…) отримують ціну від менеджера, не з ₴/м².
         var constrLower = String(it.construction_type || "").toLowerCase();
@@ -242,7 +242,8 @@ function writeOrderToSheet_(data) {
       // AO–AS (41–45): виріб, вид, характеристики, одиниця та ID запиту.
       // Вид пишемо явно, щоб підрядник і CRM не вгадували його з тексту конструкції.
       var kind = it.product_type === "bracket" ? "Кронштейни"
-               : it.product_type === "other" ? "Інший виріб" : "Кошик";
+               : it.product_type === "other" ? "Інший виріб"
+               : it.product_type === "service" ? "Послуга" : "Кошик";
       var unit = String(it.unit || (it.product_type === "bracket" ? "комп." : "шт.")).trim();
       sheet.getRange(lastRow, 41, 1, 4).setValues([[
         it.basket_model_name || it.basket_model || "",
@@ -863,6 +864,7 @@ function buildOrderFromRows_(sh, orderNumber) {
     var rowUnit = String(r[43] || "").trim(); // AR — одиниця виміру
     // Вид беремо з колонки AP; для старих рядків (до появи колонки) — за текстом конструкції.
     var kindType = /кронштейн/i.test(rowKind) ? "bracket"
+                 : /послуг/i.test(rowKind) ? "service"
                  : /інш/i.test(rowKind) ? "other"
                  : /кошик/i.test(rowKind) ? "basket"
                  : (/кронштейн|комплект/i.test(String(r[8] || "")) || /^AVL-(K|SK)/i.test(rowModel)) ? "bracket" : "basket";
@@ -953,7 +955,7 @@ function buildProductionMsg_(data, opts) {
     // Розкладка «м² × ₴/м²» чинна ЛИШЕ для кошиків. Кронштейни й довільні вироби
     // (ковш, пергола, стенд…) мають ціну від менеджера, тож рахувати їх за площею
     // кошика — вигадувати цифри, яких підрядник не бачив.
-    if (it.product_type === "other" || it.product_type === "bracket") return zero;
+    if (it.product_type === "other" || it.product_type === "bracket" || it.product_type === "service") return zero;
     var qty = Number(it.quantity) || 1;
     var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
     var hasCover = !!it.has_cover || String(it.construction_type || "").toLowerCase().indexOf("кришка") >= 0;
@@ -983,10 +985,28 @@ function buildProductionMsg_(data, opts) {
   if (show.city && data.city) who.push("🏙 " + esc_(data.city));
   if (who.length) m += "\n👤 <b>ЗАМОВНИК</b>\n" + who.join("\n") + "\n";
 
-  m += "\n🏭 <b>ВИРОБНИЦТВО</b>\n";
+  // Лише послуги (різання, фарбування, гнуття…) — інший заголовок, щоб підрядник одразу
+  // бачив, що це робота з матеріалом, а не виготовлення виробу.
+  var onlyServices = items.every(function (it) { return it.product_type === "service"; });
+  m += onlyServices ? "\n🛠 <b>ПОСЛУГИ</b>\n" : "\n🏭 <b>ВИРОБНИЦТВО</b>\n";
   items.forEach(function (it, i) {
     var color = it.color ? esc_(it.color) + (it.color_custom ? " (" + esc_(it.color_custom) + ")" : "") : "";
     var pattern = it.pattern ? esc_(it.pattern) + (it.pattern_custom ? " (" + esc_(it.pattern_custom) + ")" : "") : "";
+    if (it.product_type === "service") {
+      if (multi) m += "\n🛠 <b>Послуга " + (i + 1) + "</b>\n";
+      // Види робіт кабінет зберігає в колонці «Тип» через «; » — підряднику списком через кому.
+      var ops = String(it.basket_type || "").split(/\s*[;\n]\s*/).filter(function (x) { return x; });
+      var title = String(it.basket_model_name || it.basket_model || "").trim();
+      if (ops.length) m += "• Послуга: <b>" + esc_(ops.join(", ")) + "</b>\n";
+      if (title && title !== ops.join("; ")) m += "• Назва: <b>" + esc_(title) + "</b>\n";
+      if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
+        if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
+      });
+      if (color) m += "• Колір: <b>" + color + "</b>\n";
+      if (Number(it.size_w) > 0) m += "• Розміри (мм): <b>" + it.size_w + "×" + it.size_h + "×" + it.size_d + "</b>\n";
+      m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
+      return;
+    }
     if (it.product_type === "other") {
       if (multi) m += "\n🧱 <b>Виріб " + (i + 1) + "</b>\n";
       if (it.basket_model_name || it.basket_model) m += "• Виріб: <b>" + esc_(it.basket_model_name || it.basket_model) + "</b>\n";
@@ -1418,7 +1438,7 @@ function setupOrders(sheet) {
     "Telegram",          // AM (39)
     "E-mail",            // AN (40)
     "Модель / виріб",    // AO (41): модель кошика (AVL-0X) або назва довільного виробу
-    "Вид виробу",        // AP (42): Кошик / Кронштейни / Інший виріб
+    "Вид виробу",        // AP (42): Кошик / Кронштейни / Інший виріб / Послуга
     "Характеристики",    // AQ (43): опис довільного виробу (пергола, стенд тощо)
     "Одиниця виміру",    // AR (44): шт. / комп. / довільне значення
     "ID запиту",         // AS (45): захист від дублювання після мережевого тайм-ауту
