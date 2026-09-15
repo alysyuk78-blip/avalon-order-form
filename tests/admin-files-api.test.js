@@ -158,6 +158,14 @@ async function run() {
   assert.equal(procSend.payload.processing_due, "2026-09-18");
   assert.equal(procSend.payload.processing_task, "Порахувати виробничу вартість");
 
+  // Власний коментар підряднику доходить і в перегляд, і в надсилання; порожній — не передається.
+  await call(contractor, { method: "POST", body: { action: "preview", order_number: ORD, options: {}, comment: "  Терміново, клієнт чекає  " } });
+  assert.equal(calls.pop().payload.comment, "Терміново, клієнт чекає");
+  await call(contractor, { method: "POST", body: { action: "send", order_number: ORD, request_id: "rid-c", options: {}, comment: "x".repeat(1500) } });
+  assert.equal(calls.pop().payload.comment.length, 1000, "коментар обрізається до 1000 символів");
+  await call(contractor, { method: "POST", body: { action: "send", order_number: ORD, request_id: "rid-e", options: {}, comment: "   " } });
+  assert.ok(!("comment" in calls.pop().payload), "порожній коментар не передаємо");
+
   await call(contractor, {
     method: "POST",
     body: { action: "send", order_number: ORD, request_id: "rid-x", purpose: "processing", processing_due: "18.09.2026; DROP" },

@@ -3841,6 +3841,15 @@ function syncProcessingEvent_(sh, num) {
   return "created";
 }
 
+/**
+ * Коментар менеджера підряднику — довільний текст із кабінету. Іде окремим блоком одразу
+ * після заголовка, щоб підрядник прочитав його першим. У таблиці не зберігається.
+ */
+function commentBlock_(comment) {
+  var c = String(comment || "").trim().slice(0, 1000);
+  return c ? "💬 <b>КОМЕНТАР</b>\n" + esc_(c) + "\n\n" : "";
+}
+
 /** Завдання підряднику: одне — рядком, кілька (кабінет зберігає їх через «; ») — списком. */
 function tasksLines_(task) {
   var items = String(task || "").split(/\s*[;\n]\s*/).filter(function (t) { return t; });
@@ -3897,6 +3906,7 @@ function adminContractorPreview_(data) {
   var task = purpose === "processing"
     ? (data.processing_task != null ? String(data.processing_task).trim() : ord.processing_task) : "";
   var text = contractorPrefix_(purpose, update, p.getProperty("sent_purpose_" + num) || "", due, task)
+    + commentBlock_(data.comment)
     + buildProductionMsg_(ord, contractorOptions_(data.options));
   return { status: "ok", text: text, update: update, sent_at: p.getProperty("sent_" + num) || "" };
 }
@@ -3922,7 +3932,7 @@ function adminContractorSend_(data) {
     var thread = p.getProperty("thread_" + num);
     var update = !!thread;
     var prefix = contractorPrefix_(purpose, update, p.getProperty("sent_purpose_" + num) || "",
-      ord.processing_due, ord.processing_task);
+      ord.processing_due, ord.processing_task) + commentBlock_(data.comment);
     if (update) {
       // Уже надсилали — наступне повідомлення йде в ту саму гілку замовлення.
       var tg = contractorChat_();

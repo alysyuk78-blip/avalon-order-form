@@ -1606,9 +1606,16 @@ import finance from '../../lib/admin-finance.js';
         setProcDue(String(order.processing_due || "").slice(0, 10));
         setProcTask(order.processing_task || "");
       }, [order.processing_due, order.processing_task]);
-      const purposeBody = purpose === "processing"
-        ? { purpose, processing_due: procDue, processing_task: procTask.trim() }
-        : { purpose };
+      // Власний коментар підряднику — іде в повідомлення окремим блоком «💬 КОМЕНТАР».
+      const [comment, setComment] = useState("");
+      useEffect(() => { setComment(""); }, [orderNumber]);
+      const commentText = comment.trim();
+      const purposeBody = {
+        ...(purpose === "processing"
+          ? { purpose, processing_due: procDue, processing_task: procTask.trim() }
+          : { purpose }),
+        ...(commentText ? { comment: commentText } : {}),
+      };
       const purposeKey = JSON.stringify(purposeBody);
 
       const rows = items || [];
@@ -1660,7 +1667,7 @@ import finance from '../../lib/admin-finance.js';
           } catch (e) {
             if (seq === previewSeq.current) setPreview({ text: "", error: e.message || "Не вдалося сформувати перегляд", loading: false });
           }
-        }, 350);
+        }, 800);   // пауза, щоб під час набору коментаря не смикати таблицю на кожну літеру
         return () => clearTimeout(timer);
       }, [previewOpen, optionsKey, purposeKey, orderNumber, sent, previewAttempt]);
 
@@ -1728,6 +1735,7 @@ import finance from '../../lib/admin-finance.js';
           await sendFiles(chosen, rid, lines, failed);
           pendingRef.current = { fp: "", rid: "" };
           setPicked({});
+          setComment("");
           setResult({ lines, failed, warning });
           if (onSent) onSent();
         } catch (e) {
@@ -1821,6 +1829,13 @@ import finance from '../../lib/admin-finance.js';
               {procSaved && <div className="send-hint ok">{procSaved}</div>}
             </div>
           )}
+          <div className="field send-comment">
+            <label htmlFor="send-comment">Коментар підряднику</label>
+            <textarea id="send-comment" rows={3} maxLength={1000} value={comment}
+              placeholder="Необовʼязково. Що ще важливо знати підряднику — піде в повідомленні одразу після заголовка"
+              onChange={e => setComment(e.target.value)} />
+            {comment.length > 900 && <small className="send-hint">{1000 - comment.length} символів лишилось</small>}
+          </div>
           <div className="send-options">
             {SEND_GROUPS.map(groupName => {
               const groupItems = shown.filter(o => o.group === groupName);

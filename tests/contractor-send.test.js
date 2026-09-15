@@ -652,6 +652,25 @@ function testProcessingPreviewSections() {
   assert.ok(multi.includes("• Завдання:\n   — <b>Порахувати виробничу вартість</b>\n   — <b>Підготувати креслення</b>\n"),
     "кілька завдань — списком");
 
+  // Власний коментар — окремим блоком після заголовка, з екрануванням HTML.
+  const withComment = ctx.adminContractorPreview_({
+    order_number: ORD, purpose: "processing", processing_due: "2026-09-18",
+    processing_task: "Порахувати виробничу вартість", options: {}, comment: "Клієнт хоче <до 5000 ₴> & швидко",
+  }).text;
+  const commentAt = withComment.indexOf("💬 <b>КОМЕНТАР</b>\nКлієнт хоче &lt;до 5000 ₴&gt; &amp; швидко\n");
+  assert.ok(commentAt > 0, "коментар у повідомленні й HTML не ламає");
+  assert.ok(commentAt < withComment.indexOf("Замовлення №"), "коментар — до деталей замовлення");
+  assert.ok(!proc.includes("КОМЕНТАР"), "без коментаря блоку немає");
+
+  // І в справжньому надсиланні коментар потрапляє в повідомлення підряднику.
+  const tgLog = [];
+  const ctx3 = processingContext(makeSheet([orderRow(ORD, "Нове")]),
+    makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" }), makeCalendar(), tgLog);
+  ctx3.adminContractorSend_({ order_number: ORD, purpose: "production", request_id: "c1", comment: "Фарбувати після зварювання" });
+  const sentText = tgLog.filter((x) => x.method === "sendMessage").map((x) => x.payload.text).join("\n");
+  assert.ok(sentText.startsWith("🏭 <b>У ВИРОБНИЦТВО</b>\n\n💬 <b>КОМЕНТАР</b>\nФарбувати після зварювання\n"),
+    "коментар іде одразу після заголовка");
+
   // Коли дані є — розділи на місці.
   const full = makeSheet([orderRow(ORD, "Нове", { 26: "Нова пошта", 28: "2026-09-25" })]);
   const ctx2 = processingContext(full, props, makeCalendar(), []);
