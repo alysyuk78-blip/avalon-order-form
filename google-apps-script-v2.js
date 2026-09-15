@@ -137,7 +137,10 @@ function writeOrderToSheet_(data) {
     // залишила в таблиці частково створене багатопозиційне замовлення.
     itemsIn.forEach(function (it) {
       var qty = Number(it.quantity == null || it.quantity === "" ? 1 : it.quantity);
-      if (!isFinite(qty) || qty < 1) throw new Error("Кількість мусить бути не меншою за 1");
+      // Послугу міряють і в м², м.п., кг, год — кількість буває дробовою (2,5 м²).
+      if (it.product_type === "service") {
+        if (!isFinite(qty) || qty <= 0) throw new Error("Кількість мусить бути більшою за 0");
+      } else if (!isFinite(qty) || qty < 1) throw new Error("Кількість мусить бути не меншою за 1");
       ["price_total", "cost_total", "list_price", "discount_pct", "discount_uah"].forEach(function (key) {
         if (it[key] == null || it[key] === "") return;
         var value = Number(it[key]);
@@ -171,9 +174,12 @@ function writeOrderToSheet_(data) {
       } else if (manualCost != null) {
         // Вписана собівартість без ціни → ціна за стандартною націнкою (маржа 25.9%).
         // Так собівартість менеджера не перетирається, а маржа не виходить відʼємною.
+        // Для послуги ціну не вигадуємо: лишається порожньою, доки менеджер її не впише.
         costTotal = manualCost;
-        total = Math.round(manualCost * MARKUP);
-        hasMoney = total > 0;
+        if (it.product_type !== "service") {
+          total = Math.round(manualCost * MARKUP);
+          hasMoney = total > 0;
+        }
       } else if (w && h && areaApplies) {
         // Площинна формула — лише для кошиків. Кронштейни й довільні вироби
         // (пергола, стенд…) отримують ціну від менеджера, не з ₴/м².
@@ -3170,6 +3176,11 @@ function adminUpdateOrder_(data) {
   Object.keys(ITEM_TEXT).forEach(function (key) {
     if (patch[key] == null) return;
     sh.getRange(row, ITEM_TEXT[key]).setValue(String(patch[key]));
+    // Не кошик (послуга, виріб не з каталогу, кронштейни) — площа кошика в колонці R не має
+    // сенсу й лишилася б від попереднього виду: прибираємо.
+    if (key === "product_kind" && String(patch[key]).trim() && !/кошик/i.test(String(patch[key]))) {
+      sh.getRange(row, 18).setValue("");
+    }
     // Назва, колір, характеристики та одиниця не змінюють формулу ціни.
     if (["basket_type", "construction", "pattern", "product_kind"].indexOf(key) >= 0) pricingItemTouched = true;
   });
@@ -3177,7 +3188,13 @@ function adminUpdateOrder_(data) {
   Object.keys(ITEM_NUM).forEach(function (key) {
     if (patch[key] == null) return;
     var num = Number(patch[key]);
-    if (key === "quantity") num = (num >= 1) ? Math.round(num) : 1;
+    if (key === "quantity") {
+      // Послуга: дробова кількість (2,5 м², 1,5 год) — до сотих; вироби — ціла, не менше 1.
+      var kindNow = String(patch.product_kind != null ? patch.product_kind : (sh.getRange(row, 42).getValue() || ""));
+      num = /послуг/i.test(kindNow)
+        ? (num > 0 ? Math.round(num * 100) / 100 : 1)
+        : ((num >= 1) ? Math.round(num) : 1);
+    }
     else if (!(num > 0)) num = "";
     sh.getRange(row, ITEM_NUM[key]).setValue(num);
     pricingItemTouched = true;

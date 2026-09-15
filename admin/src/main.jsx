@@ -2518,7 +2518,14 @@ import finance from '../../lib/admin-finance.js';
                       <datalist id="crm-models">{CATALOG_MODELS_CRM.map(m => <option key={m.id} value={m.name} />)}</datalist>
                     </div>
                     <div className="field"><label htmlFor="order-product-kind">Вид</label>
-                      <select id="order-product-kind" value={form.product_kind} onChange={e => setForm({ ...form, product_kind: e.target.value })}>
+                      <select id="order-product-kind" value={form.product_kind} onChange={e => {
+                        const next = e.target.value;
+                        // Перемикання на послугу: конструкція, візерунок і розміри кошика зникають з
+                        // форми — тож і не зберігаються (площу в таблиці прибирає Apps Script).
+                        setForm(next === SERVICE_KIND
+                          ? { ...form, product_kind: next, construction: form.basket_model, pattern: "", size_w: "", size_h: "", size_d: "" }
+                          : { ...form, product_kind: next });
+                      }}>
                         <option value="">— не вказано —</option>
                         <option value="Кошик">Кошик</option>
                         <option value="Кронштейни">Кронштейни</option>
@@ -2561,7 +2568,7 @@ import finance from '../../lib/admin-finance.js';
                         <input value={form.pattern} onChange={e => setForm({ ...form, pattern: e.target.value })} /></div>
                     )}
                     <div className="field"><label>Кількість</label>
-                      <input type="number" min="1" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} /></div>
+                      <input type="number" min={isServiceItem ? "0.01" : "1"} step={isServiceItem ? "any" : "1"} value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} /></div>
                     <div className="field"><label>Одиниця виміру</label>
                       <input list={isServiceItem ? "crm-units-service-edit" : "crm-units-edit"} value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })}
                         placeholder={isServiceItem ? "шт. / м² / м.п. / год" : "шт. / комп. / інше"} />
@@ -2813,7 +2820,10 @@ import finance from '../../lib/admin-finance.js';
       }
 
       // Гроші вводяться ЗА ОДИНИЦЮ, у таблицю йдуть підсумки (× кількість).
-      const qtyNum = Math.max(1, Number(form.quantity) || 1);
+      // Послугу міряють і в м², год — дробова кількість дозволена; вироби — від 1.
+      const qtyNum = kind === "service"
+        ? (Number(form.quantity) > 0 ? Number(form.quantity) : 1)
+        : Math.max(1, Number(form.quantity) || 1);
       const costUnit = Number(form.cost_total) || 0;
       const listUnit = Number(form.list_price) || 0;
       const priceUnitOverride = Number(form.price_total) || 0;
@@ -2976,7 +2986,7 @@ import finance from '../../lib/admin-finance.js';
                   <input value={form.product_name} onChange={e => set("product_name", e.target.value)}
                     placeholder={isService ? "Фарбування кришки / Різання листа 3 мм…" : "Пергола / Виставковий стенд / Навіс…"} /></div>
                 <div className="field"><label>Кількість</label>
-                  <input type="number" min="1" value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
+                  <input type="number" min={isService ? "0.01" : "1"} step={isService ? "any" : "1"} value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
                 <div className="field"><label>Одиниця виміру</label>
                   <input list={isService ? "crm-units-service" : "crm-units-new"} value={form.unit} onChange={e => set("unit", e.target.value)}
                     placeholder={isService ? "шт. / м² / м.п. / год" : "шт. / комп. / інше"} />
