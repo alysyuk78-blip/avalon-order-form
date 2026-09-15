@@ -93,6 +93,8 @@ import finance from '../../lib/admin-finance.js';
     const API_WRITE_TIMEOUT_MS = 90000;
     // Дані, старші за цей час, оновлюються самі, коли власник повертається у вікно.
     const STALE_AFTER_MS = 3 * 60 * 1000;
+    // Знімок зі сховища, молодший за це, вважаємо свіжим і таблицю у фоні не смикаємо.
+    const SNAPSHOT_FRESH_MS = 20 * 1000;
     const VERSION_CHECK_MS = 5 * 60 * 1000;
     const TODO_COLLAPSED_KEY = "avalon_admin_todo_collapsed_v1";
     const ICON_COMPONENTS = {
@@ -511,10 +513,12 @@ import finance from '../../lib/admin-finance.js';
     }
     function writeAdminCache(patch) {
       try {
+        // savedAt можна передати явно: знімок зі сховища має власний час, і підпис
+        // «дані станом на…» не повинен видавати старий знімок за щойно отриманий.
         localStorage.setItem(ORDERS_CACHE_KEY, JSON.stringify({
           ...readAdminCache(),
-          ...patch,
           savedAt: Date.now(),
+          ...patch,
         }));
       } catch (_) {}
     }
@@ -4444,21 +4448,21 @@ import finance from '../../lib/admin-finance.js';
           const requestRevision = mutationRevisionRef.current;
           setDataLoading(true);
           setOrdersError("");
-          try {
-            // Один запуск Apps Script замість чотирьох послідовних: замовлення,
-            // позиції, платежі, витрати й виплати повертаються одним snapshot.
-            let data;
+          // Один запуск Apps Script замість чотирьох послідовних: замовлення, позиції,
+          // платежі, витрати й виплати приходять одним набором.
+          async function loadBootstrap(path) {
             try {
-              data = await api("/api/admin/bootstrap", { token });
+              return await api(path, { token });
             } catch (firstError) {
               // Google інколи «зависає» хвилею на ~40 с для всіх запитів одразу. Коли сервер
               // уже здався, хвиля зазвичай минула — тож одна тиха повторна спроба.
               // Власний 60-секундний тайм-аут кабінету не повторюємо: інакше порожній кабінет
               // чекав би ще стільки ж.
               if (!isTransientError(firstError) || firstError.status === 401 || firstError.code === "TIMEOUT") throw firstError;
-              data = await api("/api/admin/bootstrap", { token });
+              return api(path, { token });
             }
-            if (requestRevision !== mutationRevisionRef.current) return data;
+          }
+          function apply(data, savedAt) {
             const nextGroups = normalizeOrderGroups(data);
             const nextOrders = Array.isArray(data.orders) ? data.orders : [];
             const nextExpenses = Array.isArray(data.expenses) ? data.expenses : [];
@@ -4469,14 +4473,41 @@ import finance from '../../lib/admin-finance.js';
             setExpenses(nextExpenses);
             setPayments(nextPayments);
             setPayouts(nextPayouts);
-            setSnapshotFresh(true);
             writeAdminCache({
               groups: nextGroups,
               orders: nextOrders,
               expenses: nextExpenses,
               payments: nextPayments,
               payouts: nextPayouts,
+              savedAt,
             });
+          }
+          try {
+            // 1. Одразу: знімок зі сховища Vercel (частки секунди), а якщо його немає — таблиця.
+            const data = await loadBootstrap("/api/admin/bootstrap");
+            if (requestRevision !== mutationRevisionRef.current) return data;
+            const snap = data.snapshot || {};
+            if (snap.source !== "snapshot") {
+              apply(data, Date.now());
+              setSnapshotFresh(true);
+              return data;
+            }
+            const local = readAdminCache();
+            const hasLocal = Array.isArray(local.groups) && local.groups.length > 0;
+            const snapAt = Number(snap.saved_at) || 0;
+            // Цей компʼютер уже знає новіші дані (напр. щойно збережену зміну) — старим
+            // знімком їх не затираємо, лише чекаємо свіжих із таблиці.
+            if (!hasLocal || snapAt > (Number(local.savedAt) || 0)) apply(data, snapAt);
+            if ((Number(snap.age_ms) || 0) < SNAPSHOT_FRESH_MS) {
+              setSnapshotFresh(true);
+              return data;
+            }
+            // 2. Свіжі дані з таблиці — у фоні: кабінет уже показує знімок, а крутиться лише ↻.
+            const fresh = await loadBootstrap("/api/admin/bootstrap?fresh=1");
+            if (requestRevision !== mutationRevisionRef.current) return fresh;
+            apply(fresh, Date.now());
+            setSnapshotFresh(true);
+            return fresh;
           } catch (e) {
             if (requestRevision !== mutationRevisionRef.current) return;
             const cached = readAdminCache();
