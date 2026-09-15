@@ -85,6 +85,21 @@ async function run() {
     payload: { order_number: ORD, name: "Креслення.pdf", mime: "application/pdf", size: 1234 },
   });
 
+  await call(files, {
+    method: "POST",
+    body: { action: "small", order_number: ORD, name: "Знімок.png", mime: "image/png", size: 3, data: "QUJD", request_id: "fs-1" },
+  });
+  assert.deepEqual(calls.pop(), {
+    action: "file_upload_small",
+    payload: { order_number: ORD, name: "Знімок.png", mime: "image/png", size: 3, data: "QUJD", request_id: "fs-1" },
+  });
+  r = await call(files, {
+    method: "POST",
+    body: { action: "small", order_number: ORD, name: "x", size: 1, data: "A".repeat(4.5 * 1024 * 1024) },
+  });
+  assert.equal(r.statusCode, 413, "малий файл понад ліміт Vercel не пересилається");
+  assert.equal(calls.length, 0);
+
   r = await call(files, {
     method: "POST",
     body: { action: "chunk", order_number: ORD, upload_id: "u", offset: 0, data: "A".repeat(4.5 * 1024 * 1024) },
@@ -118,8 +133,46 @@ async function run() {
   assert.deepEqual(send.payload.options, { phone: false, email: true }, "лише відомі пташки й лише true/false");
   assert.equal(send.payload.request_id, "rid");
 
+  assert.equal(send.payload.purpose, "production", "без мети — звичайне надсилання у виробництво");
+
   await call(contractor, { method: "POST", body: { action: "preview", order_number: ORD, options: { finance: false } } });
-  assert.deepEqual(calls.pop(), { action: "contractor_preview", payload: { order_number: ORD, options: { finance: false } } });
+  assert.deepEqual(calls.pop(), {
+    action: "contractor_preview",
+    payload: { order_number: ORD, options: { finance: false }, purpose: "production" },
+  });
+
+  // «На опрацювання»: мета, термін і завдання МАЮТЬ дійти до Apps Script — і в перегляді,
+  // і в надсиланні. Раніше прошарок їх губив, і підрядник отримував «У ВИРОБНИЦТВО».
+  const processing = {
+    purpose: "processing", processing_due: "2026-09-18", processing_task: "  Порахувати виробничу вартість  ",
+  };
+  await call(contractor, { method: "POST", body: { action: "preview", order_number: ORD, options: {}, ...processing } });
+  assert.deepEqual(calls.pop().payload, {
+    order_number: ORD, options: {},
+    purpose: "processing", processing_due: "2026-09-18", processing_task: "Порахувати виробничу вартість",
+  });
+  await call(contractor, { method: "POST", body: { action: "send", order_number: ORD, request_id: "rid-p", options: {}, ...processing } });
+  const procSend = calls.pop();
+  assert.equal(procSend.action, "contractor_send");
+  assert.equal(procSend.payload.purpose, "processing");
+  assert.equal(procSend.payload.processing_due, "2026-09-18");
+  assert.equal(procSend.payload.processing_task, "Порахувати виробничу вартість");
+
+  // Власний коментар підряднику доходить і в перегляд, і в надсилання; порожній — не передається.
+  await call(contractor, { method: "POST", body: { action: "preview", order_number: ORD, options: {}, comment: "  Терміново, клієнт чекає  " } });
+  assert.equal(calls.pop().payload.comment, "Терміново, клієнт чекає");
+  await call(contractor, { method: "POST", body: { action: "send", order_number: ORD, request_id: "rid-c", options: {}, comment: "x".repeat(1500) } });
+  assert.equal(calls.pop().payload.comment.length, 1000, "коментар обрізається до 1000 символів");
+  await call(contractor, { method: "POST", body: { action: "send", order_number: ORD, request_id: "rid-e", options: {}, comment: "   " } });
+  assert.ok(!("comment" in calls.pop().payload), "порожній коментар не передаємо");
+
+  await call(contractor, {
+    method: "POST",
+    body: { action: "send", order_number: ORD, request_id: "rid-x", purpose: "processing", processing_due: "18.09.2026; DROP" },
+  });
+  assert.equal(calls.pop().payload.processing_due, "", "термін лише у форматі РРРР-ММ-ДД — інше Apps Script відхилить сам");
+  await call(contractor, { method: "POST", body: { action: "send", order_number: ORD, request_id: "rid-y", purpose: "anything" } });
+  assert.equal(calls.pop().payload.purpose, "production", "невідома мета не проходить");
 
   r = await call(contractor, { method: "POST", body: { action: "send_file", order_number: ORD } });
   assert.equal(r.statusCode, 400, "без file_id файл не надсилається");

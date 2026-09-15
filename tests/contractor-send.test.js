@@ -54,6 +54,7 @@ function makeDrive() {
       isTrashed: () => f.trashed,
       getFoldersByName: (nm) => iter(Object.values(folders).filter(x => x.parentId === id && x.name === nm && !x.trashed)),
       createFolder: (nm) => folder(nm, id),
+      createFile: (blob) => file(blob.name, id, blob.bytes.length, blob.mime),
       getFiles: () => iter(Object.values(files).filter(x => x.parentId === id)),
       getFolders: () => iter(Object.values(folders).filter(x => x.parentId === id && !x.trashed)),
     };
@@ -586,6 +587,99 @@ function testFilesCountBackfill() {
   assert.equal(byNum["ORD-110926-002"].files_count, 0);
 }
 
+
+// ── Малий файл одним запитом: без сесії, без дубля при повторі ─────────────
+function testSmallUpload() {
+  const drive = makeDrive();
+  const cache = makeCache();
+  const props = makeProps();
+  let fetches = 0;
+  const ctx = load({
+    DriveApp: drive,
+    CacheService: { getScriptCache: () => cache },
+    PropertiesService: { getScriptProperties: () => props },
+    Utilities: {
+      base64Decode: (s) => Array.from(Buffer.from(s, "base64")),
+      newBlob: (bytes, mime, name) => ({ bytes, mime, name }),
+    },
+    UrlFetchApp: { fetch: () => { fetches += 1; throw new Error("малий файл не відкриває сесію Диска"); } },
+  });
+
+  const data = Buffer.from("PNG-bytes").toString("base64");
+  const r1 = ctx.adminFileUploadSmall_({
+    order_number: ORD, name: "Знімок екрана 2026-09-15 о 15.57.05.png", mime: "image/png", data, request_id: "fs-1",
+  });
+  assert.equal(r1.done, true);
+  assert.equal(r1.file.name, "Знімок екрана 2026-09-15 о 15.57.05.png", "імʼя файлу не псується");
+  assert.equal(r1.file.size, 9);
+  assert.equal(fetches, 0, "жодного окремого звернення до Диска за сесією");
+  const inFolder = Object.values(drive._folders).find((f) => f.name === ORD);
+  assert.ok(inFolder, "файл іде в теку свого замовлення");
+  assert.equal(props.getProperty("files_count_" + ORD), "1", "скріпка одразу знає про файл");
+
+  // Відповідь загубилась, кабінет повторив той самий request_id — другого файлу немає.
+  const r2 = ctx.adminFileUploadSmall_({ order_number: ORD, name: "Знімок.png", mime: "image/png", data, request_id: "fs-1" });
+  assert.equal(r2.file.id, r1.file.id);
+  assert.equal(props.getProperty("files_count_" + ORD), "1", "повтор не створює дубль");
+
+  assert.throws(() => ctx.adminFileUploadSmall_({ order_number: ORD, name: "x", data: "", request_id: "fs-2" }), /Порожній/);
+  const big = Buffer.alloc(3 * 1024 * 1024 + 1, 1).toString("base64");
+  assert.throws(() => ctx.adminFileUploadSmall_({ order_number: ORD, name: "x", data: big, request_id: "fs-3" }), /частинами/);
+  assert.throws(() => ctx.adminFileUploadSmall_({ order_number: "ORD-1", name: "x", data, request_id: "fs-4" }), /Невірний номер/);
+}
+
+// ── Перегляд «на опрацювання»: правильний заголовок і без порожніх розділів ──
+function testProcessingPreviewSections() {
+  const props = makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" });
+  // Замовлення, для якого вартість ще тільки треба порахувати: ні цін, ні доставки.
+  const sheet = makeSheet([orderRow(ORD, "Нове", { 19: "", 21: "", 22: "" })]);
+  const ctx = processingContext(sheet, props, makeCalendar(), []);
+
+  const proc = ctx.adminContractorPreview_({
+    order_number: ORD, purpose: "processing", processing_due: "2026-09-18",
+    processing_task: "Порахувати виробничу вартість", options: {},
+  }).text;
+  assert.ok(proc.startsWith("🧮 <b>НА ОПРАЦЮВАННЯ</b>"), "перегляд на опрацювання — не «У виробництво»");
+  assert.ok(proc.includes("Порахувати виробничу вартість") && proc.includes("до 18.09.2026"));
+  assert.ok(!proc.includes("ФІНАНСИ"), "порожній розділ фінансів не показуємо");
+  assert.ok(!proc.includes("ДОСТАВКА"), "порожній розділ доставки не показуємо");
+
+  // Кілька завдань — окремими рядками, щоб підрядник нічого не пропустив.
+  const multi = ctx.adminContractorPreview_({
+    order_number: ORD, purpose: "processing", processing_due: "2026-09-18",
+    processing_task: "Порахувати виробничу вартість; Підготувати креслення", options: {},
+  }).text;
+  assert.ok(multi.includes("• Завдання:\n   — <b>Порахувати виробничу вартість</b>\n   — <b>Підготувати креслення</b>\n"),
+    "кілька завдань — списком");
+
+  // Власний коментар — окремим блоком після заголовка, з екрануванням HTML.
+  const withComment = ctx.adminContractorPreview_({
+    order_number: ORD, purpose: "processing", processing_due: "2026-09-18",
+    processing_task: "Порахувати виробничу вартість", options: {}, comment: "Клієнт хоче <до 5000 ₴> & швидко",
+  }).text;
+  const commentAt = withComment.indexOf("💬 <b>КОМЕНТАР</b>\nКлієнт хоче &lt;до 5000 ₴&gt; &amp; швидко\n");
+  assert.ok(commentAt > 0, "коментар у повідомленні й HTML не ламає");
+  assert.ok(commentAt < withComment.indexOf("Замовлення №"), "коментар — до деталей замовлення");
+  assert.ok(!proc.includes("КОМЕНТАР"), "без коментаря блоку немає");
+
+  // І в справжньому надсиланні коментар потрапляє в повідомлення підряднику.
+  const tgLog = [];
+  const ctx3 = processingContext(makeSheet([orderRow(ORD, "Нове")]),
+    makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" }), makeCalendar(), tgLog);
+  ctx3.adminContractorSend_({ order_number: ORD, purpose: "production", request_id: "c1", comment: "Фарбувати після зварювання" });
+  const sentText = tgLog.filter((x) => x.method === "sendMessage").map((x) => x.payload.text).join("\n");
+  assert.ok(sentText.startsWith("🏭 <b>У ВИРОБНИЦТВО</b>\n\n💬 <b>КОМЕНТАР</b>\nФарбувати після зварювання\n"),
+    "коментар іде одразу після заголовка");
+
+  // Коли дані є — розділи на місці.
+  const full = makeSheet([orderRow(ORD, "Нове", { 26: "Нова пошта", 28: "2026-09-25" })]);
+  const ctx2 = processingContext(full, props, makeCalendar(), []);
+  const prod = ctx2.adminContractorPreview_({ order_number: ORD, options: { finance: true } }).text;
+  assert.ok(prod.startsWith("🏭 <b>У ВИРОБНИЦТВО</b>"));
+  assert.ok(prod.includes("💰 <b>ФІНАНСИ</b>") && prod.includes("9 650"), "собівартість — у фінансах");
+  assert.ok(prod.includes("🚚 <b>ДОСТАВКА</b>") && prod.includes("Нова пошта") && prod.includes("25.09.2026"));
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
@@ -595,4 +689,6 @@ testStatusesMigrationAndCanon();
 testProcessingFlow();
 testSheetStatusProcessing();
 testFilesCountBackfill();
+testSmallUpload();
+testProcessingPreviewSections();
 console.log("contractor-send tests: OK");

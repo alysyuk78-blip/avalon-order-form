@@ -161,6 +161,18 @@
     }
     .field textarea { min-height: 80px; resize: vertical; }
     .error { color: var(--danger); font-size: 13px; margin: 8px 0 0; }
+    /* Помилка завантаження з кнопкою повтору: дані не зникають, і вікно не треба перезапускати. */
+    .error-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .error-retry { font-size: 12px; padding: 4px 10px; }
+    /* Після деплою: пропозиція перезавантажити сторінку (стара лишається в памʼяті вікна). */
+    .update-banner {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      padding: 8px 14px; background: #1f2937; color: #fff; font-size: 13px;
+    }
+    .update-banner button {
+      border: 0; border-radius: 6px; padding: 4px 12px; font-size: 13px; font-weight: 600;
+      background: #fff; color: #111827; cursor: pointer;
+    }
     .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
     .toolbar input[type="search"], .toolbar select {
       border: 0; outline: none; border-radius: 10px; padding: 10px 12px; background: #fff; min-width: 180px;
@@ -218,7 +230,7 @@
       min-height: 280px; display: flex; flex-direction: column; overflow: visible;
     }
     .col h3 {
-      margin: 0; padding: 11px 12px 9px; font-size: 12px; letter-spacing: 0.06em;
+      margin: 0; padding: 11px 8px 9px; font-size: 12px; letter-spacing: 0.06em;
       text-transform: uppercase; color: var(--muted);
       display: flex; flex-direction: column; gap: 5px;
       position: relative; z-index: 1;   /* колонка гортає картки сама — заголовок і так на місці */
@@ -246,7 +258,10 @@
     .col-metric.debt { color: #b54842; }
     .col-metric.margin { color: #8f7340; }
     .col-metrics.is-cancelled .col-metric { color: var(--muted); }
-    .col-body { padding: 8px; display: grid; gap: 8px; }
+    /* minmax(0, 1fr): картка ніколи не ширша за стовпчик, тож поля зліва й справа
+       однакові. Без цього довгий номер зі скріпкою розпирав картку, і вона зміщувалась
+       управо (8 px зліва проти 4 справа). */
+    .col-body { padding: 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
     .orders-totals {
       display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center;
       gap: 0; margin-bottom: 10px;
@@ -453,16 +468,18 @@
     .col.st-missing h3 { color: var(--st-missing-fg); }
     .card {
       background: var(--panel); border: 0; border-radius: 12px;
-      padding: 12px; box-shadow: 0 7px 22px rgba(28,33,36,.075); cursor: pointer; text-align: left;
+      /* Бічні поля 10 px (зверху/знизу 12): у стовпчику 240 px номер, скріпка з
+         двозначною кількістю файлів і дата лишаються в один рядок. */
+      padding: 12px 10px; box-shadow: 0 7px 22px rgba(28,33,36,.075); cursor: pointer; text-align: left;
       transition: transform .18s ease, box-shadow .18s ease;
     }
     .card:hover { transform: translateY(-2px); box-shadow: 0 14px 28px rgba(28,33,36,0.12); }
-    .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .card-head { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
     .card-head > span { color: #8a9298; font-size: 9.5px; font-weight: 620; white-space: nowrap; }
     /* Скріпка біля номера: до замовлення прикріплено файли. */
     .card-head .num { display: inline-flex; align-items: center; min-width: 0; }
     .files-badge {
-      display: inline-flex; align-items: center; gap: 1px; margin-left: 6px; vertical-align: middle;
+      display: inline-flex; align-items: center; gap: 1px; margin-left: 3px; vertical-align: middle;
       color: var(--muted); font-size: 10.5px; font-weight: 700; line-height: 1;
     }
     .files-badge svg { width: 13px; height: 13px; flex: none; stroke-width: 2.2; }
@@ -627,12 +644,22 @@
     .send-purpose button.active { border-color: var(--brand); background: #fff; }
     .send-purpose button.proc.active { border-color: var(--st-proc-fg); }
     .send-processing { margin: 0 0 12px; padding: 10px 12px 12px; border-radius: 12px; background: var(--st-proc-bg); }
+    /* Картка з кешу минулого сеансу: лише перегляд, доки не прийдуть свіжі дані. */
+    .stale-note {
+      margin: 0 0 12px; padding: 8px 12px; border-radius: 10px;
+      background: rgba(154,103,0,.10); color: var(--warn); font-size: 12.5px; font-weight: 600;
+    }
+    /* Власний коментар підряднику. */
+    .send-comment { margin: 0 0 12px; }
+    .send-comment textarea { resize: vertical; min-height: 72px; line-height: 1.4; font-size: 13px; }
     .send-processing .field { margin-bottom: 10px; }
     .send-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
     .send-chips button {
       border: 0; border-radius: 999px; padding: 5px 10px; cursor: pointer;
       background: #fff; color: var(--ink); font: inherit; font-size: 12px; font-weight: 650;
     }
+    .send-chips button { display: inline-flex; align-items: center; gap: 4px; }
+    .send-chips button svg { width: 13px; height: 13px; flex: none; stroke-width: 2.6; }
     .send-chips button.active { background: var(--st-proc-fg); color: #fff; }
     .send-hint { display: block; margin-top: 4px; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
     .send-hint.ok { color: var(--ok); font-weight: 650; }
@@ -654,9 +681,26 @@
       background: #eef3f8; color: var(--ink); font-size: 13px; line-height: 1.5;
       white-space: pre-wrap; word-break: break-word;
     }
+    /* Поки формується новий перегляд, старий приглушений — щоб не видавався за актуальний. */
+    .send-preview.is-stale .send-preview-text { opacity: .4; }
+    .send-preview-status { font-size: 12px; font-weight: 650; color: var(--muted); margin-bottom: 6px; white-space: normal; }
+    /* Файли, що підуть підряднику слідом за текстом. */
+    .send-preview-files {
+      margin-top: 12px; padding-top: 10px; border-top: 1px dashed rgba(28,33,36,.18);
+      display: grid; gap: 4px; white-space: normal;
+    }
+    .send-preview-files-title { font-weight: 700; }
+    .send-preview-files.is-empty { color: var(--muted); font-size: 12px; }
+    .send-preview-file { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .send-preview-file svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
+    .send-preview-file span { min-width: 0; overflow-wrap: anywhere; }
+    .send-preview-file small { color: var(--muted); white-space: nowrap; }
     .card-payment.unsent { background: rgba(59,130,246,.10); color: #1d4ed8; }
     @media (max-width: 520px) { .send-options { grid-template-columns: 1fr; } }
 
+    /* «Запамʼятати вхід»: на своєму компʼютері кабінет відкривається без пароля. */
+    .login-remember { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--muted); cursor: pointer; }
+    .login-remember input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
     .login-credits { margin-top: 14px; font-size: 11px; color: #9aa49d; text-align: center; }
     .login-credits a { color: #9aa49d; text-decoration: underline; }
 
