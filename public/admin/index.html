@@ -644,6 +644,11 @@
     .send-purpose button.active { border-color: var(--brand); background: #fff; }
     .send-purpose button.proc.active { border-color: var(--st-proc-fg); }
     .send-processing { margin: 0 0 12px; padding: 10px 12px 12px; border-radius: 12px; background: var(--st-proc-bg); }
+    /* Картка з кешу минулого сеансу: лише перегляд, доки не прийдуть свіжі дані. */
+    .stale-note {
+      margin: 0 0 12px; padding: 8px 12px; border-radius: 10px;
+      background: rgba(154,103,0,.10); color: var(--warn); font-size: 12.5px; font-weight: 600;
+    }
     /* Власний коментар підряднику. */
     .send-comment { margin: 0 0 12px; }
     .send-comment textarea { resize: vertical; min-height: 72px; line-height: 1.4; font-size: 13px; }

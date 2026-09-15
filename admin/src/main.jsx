@@ -960,13 +960,20 @@ import finance from '../../lib/admin-finance.js';
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), limit);
         try {
-          return await fetch(path, {
+          const response = await fetch(path, {
             method,
             headers,
             body: body ? JSON.stringify(body) : undefined,
             credentials: "same-origin",
             signal: controller.signal,
           });
+          // Тіло читаємо ДО зняття тайм-ауту: великий знімок CRM може зависнути вже
+          // після заголовків відповіді.
+          const parsed = await response.json().catch(e => {
+            if (e && e.name === "AbortError") throw e;
+            return {};
+          });
+          return { res: response, data: parsed };
         } catch (e) {
           if (e && e.name === "AbortError") {
             const err = new Error(`Сервер не відповів за ${Math.round(limit / 1000)} с`);
@@ -981,18 +988,18 @@ import finance from '../../lib/admin-finance.js';
         }
       }
 
-      let res;
+      let reply;
       try {
-        res = await once();
+        reply = await once();
       } catch (e) {
         // Читання безпечно повторити: другий запит нічого не змінює, а короткий збій
         // мережі трапляється частіше за реальну недоступність. Після повного
         // тайм-ауту не повторюємо — інакше чекати довелось би вдвічі довше.
         if (!isRead || e.code === "TIMEOUT") throw e;
         await new Promise(r => setTimeout(r, 700));
-        res = await once();
+        reply = await once();
       }
-      const data = await res.json().catch(() => ({}));
+      const { res, data } = reply;
       if (res.status === 401) {
         clearToken();
         window.dispatchEvent(new Event("admin-unauthorized"));
@@ -1514,7 +1521,7 @@ import finance from '../../lib/admin-finance.js';
       return out;
     }
 
-    function OrderFilesSection({ files, filesError, uploads, onAdd, onRemove, onRetry, onDismiss }) {
+    function OrderFilesSection({ files, filesFresh, onReload, filesError, uploads, onAdd, onRemove, onRetry, onDismiss }) {
       const inputRef = useRef(null);
       const list = files || [];
       const pick = () => { if (inputRef.current) inputRef.current.click(); };
@@ -1551,7 +1558,12 @@ import finance from '../../lib/admin-finance.js';
             </div>
           ))}
           {files === null && <p className="files-empty">Завантаження списку файлів…</p>}
-          {filesError && <div className="error">{filesError}</div>}
+          {filesError && (
+            <div className="error-bar">
+              <span className="error">{filesError}</span>
+              {onReload && <button type="button" className="ghost error-retry" onClick={onReload}>Спробувати ще раз</button>}
+            </div>
+          )}
           {list.length > 0 && (
             <ul className="file-list">
               {list.map(f => {
@@ -1567,7 +1579,8 @@ import finance from '../../lib/admin-finance.js';
                         {f.sent_at ? " · надіслано " + sentLabel(f.sent_at) : ""}
                       </span>
                     </div>
-                    <IconButton icon="trash" label={"Прибрати «" + f.name + "»"} onClick={() => onRemove(f)} />
+                    <IconButton icon="trash" label={filesFresh ? "Прибрати «" + f.name + "»" : "Оновлюю список файлів…"}
+                      disabled={!filesFresh} onClick={() => onRemove(f)} />
                   </li>
                 );
               })}
@@ -1577,7 +1590,7 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
-    function ContractorSendSection({ token, orderNumber, order, items, files, sectionRef, highlight, onSent, purposeRequest, onSaveProcessing }) {
+    function ContractorSendSection({ token, orderNumber, order, items, files, filesFresh, locked, sectionRef, highlight, onSent, purposeRequest, onSaveProcessing }) {
       const [opts, setOpts] = useState(readSendOptions);
       const [picked, setPicked] = useState({});           // явний вибір файлів: id → true/false
       const [phase, setPhase] = useState("");             // що відбувається просто зараз
@@ -1640,6 +1653,10 @@ import finance from '../../lib/admin-finance.js';
       const isPicked = (f) => (picked[f.id] !== undefined ? picked[f.id] : !f.sent_at);
       const chosen = fileList.filter(isPicked);
       const sent = !!order.contractor_sent;
+      // Чому кнопка надсилання поки неактивна (порожній рядок — можна надсилати).
+      const sendBlocked = locked
+        ? "Оновлюю дані замовлення — надіслати можна буде за мить."
+        : (!filesFresh && chosen.length > 0 ? "Оновлюю список файлів, щоб не надіслати вже надіслані файли вдруге…" : "");
       const sendLabel = purpose === "processing"
         ? (sent ? "Надіслати оновлення на опрацювання" : "Надіслати на опрацювання")
         : (sent && lastWasProcessing ? "Погодити й надіслати у виробництво"
@@ -1822,7 +1839,7 @@ import finance from '../../lib/admin-finance.js';
                 <small className="send-hint">У Google Календарі зʼявиться нагадування — за добу й у сам день о 09:00.</small>
               </div>
               {sent && isProcessingStatus && (
-                <button type="button" className="link-btn" disabled={!!phase || !procDue} onClick={saveProcessingOnly}>
+                <button type="button" className="link-btn" disabled={!!phase || !procDue || locked} onClick={saveProcessingOnly}>
                   Зберегти термін без повторного надсилання
                 </button>
               )}
@@ -1875,7 +1892,7 @@ import finance from '../../lib/admin-finance.js';
             Джерело заявки підряднику не надсилається.
           </p>
           <div className="send-actions">
-            <button className="btn" type="button" disabled={!!phase} onClick={send}>
+            <button className="btn" type="button" disabled={!!phase || !!sendBlocked} onClick={send}>
               <Send aria-hidden="true" />
               {sendLabel}
               {chosen.length ? " + " + chosen.length + " " + fileWord(chosen.length) : ""}
@@ -1885,6 +1902,7 @@ import finance from '../../lib/admin-finance.js';
               {previewOpen ? "Сховати перегляд" : "Як побачить підрядник"}
             </button>
           </div>
+          {sendBlocked && !phase && <div className="send-hint">{sendBlocked}</div>}
           {phase && <div className="send-phase" role="status">{phase}</div>}
           {error && <div className="error">{error}</div>}
           {result && (
@@ -1935,8 +1953,11 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
-    function OrderDrawer({ token, orderNumber, initialData, snapshotLoading, onClose, onChanged, focusSend, onFilesCount }) {
+    function OrderDrawer({ token, orderNumber, initialData, snapshotLoading, snapshotFresh, onClose, onChanged, focusSend, onFilesCount }) {
       const [data, setData] = useState(initialData || null);
+      // Картка з кешу минулого сеансу: показуємо одразу, але зміни дозволяємо лише після
+      // свіжих даних — інакше «Зберегти» перезаписало б таблицю застарілими полями.
+      const [stale, setStale] = useState(false);
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
       const [form, setForm] = useState(null);
@@ -1944,6 +1965,9 @@ import finance from '../../lib/admin-finance.js';
 
       // ── Файли замовлення (Google Диск) і блок «Надіслати підряднику» ──
       const [files, setFiles] = useState(null);
+      // Список із кешу може не знати про вже надіслані чи прибрані файли — надсилати й
+      // прибирати дозволяємо лише після свіжого списку з Google Диска.
+      const [filesFresh, setFilesFresh] = useState(false);
       const [filesError, setFilesError] = useState("");
       const [uploads, setUploads] = useState([]);
       const [fileDrag, setFileDrag] = useState(false);
@@ -1954,10 +1978,12 @@ import finance from '../../lib/admin-finance.js';
 
       async function loadFiles() {
         setFilesError("");
+        setFilesFresh(false);
         try {
           const res = await api("/api/admin/order?resource=files&order_number=" + encodeURIComponent(orderNumber), { token });
           const next = res.files || [];
           setFiles(next);
+          setFilesFresh(true);
           writeFilesCache(orderNumber, next);
         } catch (e) {
           setFiles(cur => cur || []);
@@ -2118,6 +2144,7 @@ import finance from '../../lib/admin-finance.js';
       }
       // Термін і завдання опрацювання без повторного надсилання (кидає помилку — її покаже блок).
       async function saveProcessing(patch) {
+        if (stale) throw new Error("Зачекайте кілька секунд — оновлюю дані замовлення");
         const res = await api("/api/admin/order", {
           method: "PATCH",
           token,
@@ -2186,13 +2213,20 @@ import finance from '../../lib/admin-finance.js';
           applyItemToForm(initialData, 0);
           setItemIdx(0);
           setError("");
+          setStale(!snapshotFresh);
+          if (!snapshotFresh && !snapshotLoading) {
+            // Оновити весь кабінет не вдалося — беремо свіже замовлення напряму.
+            load().then(() => setStale(false)).catch(e => setError(e.message));
+          }
           return;
         }
+        setStale(false);
         if (snapshotLoading) return;
         load().catch(e => setError(e.message));
-      }, [orderNumber, initialData, snapshotLoading]);
+      }, [orderNumber, initialData, snapshotLoading, snapshotFresh]);
 
       async function save(patch) {
+        if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return; }
         setBusy(true); setError("");
         try {
           const res = await api("/api/admin/order", {
@@ -2221,6 +2255,7 @@ import finance from '../../lib/admin-finance.js';
       }
 
       async function changeStatus(newStatus) {
+        if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return; }
         if (!confirmStatusChange(form.status, newStatus)) return;
         const prevOrder = (data && data.order) || {};
         const alreadySent = !!prevOrder.contractor_sent;
@@ -2345,6 +2380,11 @@ import finance from '../../lib/admin-finance.js';
               </div>
               <IconButton icon="close" label="Закрити" onClick={onClose} />
             </header>
+            {stale && (
+              <div className="stale-note" role="status">
+                Показано дані з минулого разу — оновлюю. Змінювати можна буде за мить.
+              </div>
+            )}
 
             <QuickContact order={order} />
 
@@ -2371,14 +2411,14 @@ import finance from '../../lib/admin-finance.js';
                   key={s}
                   type="button"
                   className={form.status === s ? "active" : ""}
-                  disabled={busy}
+                  disabled={busy || stale}
                   onClick={() => changeStatus(s)}
                 >{s}</button>
               ))}
               <button
                 type="button"
                 className="warn"
-                disabled={busy || form.status === "Скасовано"}
+                disabled={busy || stale || form.status === "Скасовано"}
                 onClick={() => changeStatus("Скасовано")}
               >Скасувати</button>
             </div>
@@ -2391,6 +2431,8 @@ import finance from '../../lib/admin-finance.js';
 
             <OrderFilesSection
               files={files}
+              filesFresh={filesFresh}
+              onReload={loadFiles}
               filesError={filesError}
               uploads={uploads}
               onAdd={addFiles}
@@ -2406,6 +2448,8 @@ import finance from '../../lib/admin-finance.js';
               order={order}
               items={items}
               files={files}
+              filesFresh={filesFresh}
+              locked={stale}
               sectionRef={sendSectionRef}
               highlight={sendHighlight}
               onSent={refreshAfterSend}
@@ -2440,7 +2484,7 @@ import finance from '../../lib/admin-finance.js';
                 <datalist id="manual-sources">{MANUAL_SOURCES.map(s => <option key={s} value={s} />)}</datalist>
               </div>
             </div>
-            <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy} onClick={() => save({
+            <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy || stale} onClick={() => save({
               client: form.client, phone: form.phone, city: form.city,
               contact_method: form.contact_method, contact_telegram: form.contact_telegram,
               contact_email: form.contact_email, source: form.source,
@@ -2488,7 +2532,7 @@ import finance from '../../lib/admin-finance.js';
             <div className="field"><label>Характеристики (для виробів не з каталогу)</label>
               <textarea value={form.specs} onChange={e => setForm({ ...form, specs: e.target.value })} rows="3"
                 placeholder="Розміри, матеріал, комплектація — по рядку на пункт" /></div>
-            <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy} onClick={() => save({
+            <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy || stale} onClick={() => save({
               basket_model: form.basket_model, product_kind: form.product_kind, specs: form.specs,
               construction: form.construction,
               basket_type: form.basket_type, color: form.color, pattern: form.pattern,
@@ -2622,7 +2666,7 @@ import finance from '../../lib/admin-finance.js';
               </div>
             )}
 
-            <button className="btn" style={{ marginTop: 8 }} disabled={busy} onClick={() => save({
+            <button className="btn" style={{ marginTop: 8 }} disabled={busy || stale} onClick={() => save({
               cost_total: form.cost_total === "" ? null : Number(form.cost_total),
               list_price: form.list_price === "" ? null : Number(form.list_price),
               discount_pct: form.discount_pct === "" ? 0 : Number(form.discount_pct),
@@ -2643,7 +2687,7 @@ import finance from '../../lib/admin-finance.js';
             </div>
             <div className="field"><label>Примітки</label>
               <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
-            <button className="btn secondary" disabled={busy} onClick={() => save({
+            <button className="btn secondary" disabled={busy || stale} onClick={() => save({
               delivery_date: form.delivery_date,
               payment_method: form.payment_method,
               transport: form.transport,
@@ -4292,6 +4336,8 @@ import finance from '../../lib/admin-finance.js';
         return Array.isArray(cached.payouts) ? cached.payouts : [];
       });
       const [dataLoading, setDataLoading] = useState(false);
+      // Знімок із localStorage може бути старим: true — після першого успішного оновлення.
+      const [snapshotFresh, setSnapshotFresh] = useState(false);
       const [ordersError, setOrdersError] = useState("");
       const [sessionMsg, setSessionMsg] = useState("");
       const [selectedOrder, setSelectedOrder] = useState(null);
@@ -4341,6 +4387,7 @@ import finance from '../../lib/admin-finance.js';
             const nextOrders = Array.isArray(data.orders) ? data.orders : [];
             setOrderItems(nextOrders);
             writeAdminCache({ groups: nextGroups, orders: nextOrders });
+            setSnapshotFresh(true);
           } catch (e) {
             if (requestRevision !== mutationRevisionRef.current) return;
             const cached = readAdminCache();
@@ -4412,6 +4459,7 @@ import finance from '../../lib/admin-finance.js';
             setExpenses(nextExpenses);
             setPayments(nextPayments);
             setPayouts(nextPayouts);
+            setSnapshotFresh(true);
             writeAdminCache({
               groups: nextGroups,
               orders: nextOrders,
@@ -4669,6 +4717,7 @@ import finance from '../../lib/admin-finance.js';
               orderNumber={selectedOrder}
               initialData={selectedOrderData}
               snapshotLoading={dataLoading}
+              snapshotFresh={snapshotFresh}
               onClose={closeOrder}
               onChanged={applyOrderUpdate}
               focusSend={focusSend}
