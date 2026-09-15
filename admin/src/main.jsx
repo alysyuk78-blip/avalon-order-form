@@ -4453,7 +4453,9 @@ import finance from '../../lib/admin-finance.js';
             } catch (firstError) {
               // Google інколи «зависає» хвилею на ~40 с для всіх запитів одразу. Коли сервер
               // уже здався, хвиля зазвичай минула — тож одна тиха повторна спроба.
-              if (!isTransientError(firstError) || firstError.status === 401) throw firstError;
+              // Власний 60-секундний тайм-аут кабінету не повторюємо: інакше порожній кабінет
+              // чекав би ще стільки ж.
+              if (!isTransientError(firstError) || firstError.status === 401 || firstError.code === "TIMEOUT") throw firstError;
               data = await api("/api/admin/bootstrap", { token });
             }
             if (requestRevision !== mutationRevisionRef.current) return data;

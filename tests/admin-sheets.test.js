@@ -195,6 +195,17 @@ async function run() {
   await callAdminSheets("files_list", { order_number: "ORD-150926-012" });
   assert.equal(posts, 2);
 
+  // Пошкоджене тіло однієї спроби не «перемагає»: беремо паралельну з нормальними даними.
+  posts = 0;
+  global.fetch = async (url, opts) => {
+    posts += 1;
+    if (posts === 1) return { ok: true, status: 200, headers: { get: () => null }, json: async () => { throw new SyntaxError("Unexpected end of JSON"); } };
+    return jsonResponse({ status: "ok", payouts: ["цілі"] });
+  };
+  const healed = await callAdminSheets("list_payouts", {});
+  assert.deepEqual(healed.payouts, ["цілі"], "обрізана відповідь — провал спроби, а не результат");
+  assert.equal(posts, 2);
+
   // Відповідь із помилкою від самого скрипту — не привід запускати ще спроби.
   posts = 0;
   global.fetch = async () => { posts += 1; return jsonResponse({ status: "error", message: "Замовлення не знайдено" }); };
