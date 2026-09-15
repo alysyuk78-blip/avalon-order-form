@@ -4447,7 +4447,17 @@ import finance from '../../lib/admin-finance.js';
           try {
             // Один запуск Apps Script замість чотирьох послідовних: замовлення,
             // позиції, платежі, витрати й виплати повертаються одним snapshot.
-            const data = await api("/api/admin/bootstrap", { token });
+            let data;
+            try {
+              data = await api("/api/admin/bootstrap", { token });
+            } catch (firstError) {
+              // Google інколи «зависає» хвилею на ~40 с для всіх запитів одразу. Коли сервер
+              // уже здався, хвиля зазвичай минула — тож одна тиха повторна спроба.
+              // Власний 60-секундний тайм-аут кабінету не повторюємо: інакше порожній кабінет
+              // чекав би ще стільки ж.
+              if (!isTransientError(firstError) || firstError.status === 401 || firstError.code === "TIMEOUT") throw firstError;
+              data = await api("/api/admin/bootstrap", { token });
+            }
             if (requestRevision !== mutationRevisionRef.current) return data;
             const nextGroups = normalizeOrderGroups(data);
             const nextOrders = Array.isArray(data.orders) ? data.orders : [];
