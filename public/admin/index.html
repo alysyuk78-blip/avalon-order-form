@@ -671,6 +671,20 @@
       background: #eef3f8; color: var(--ink); font-size: 13px; line-height: 1.5;
       white-space: pre-wrap; word-break: break-word;
     }
+    /* Поки формується новий перегляд, старий приглушений — щоб не видавався за актуальний. */
+    .send-preview.is-stale .send-preview-text { opacity: .4; }
+    .send-preview-status { font-size: 12px; font-weight: 650; color: var(--muted); margin-bottom: 6px; white-space: normal; }
+    /* Файли, що підуть підряднику слідом за текстом. */
+    .send-preview-files {
+      margin-top: 12px; padding-top: 10px; border-top: 1px dashed rgba(28,33,36,.18);
+      display: grid; gap: 4px; white-space: normal;
+    }
+    .send-preview-files-title { font-weight: 700; }
+    .send-preview-files.is-empty { color: var(--muted); font-size: 12px; }
+    .send-preview-file { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .send-preview-file svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
+    .send-preview-file span { min-width: 0; overflow-wrap: anywhere; }
+    .send-preview-file small { color: var(--muted); white-space: nowrap; }
     .card-payment.unsent { background: rgba(59,130,246,.10); color: #1d4ed8; }
     @media (max-width: 520px) { .send-options { grid-template-columns: 1fr; } }
 

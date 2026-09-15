@@ -1000,6 +1000,7 @@ import finance from '../../lib/admin-finance.js';
       if (!res.ok) {
         const err = new Error(data.error || data.message || ("HTTP " + res.status));
         err.status = res.status;
+        err.code = data.code;
         err.data = data;
         throw err;
       }
@@ -1397,6 +1398,12 @@ import finance from '../../lib/admin-finance.js';
     const SEND_GROUPS = ["Замовник", "Доставка", "Фінанси", "Примітки"];
 
     const pause = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    // Збій доставки відповіді від Google (а не відмова самої дії): запит із тим самим
+    // request_id можна повторити — Apps Script упізнає повтор і не зробить дубль.
+    function isTransientError(e) {
+      return e.status === undefined || e.status === 504
+        || ["SHEETS_TIMEOUT", "SHEETS_NETWORK", "SHEETS_HTTP", "SHEETS_RESULT_LOST", "SHEETS_BAD_REDIRECT"].includes(e.code);
+    }
 
     // Вибір пташок запамʼятовуємо: якщо зазвичай контакти не надсилаєте — наступного
     // разу вони вже будуть зняті. Перед кожним надсиланням пташки видно.
@@ -1625,15 +1632,18 @@ import finance from '../../lib/admin-finance.js';
       useEffect(() => {
         if (!previewOpen) return undefined;
         const seq = ++previewSeq.current;
+        // Поки формується новий перегляд, попередній лише приглушений і підписаний:
+        // раніше після перемикання на «На опрацювання» ще секунди висів «У ВИРОБНИЦТВО».
+        setPreview(cur => ({ ...cur, error: "", loading: true }));
         const timer = setTimeout(async () => {
           try {
             const r = await api("/api/admin/order?resource=contractor", {
               method: "POST", token,
               body: { action: "preview", order_number: orderNumber, options: JSON.parse(optionsKey), ...JSON.parse(purposeKey) },
             });
-            if (seq === previewSeq.current) setPreview({ text: r.text || "", error: "" });
+            if (seq === previewSeq.current) setPreview({ text: r.text || "", error: "", loading: false });
           } catch (e) {
-            if (seq === previewSeq.current) setPreview({ text: "", error: e.message || "Не вдалося сформувати перегляд" });
+            if (seq === previewSeq.current) setPreview({ text: "", error: e.message || "Не вдалося сформувати перегляд", loading: false });
           }
         }, 350);
         return () => clearTimeout(timer);
@@ -1649,8 +1659,7 @@ import finance from '../../lib/admin-finance.js';
           try {
             r = await api("/api/admin/order?resource=contractor", { method: "POST", token, body });
           } catch (e) {
-            const transient = e.status === 504 || e.status === undefined;
-            if (!transient || transientRetries >= 4) throw e;
+            if (!isTransientError(e) || transientRetries >= 4) throw e;
             transientRetries += 1;
             await pause(4000);
             continue;
@@ -1690,7 +1699,13 @@ import finance from '../../lib/admin-finance.js';
         try {
           setPhase(purpose === "processing" ? "Надсилаю на опрацювання…" : "Надсилаю повідомлення…");
           const r = await callContractor({ action: "send", order_number: orderNumber, options, request_id: rid, ...purposeBody });
-          lines.push(purpose === "processing"
+          // Підсумок — за тим, що підтвердив сервер. Раніше кабінет писав «надіслано на
+          // опрацювання», хоча через збій у прошарку йшло «У виробництво».
+          const sentPurpose = r.purpose || purpose;
+          const warning = r.purpose && r.purpose !== purpose
+            ? "Надіслано як «" + (r.purpose === "processing" ? "На опрацювання" : "У виробництво") + "», а не як обрано — перевірте повідомлення в гілці замовлення."
+            : "";
+          lines.push(sentPurpose === "processing"
             ? "Надіслано на опрацювання, термін до " + sentLabel(procDue) + " — нагадування в Google Календарі"
             : (r.update && lastWasProcessing ? "Погоджено — надіслано у виробництво"
               : r.update ? "Оновлення замовлення надіслано" : "Замовлення надіслано у виробництво"));
@@ -1698,7 +1713,7 @@ import finance from '../../lib/admin-finance.js';
           await sendFiles(chosen, rid, lines, failed);
           pendingRef.current = { fp: "", rid: "" };
           setPicked({});
-          setResult({ lines, failed });
+          setResult({ lines, failed, warning });
           if (onSent) onSent();
         } catch (e) {
           setError(e.message || "Не вдалося надіслати підряднику");
@@ -1819,7 +1834,7 @@ import finance from '../../lib/admin-finance.js';
             )}
           </div>
           <p className="send-note">
-            Завжди надсилається: номер замовлення, виріб і характеристики, собівартість, спосіб і дата доставки.
+            Завжди надсилається: номер замовлення, виріб і характеристики, а також собівартість, спосіб і дата доставки, якщо їх уже вказано.
             Джерело заявки підряднику не надсилається.
           </p>
           <div className="send-actions">
@@ -1837,6 +1852,7 @@ import finance from '../../lib/admin-finance.js';
           {error && <div className="error">{error}</div>}
           {result && (
             <div className={"send-result" + (result.failed.length ? " partial" : "")} role="status">
+              {result.warning && <div className="failed">⚠ {result.warning}</div>}
               {result.lines.map((line, i) => <div key={i}>✓ {line}</div>)}
               {result.failed.map(f => <div key={f.id} className="failed">✕ {f.name}: {f.error}</div>)}
               {result.failed.length > 0 && (
@@ -1847,10 +1863,28 @@ import finance from '../../lib/admin-finance.js';
             </div>
           )}
           {previewOpen && (
-            <div className="send-preview" aria-live="polite">
+            <div className={"send-preview" + (preview.loading && preview.text ? " is-stale" : "")} aria-live="polite" aria-busy={!!preview.loading}>
+              {preview.loading && preview.text && <div className="send-preview-status">Оновлюю перегляд…</div>}
               {preview.error
                 ? <span className="error">{preview.error}</span>
-                : (preview.text ? renderTgHtml(preview.text) : "Формую повідомлення…")}
+                : (preview.text ? <div className="send-preview-text">{renderTgHtml(preview.text)}</div> : "Формую повідомлення…")}
+              {/* Файли підрядник отримує окремими повідомленнями одразу після тексту. */}
+              {chosen.length > 0 ? (
+                <div className="send-preview-files">
+                  <div className="send-preview-files-title">
+                    Слідом за повідомленням — {chosen.length} {fileWord(chosen.length)}:
+                  </div>
+                  {chosen.map(f => (
+                    <div className="send-preview-file" key={f.id}>
+                      <Paperclip aria-hidden="true" />
+                      <span>{f.name}</span>
+                      <small>{fileSizeLabel(f.size)}{f.via_link ? " · посиланням на Google Диск" : ""}</small>
+                    </div>
+                  ))}
+                </div>
+              ) : fileList.length > 0 ? (
+                <div className="send-preview-files is-empty">Файли не надсилаються — жоден не позначено.</div>
+              ) : null}
             </div>
           )}
         </section>
@@ -1914,11 +1948,43 @@ import finance from '../../lib/admin-finance.js';
 
       // Файл іде частинами: після обриву зв'язку питаємо Диск, скільки він уже має,
       // і продовжуємо з того місця, а не з нуля.
+      // Файл до 3 МБ — одним запитом замість «відкрити сесію + частина»: кожне звернення
+      // до Google може зависнути на кілька секунд. request_id не дає створити дубль,
+      // якщо відповідь загубилась і запит довелось повторити.
+      async function uploadSmall(file) {
+        const body = {
+          action: "small", order_number: orderNumber, name: file.name, mime: file.type || "",
+          size: file.size, data: await blobToBase64(file), request_id: newRequestId(),
+        };
+        let failures = 0;
+        for (let i = 0; i < 30; i += 1) {
+          let r;
+          try {
+            r = await api("/api/admin/order?resource=files", { method: "POST", token, body });
+          } catch (e) {
+            if (/Unknown admin_action/i.test(e.message || "")) return null;
+            failures += 1;
+            if (!isTransientError(e) || failures > 3) throw e;
+            await pause(1500 * failures);
+            continue;
+          }
+          if (r && r.pending) { await pause(2000); continue; }
+          if (r && r.file) return r.file;
+          throw new Error("Google Диск не повернув файл");
+        }
+        throw new Error("Google Диск довго не підтверджує файл — оновіть список файлів за хвилину");
+      }
+
       async function uploadOne(file, key) {
         const setProgress = (progress) => setUploads(list => list.map(u => u.key === key ? { ...u, progress } : u));
         if (!file.size) throw new Error("Порожній файл");
         if (file.size > FILE_MAX_BYTES) {
           throw new Error("Файл більший за 300 МБ — завантажте його на Google Диск вручну й додайте посилання в примітки");
+        }
+        if (file.size <= UPLOAD_CHUNK) {
+          const small = await uploadSmall(file);
+          if (small) { setProgress(1); return small; }
+          // Apps Script ще без малого завантаження — далі звичайним шляхом.
         }
         const init = await api("/api/admin/order?resource=files", {
           method: "POST", token,

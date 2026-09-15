@@ -1026,30 +1026,34 @@ function buildProductionMsg_(data, opts) {
   var marginInfo = show.finance
     ? marginForContractorBlock_(items, data.commission_pct)
     : { priceLine: "", section: "" };
-  m += "\n💰 <b>ФІНАНСИ</b>\n";
+  // Розділ із заголовком — лише коли в ньому є хоч один рядок. Для «порахувати
+  // виробничу вартість» ні цін, ні доставки ще немає, і порожні «ФІНАНСИ» / «ДОСТАВКА»
+  // виглядали як збій.
+  var fin = "";
   var grand = 0;
   if (multi) {
     items.forEach(function (it, i) {
       var b = breakdown(it), c = Number(it.cost_total) || b.total; grand += c;
-      if (b.basketCost > 0) m += "• Кошик " + (i + 1) + ": " + b.basketArea.toFixed(2) + " м² × " + money_(b.basketRate) + " ₴ = <b>" + money_(b.basketCost) + " ₴</b>\n";
-      if (b.coverCost > 0) m += "  Верхня кришка: " + b.coverArea.toFixed(2) + " м² × " + money_(b.coverRate) + " ₴ = <b>" + money_(b.coverCost) + " ₴</b>\n";
+      if (b.basketCost > 0) fin += "• Кошик " + (i + 1) + ": " + b.basketArea.toFixed(2) + " м² × " + money_(b.basketRate) + " ₴ = <b>" + money_(b.basketCost) + " ₴</b>\n";
+      if (b.coverCost > 0) fin += "  Верхня кришка: " + b.coverArea.toFixed(2) + " м² × " + money_(b.coverRate) + " ₴ = <b>" + money_(b.coverCost) + " ₴</b>\n";
     });
-    if (grand > 0) m += "• <b>Разом виробнича: " + money_(grand) + " ₴</b>\n";
+    if (grand > 0) fin += "• <b>Разом виробнича: " + money_(grand) + " ₴</b>\n";
   } else {
     var it = items[0], b = breakdown(it), c = Number(it.cost_total) || b.total;
-    if (b.basketCost > 0) m += "• Кошик: " + b.basketArea.toFixed(2) + " м² × <b>" + money_(b.basketRate) + " ₴/м²</b> = <b>" + money_(b.basketCost) + " ₴</b>\n";
-    if (b.coverCost > 0) m += "• Верхня кришка: " + b.coverArea.toFixed(2) + " м² × <b>" + money_(b.coverRate) + " ₴/м²</b> = <b>" + money_(b.coverCost) + " ₴</b>\n";
-    if (c > 0) m += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
+    if (b.basketCost > 0) fin += "• Кошик: " + b.basketArea.toFixed(2) + " м² × <b>" + money_(b.basketRate) + " ₴/м²</b> = <b>" + money_(b.basketCost) + " ₴</b>\n";
+    if (b.coverCost > 0) fin += "• Верхня кришка: " + b.coverArea.toFixed(2) + " м² × <b>" + money_(b.coverRate) + " ₴/м²</b> = <b>" + money_(b.coverCost) + " ₴</b>\n";
+    if (c > 0) fin += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
   }
-  m += marginInfo.priceLine;
-  if (data.payment_method) m += "• Оплата: <b>" + esc_(data.payment_method) + "</b>\n";
+  fin += marginInfo.priceLine;
+  if (data.payment_method) fin += "• Оплата: <b>" + esc_(data.payment_method) + "</b>\n";
+  if (fin) m += "\n💰 <b>ФІНАНСИ</b>\n" + fin;
   m += marginInfo.section;
 
-  m += "\n🚚 <b>ДОСТАВКА</b>\n";
+  var del = "";
   var transport = data.transport === "Інше" ? (data.transport_custom || "") : (data.transport || "");
-  if (transport) m += "• Спосіб: <b>" + esc_(transport) + "</b>\n";
-  if (show.address && data.delivery_address) m += "• Адреса: " + esc_(data.delivery_address) + "\n";
-  if (data.delivery_date) m += "• Дата: <b>" + fmtDate_(data.delivery_date) + "</b>\n";
+  if (transport) del += "• Спосіб: <b>" + esc_(transport) + "</b>\n";
+  if (show.address && data.delivery_address) del += "• Адреса: " + esc_(data.delivery_address) + "\n";
+  if (data.delivery_date) del += "• Дата: <b>" + fmtDate_(data.delivery_date) + "</b>\n";
   if (show.notes && data.notes) {
     // Рядки про довжину/віброподушки вже показані у кожній позиції окремо — у злитих
     // примітках вони лише дублюються (а в багатопозиційних могли б і заплутати).
@@ -1060,10 +1064,11 @@ function buildProductionMsg_(data, opts) {
       return t && !/^(Довжина кронштейнів|Віброподушки|Telegram|E-mail|Viber|WhatsApp)\s*:/i.test(t);
     });
     if (noteLines.length) {
-      m += "• Додаткова інформація:\n";
-      noteLines.forEach(function (line) { m += "  " + esc_(line) + "\n"; });
+      del += "• Додаткова інформація:\n";
+      noteLines.forEach(function (line) { del += "  " + esc_(line) + "\n"; });
     }
   }
+  if (del) m += "\n🚚 <b>ДОСТАВКА</b>\n" + del;
 
   // Джерело заявки підряднику не потрібне — воно лишається в CRM і в повідомленні власнику.
   return m;
@@ -2625,6 +2630,7 @@ function handleAdminRequest_(data) {
     // загального блокування: вони не пишуть у таблицю (крім короткого запису статусу).
     if (action === "files_list") return jsonOut(adminFilesList_(data));
     if (action === "file_upload_init") return jsonOut(adminFileUploadInit_(data));
+    if (action === "file_upload_small") return jsonOut(adminFileUploadSmall_(data));
     if (action === "file_upload_chunk") return jsonOut(adminFileUploadChunk_(data));
     if (action === "file_upload_status") return jsonOut(adminFileUploadStatus_(data));
     if (action === "file_trash") return jsonOut(adminFileTrash_(data));
@@ -3614,6 +3620,24 @@ function driveUploadResult_(res, uploadId) {
   throw new Error("Google Диск відхилив частину файлу (HTTP " + code + ")");
 }
 
+/**
+ * Малий файл (до частини 3 МБ) — одним викликом: без сесії завантаження й окремої частини.
+ * Кожне звернення до веб-застосунку може зависнути на боці Google на кілька секунд, тож
+ * для скріншотів і PDF це вдвічі менше очікування. request_id захищає від дубля, якщо
+ * відповідь загубилась і кабінет повторив запит.
+ */
+function adminFileUploadSmall_(data) {
+  var num = String(data.order_number || "").trim();
+  var name = String(data.name || "").replace(/[\u0000-\u001f\/\\]/g, "_").trim().slice(0, 200) || "файл";
+  var mime = String(data.mime || "").trim() || "application/octet-stream";
+  return withRequestCache_("fsmall_", data.request_id, function () {
+    var bytes = Utilities.base64Decode(String(data.data || ""));
+    if (!bytes.length) throw new Error("Порожній файл");
+    if (bytes.length > UPLOAD_CHUNK_BYTES) throw new Error("Файл завеликий для одного запиту — завантажте його частинами");
+    var file = orderFolder_(num, true).createFile(Utilities.newBlob(bytes, mime, name));
+    return afterUploadStep_({ status: "ok", done: true, file: fileToJson_(file) }, num);
+  });
+}
 function adminFileUploadChunk_(data) {
   var s = uploadSession_(data.upload_id, data.order_number);
   var offset = Math.floor(Number(data.offset) || 0);
