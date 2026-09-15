@@ -74,6 +74,11 @@ import finance from '../../lib/admin-finance.js';
     const MANUAL_SOURCES = ["Телефон","Instagram","Facebook","Viber / WhatsApp","Telegram","Повторний клієнт","Рекомендація","ОСББ","Партнер / підрядник","Візит в офіс","Інше"];
     const BRACKET_LENGTHS = ["450 мм","500 мм","600 мм","700 мм"];
     const UNIT_SUGGESTIONS = ["шт.", "комп."];
+    // Послуги — робота з матеріалом замовника чи під замовлення, а не виріб. Можна кілька
+    // одразу (напр. різання + гнуття + фарбування); зберігаються в колонці «Тип» через «; ».
+    const SERVICE_KIND = "Послуга";
+    const SERVICE_TYPES = ["Лазерне різання", "Порошкове фарбування", "Фарбування з пульверизатора", "Гнуття металу", "Зварювальні роботи", "Фрезерні роботи"];
+    const SERVICE_UNITS = ["шт.", "м²", "м.п.", "кг", "год", "комп."];
     // Платежі: оплати клієнта та надходження маржі від підрядника.
     const PAYMENT_TYPES = ["Передоплата","Доплата","Оплата повністю","Маржа від підрядника","Повернення клієнту"];
     const PAYMENT_METHODS = ["Готівка","На карту","На рахунок ФО-П","На рахунок ТОВ","Накладений платіж","Інше"];
@@ -2495,47 +2500,98 @@ import finance from '../../lib/admin-finance.js';
             })}>Зберегти клієнта</button>
 
             <div className="section-title">Товар{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</div>
-            <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
-              Зміна розмірів, типу або візерунка перерахує гроші за стандартною формулою.
-              Щоб залишити свою ціну — впишіть її нижче в «Фінансах» після збереження.
-            </p>
-            <div className="grid2">
-              <div className="field"><label htmlFor="order-product-model">Модель / виріб</label>
-                <input id="order-product-model" list="crm-models" value={form.basket_model} onChange={e => setForm({ ...form, basket_model: e.target.value })} />
-                <datalist id="crm-models">{CATALOG_MODELS_CRM.map(m => <option key={m.id} value={m.name} />)}</datalist>
-              </div>
-              <div className="field"><label htmlFor="order-product-kind">Вид виробу</label>
-                <select id="order-product-kind" value={form.product_kind} onChange={e => setForm({ ...form, product_kind: e.target.value })}>
-                  <option value="">— не вказано —</option>
-                  <option value="Кошик">Кошик</option>
-                  <option value="Кронштейни">Кронштейни</option>
-                  <option value="Інший виріб">Інший виріб</option>
-                </select>
-              </div>
-              <div className="field"><label>Конструкція</label>
-                <input value={form.construction} onChange={e => setForm({ ...form, construction: e.target.value })} /></div>
-              <div className="field"><label>Тип</label>
-                <input value={form.basket_type} onChange={e => setForm({ ...form, basket_type: e.target.value })} /></div>
-              <div className="field"><label>Колір</label>
-                <input value={form.color} onChange={e => setForm({ ...form, color: e.target.value })} /></div>
-              <div className="field"><label>Візерунок</label>
-                <input value={form.pattern} onChange={e => setForm({ ...form, pattern: e.target.value })} /></div>
-              <div className="field"><label>Кількість</label>
-                <input type="number" min="1" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} /></div>
-              <div className="field"><label>Одиниця виміру</label>
-                <input list="crm-units-edit" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} placeholder="шт. / комп. / інше" />
-                <datalist id="crm-units-edit">{UNIT_SUGGESTIONS.map(u => <option key={u} value={u} />)}</datalist>
-              </div>
-              <div className="field"><label>Ширина, мм</label>
-                <input type="number" value={form.size_w} onChange={e => setForm({ ...form, size_w: e.target.value })} /></div>
-              <div className="field"><label>Висота, мм</label>
-                <input type="number" value={form.size_h} onChange={e => setForm({ ...form, size_h: e.target.value })} /></div>
-              <div className="field"><label>Глибина, мм</label>
-                <input type="number" value={form.size_d} onChange={e => setForm({ ...form, size_d: e.target.value })} /></div>
-            </div>
-            <div className="field"><label>Характеристики (для виробів не з каталогу)</label>
-              <textarea value={form.specs} onChange={e => setForm({ ...form, specs: e.target.value })} rows="3"
-                placeholder="Розміри, матеріал, комплектація — по рядку на пункт" /></div>
+            {/* Стандартна формула (₴/м²) — лише для кошиків; вироби не з каталогу й послуги не перераховуються. */}
+            {(!form.product_kind || form.product_kind === "Кошик") && (
+              <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
+                Зміна розмірів, типу або візерунка перерахує гроші за стандартною формулою.
+                Щоб залишити свою ціну — впишіть її нижче в «Фінансах» після збереження.
+              </p>
+            )}
+            {(() => {
+              // Послуга: види робіт фішками (у колонці «Тип»), без конструкції, візерунка й розмірів кошика.
+              const isServiceItem = form.product_kind === SERVICE_KIND;
+              return (
+                <>
+                  <div className="grid2">
+                    <div className="field"><label htmlFor="order-product-model">{isServiceItem ? "Що зробити (назва)" : "Модель / виріб"}</label>
+                      <input id="order-product-model" list={isServiceItem ? undefined : "crm-models"} value={form.basket_model} onChange={e => setForm({ ...form, basket_model: e.target.value })} />
+                      <datalist id="crm-models">{CATALOG_MODELS_CRM.map(m => <option key={m.id} value={m.name} />)}</datalist>
+                    </div>
+                    <div className="field"><label htmlFor="order-product-kind">Вид</label>
+                      <select id="order-product-kind" value={form.product_kind} onChange={e => {
+                        const next = e.target.value;
+                        // Перемикання на послугу: конструкція, візерунок і розміри кошика зникають з
+                        // форми — тож і не зберігаються (площу в таблиці прибирає Apps Script).
+                        setForm(next === SERVICE_KIND
+                          ? { ...form, product_kind: next, construction: form.basket_model, pattern: "", size_w: "", size_h: "", size_d: "" }
+                          : { ...form, product_kind: next });
+                      }}>
+                        <option value="">— не вказано —</option>
+                        <option value="Кошик">Кошик</option>
+                        <option value="Кронштейни">Кронштейни</option>
+                        <option value="Інший виріб">Інший виріб</option>
+                        <option value={SERVICE_KIND}>{SERVICE_KIND}</option>
+                      </select>
+                    </div>
+                  </div>
+                  {isServiceItem && (
+                    <div className="field">
+                      <label>Вид послуги</label>
+                      <div className="send-chips" role="group" aria-label="Вид послуги — можна кілька">
+                        {SERVICE_TYPES.map(t => {
+                          const on = hasTask(form.basket_type, t);
+                          return (
+                            <button type="button" key={t} aria-pressed={on} className={on ? "active" : ""}
+                              onClick={() => setForm(f => ({ ...f, basket_type: toggleTask(f.basket_type, t) }))}>
+                              {on && <Check aria-hidden="true" />}{t}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <input style={{ marginTop: 8 }} value={form.basket_type} onChange={e => setForm({ ...form, basket_type: e.target.value })}
+                        placeholder="Оберіть вище одну чи кілька або впишіть свою через «;»" />
+                    </div>
+                  )}
+                  <div className="grid2">
+                    {!isServiceItem && (
+                      <div className="field"><label>Конструкція</label>
+                        <input value={form.construction} onChange={e => setForm({ ...form, construction: e.target.value })} /></div>
+                    )}
+                    {!isServiceItem && (
+                      <div className="field"><label>Тип</label>
+                        <input value={form.basket_type} onChange={e => setForm({ ...form, basket_type: e.target.value })} /></div>
+                    )}
+                    <div className="field"><label>Колір</label>
+                      <input value={form.color} onChange={e => setForm({ ...form, color: e.target.value })} /></div>
+                    {!isServiceItem && (
+                      <div className="field"><label>Візерунок</label>
+                        <input value={form.pattern} onChange={e => setForm({ ...form, pattern: e.target.value })} /></div>
+                    )}
+                    <div className="field"><label>Кількість</label>
+                      <input type="number" min={isServiceItem ? "0.01" : "1"} step={isServiceItem ? "any" : "1"} value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} /></div>
+                    <div className="field"><label>Одиниця виміру</label>
+                      <input list={isServiceItem ? "crm-units-service-edit" : "crm-units-edit"} value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })}
+                        placeholder={isServiceItem ? "шт. / м² / м.п. / год" : "шт. / комп. / інше"} />
+                      <datalist id="crm-units-edit">{UNIT_SUGGESTIONS.map(u => <option key={u} value={u} />)}</datalist>
+                      <datalist id="crm-units-service-edit">{SERVICE_UNITS.map(u => <option key={u} value={u} />)}</datalist>
+                    </div>
+                    {!isServiceItem && (
+                      <>
+                        <div className="field"><label>Ширина, мм</label>
+                          <input type="number" value={form.size_w} onChange={e => setForm({ ...form, size_w: e.target.value })} /></div>
+                        <div className="field"><label>Висота, мм</label>
+                          <input type="number" value={form.size_h} onChange={e => setForm({ ...form, size_h: e.target.value })} /></div>
+                        <div className="field"><label>Глибина, мм</label>
+                          <input type="number" value={form.size_d} onChange={e => setForm({ ...form, size_d: e.target.value })} /></div>
+                      </>
+                    )}
+                  </div>
+                  <div className="field"><label>{isServiceItem ? "Характеристики (матеріал, товщина, розміри, деталі)" : "Характеристики (для виробів не з каталогу)"}</label>
+                    <textarea value={form.specs} onChange={e => setForm({ ...form, specs: e.target.value })} rows="3"
+                      placeholder="Розміри, матеріал, комплектація — по рядку на пункт" /></div>
+                </>
+              );
+            })()}
             <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy || stale} onClick={() => save({
               basket_model: form.basket_model, product_kind: form.product_kind, specs: form.specs,
               construction: form.construction,
@@ -2723,7 +2779,7 @@ import finance from '../../lib/admin-finance.js';
     // Ручне внесення замовлення: телефон, Instagram, повторний клієнт — усе, що не
     // прийшло через онлайн-форму. Пише той самий рядок таблиці, що й форма.
     function NewOrderDrawer({ token, onClose, onCreated }) {
-      const [kind, setKind] = useState("basket"); // basket | bracket | other
+      const [kind, setKind] = useState("basket"); // basket | bracket | other | service
       const [form, setForm] = useState({
         client: "", phone: "", contact_method: "phone", contact_telegram: "", contact_email: "",
         city: "", source: "Телефон",
@@ -2740,7 +2796,9 @@ import finance from '../../lib/admin-finance.js';
       const pendingCreateRef = useRef({ fingerprint: "", requestId: "" });
 
       const model = CATALOG_MODELS_CRM.find(m => m.id === form.basket_model);
-      const isOther = kind === "other";
+      const isService = kind === "service";
+      // «Інший виріб» і «Послуга» — без каталогу, моделі й формули: назва, характеристики, ціна від менеджера.
+      const isOther = kind === "other" || isService;
       const isBracket = kind === "bracket" || !!(model && model.bracket);
       const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -2755,12 +2813,17 @@ import finance from '../../lib/admin-finance.js';
           ...f,
           basket_model: "", construction_type: "", pattern: "", has_cover: false,
           bracket_length: "", vibro_pads: false, product_name: "", specs: "",
+          basket_type: "",
           unit: next === "bracket" ? "комп." : "шт.",
+          ...(next === "service" ? { size_w: "", size_h: "", size_d: "" } : {}),
         }));
       }
 
       // Гроші вводяться ЗА ОДИНИЦЮ, у таблицю йдуть підсумки (× кількість).
-      const qtyNum = Math.max(1, Number(form.quantity) || 1);
+      // Послугу міряють і в м², год — дробова кількість дозволена; вироби — від 1.
+      const qtyNum = kind === "service"
+        ? (Number(form.quantity) > 0 ? Number(form.quantity) : 1)
+        : Math.max(1, Number(form.quantity) || 1);
       const costUnit = Number(form.cost_total) || 0;
       const listUnit = Number(form.list_price) || 0;
       const priceUnitOverride = Number(form.price_total) || 0;
@@ -2807,16 +2870,20 @@ import finance from '../../lib/admin-finance.js';
         if (!form.phone.trim() && !form.contact_telegram.trim() && !form.contact_email.trim()) {
           return setError("Вкажіть телефон, Telegram або e-mail");
         }
-        if (isOther && !form.product_name.trim()) return setError("Вкажіть назву виробу");
+        if (isService && !splitTasks(form.basket_type).length && !form.product_name.trim()) {
+          return setError("Оберіть вид послуги або впишіть, що зробити");
+        }
+        if (kind === "other" && !form.product_name.trim()) return setError("Вкажіть назву виробу");
         if (!form.unit.trim()) return setError("Вкажіть одиницю виміру");
         if (form.commission_pct !== "" && !newBreakdown.rateValid) {
           return setError("Комісія з маржі має бути від 0% до 99,99%");
         }
         const order = {
           ...form,
-          product_type: isOther ? "other" : (isBracket ? "bracket" : "basket"),
-          basket_model_name: isOther ? form.product_name : (model ? model.name : form.basket_model),
-          construction_type: isOther ? form.product_name : form.construction_type,
+          product_type: isService ? "service" : isOther ? "other" : (isBracket ? "bracket" : "basket"),
+          // Для послуги без окремої назви назвою стають самі види робіт.
+          basket_model_name: isOther ? (form.product_name.trim() || form.basket_type) : (model ? model.name : form.basket_model),
+          construction_type: isOther ? (form.product_name.trim() || form.basket_type) : form.construction_type,
           quantity: qtyNum,
           unit: form.unit.trim(),
           // Колонки таблиці зберігають ПІДСУМКИ по позиції, тож множимо на кількість.
@@ -2891,19 +2958,40 @@ import finance from '../../lib/admin-finance.js';
 
             <div className="section-title">Товар</div>
             <div className="quick-actions" style={{ marginBottom: 10 }}>
-              {[{ v: "basket", l: "Кошик з каталогу" }, { v: "bracket", l: "Кронштейни" }, { v: "other", l: "Інший виріб" }].map(o => (
+              {[{ v: "basket", l: "Кошик з каталогу" }, { v: "bracket", l: "Кронштейни" }, { v: "other", l: "Інший виріб" }, { v: "service", l: "Послуга" }].map(o => (
                 <button key={o.v} type="button" className={kind === o.v ? "active" : ""} onClick={() => changeKind(o.v)}>{o.l}</button>
               ))}
             </div>
+            {isService && (
+              <div className="field">
+                <label>Вид послуги *</label>
+                <div className="send-chips" role="group" aria-label="Вид послуги — можна кілька">
+                  {SERVICE_TYPES.map(t => {
+                    const on = hasTask(form.basket_type, t);
+                    return (
+                      <button type="button" key={t} aria-pressed={on} className={on ? "active" : ""}
+                        onClick={() => set("basket_type", toggleTask(form.basket_type, t))}>
+                        {on && <Check aria-hidden="true" />}{t}
+                      </button>
+                    );
+                  })}
+                </div>
+                <input style={{ marginTop: 8 }} value={form.basket_type} onChange={e => set("basket_type", e.target.value)}
+                  placeholder="Оберіть вище одну чи кілька або впишіть свою через «;»" />
+              </div>
+            )}
             {isOther && (
               <div className="grid2">
-                <div className="field"><label>Назва виробу *</label>
-                  <input value={form.product_name} onChange={e => set("product_name", e.target.value)} placeholder="Пергола / Виставковий стенд / Навіс…" /></div>
+                <div className="field"><label>{isService ? "Що зробити (назва)" : "Назва виробу *"}</label>
+                  <input value={form.product_name} onChange={e => set("product_name", e.target.value)}
+                    placeholder={isService ? "Фарбування кришки / Різання листа 3 мм…" : "Пергола / Виставковий стенд / Навіс…"} /></div>
                 <div className="field"><label>Кількість</label>
-                  <input type="number" min="1" value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
+                  <input type="number" min={isService ? "0.01" : "1"} step={isService ? "any" : "1"} value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
                 <div className="field"><label>Одиниця виміру</label>
-                  <input list="crm-units-new" value={form.unit} onChange={e => set("unit", e.target.value)} placeholder="шт. / комп. / інше" />
+                  <input list={isService ? "crm-units-service" : "crm-units-new"} value={form.unit} onChange={e => set("unit", e.target.value)}
+                    placeholder={isService ? "шт. / м² / м.п. / год" : "шт. / комп. / інше"} />
                   <datalist id="crm-units-new">{UNIT_SUGGESTIONS.map(u => <option key={u} value={u} />)}</datalist>
+                  <datalist id="crm-units-service">{SERVICE_UNITS.map(u => <option key={u} value={u} />)}</datalist>
                 </div>
                 <div className="field"><label>Колір</label>
                   <input value={form.color} onChange={e => set("color", e.target.value)} placeholder="RAL 7016" /></div>
@@ -2912,7 +3000,9 @@ import finance from '../../lib/admin-finance.js';
             {isOther && (
               <div className="field"><label>Характеристики</label>
                 <textarea value={form.specs} onChange={e => set("specs", e.target.value)} rows="4"
-                  placeholder={"Розміри, матеріал, комплектація — по рядку на пункт. Напр.:\nРозмір 3000×4000 мм\nПрофіль 40×40, порошкове фарбування\nПоліуглинка + монтаж"} /></div>
+                  placeholder={isService
+                    ? "Матеріал, товщина, розміри, кількість деталей — по рядку на пункт. Напр.:\nЛист сталь 3 мм, 1250×2500\nФарбування: верх — золото, низ — чорний"
+                    : "Розміри, матеріал, комплектація — по рядку на пункт. Напр.:\nРозмір 3000×4000 мм\nПрофіль 40×40, порошкове фарбування\nПоліуглинка + монтаж"} /></div>
             )}
             {!isOther && <div className="grid2">
               <div className="field"><label>Модель</label>
@@ -2944,7 +3034,7 @@ import finance from '../../lib/admin-finance.js';
                 <datalist id="crm-units-new">{UNIT_SUGGESTIONS.map(u => <option key={u} value={u} />)}</datalist>
               </div>
             </div>}
-            {!isBracket && (
+            {!isBracket && !isService && (
               <div className="grid2" style={{ marginTop: 8 }}>
                 <div className="field"><label>Ширина, мм</label>
                   <input type="number" value={form.size_w} onChange={e => set("size_w", e.target.value)} /></div>

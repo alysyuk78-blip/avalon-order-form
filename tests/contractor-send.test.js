@@ -680,6 +680,98 @@ function testProcessingPreviewSections() {
   assert.ok(prod.includes("🚚 <b>ДОСТАВКА</b>") && prod.includes("Нова пошта") && prod.includes("25.09.2026"));
 }
 
+
+// ── Послуга: у таблиці вид «Послуга» без площі кошика, підряднику — блок послуг ──
+function testServiceKind() {
+  const writes = [];
+  let appended = null;
+  const chain = (r, c) => {
+    const rng = new Proxy({}, {
+      get: (_, prop) => {
+        if (prop === "setValues") return (v) => { writes.push({ r, c, v }); return rng; };
+        if (prop === "setValue") return (v) => { writes.push({ r, c, v: [[v]] }); return rng; };
+        if (prop === "getValues") return () => [[""]];
+        if (prop === "getValue") return () => "";
+        return () => rng;
+      },
+    });
+    return rng;
+  };
+  const sheet = { getLastRow: () => 1, getMaxColumns: () => 48, getRange: (r, c) => chain(r, c) };
+  const ctx = load({
+    SpreadsheetApp: { getActiveSpreadsheet: () => ({ getSheetByName: () => sheet }) },
+    Utilities: { formatDate: () => "15.09.2026 20:00" },
+    PropertiesService: { getScriptProperties: () => makeProps() },
+  });
+  ctx.ensureDiscountColumns_ = () => {};
+  ctx.getPatternFileInfo_ = () => null;
+  ctx.ensureContactColumns_ = () => {};
+  ctx.setCommissionFormulas_ = () => {};
+  ctx.appendOrderRow_ = (sh, row) => { appended = row; return 2; };
+
+  ctx.writeOrderToSheet_({
+    order_number: "ORD-150926-020", first_name: "Сергій", phone: "+380671112233",
+    items: [{
+      product_type: "service", basket_type: "Порошкове фарбування; Гнуття металу",
+      basket_model_name: "Фарбування кришки", construction_type: "Фарбування кришки",
+      size_w: 450, size_h: 600, size_d: 200, quantity: 2, unit: "шт.",
+      cost_total: 800, price_total: 1200, specs: "Верх — золото, низ — чорний",
+    }],
+  });
+  assert.equal(appended[7], "Порошкове фарбування; Гнуття металу", "види робіт — у колонці «Тип»");
+  assert.equal(appended[17], "", "для послуги площа кошика не рахується");
+  assert.equal(appended[19], 800, "собівартість — від менеджера");
+  assert.equal(appended[21], 1200, "ціна — від менеджера, без формули ₴/м²");
+  const aoAp = writes.find((w) => w.r === 2 && w.c === 41);
+  assert.deepEqual(aoAp.v[0].slice(0, 2), ["Фарбування кришки", "Послуга"], "вид у колонці AP — «Послуга»");
+
+  // Лише собівартість і дробова кількість: ціну не вигадуємо, 2,5 м² не округлюємо.
+  ctx.writeOrderToSheet_({
+    order_number: "ORD-150926-021", first_name: "Сергій", phone: "+380671112233",
+    items: [{ product_type: "service", basket_type: "Лазерне різання", basket_model_name: "Лист 3 мм",
+      quantity: 2.5, unit: "м²", cost_total: 500, price_total: null }],
+  });
+  assert.equal(appended[16], 2.5, "дробова кількість послуги зберігається");
+  assert.equal(appended[19], 500, "собівартість — як вписав менеджер");
+  assert.equal(appended[21], "", "для послуги без ціни ціна лишається порожньою, без націнки");
+  assert.throws(() => ctx.writeOrderToSheet_({ order_number: "X", items: [{ product_type: "service", quantity: 0 }] }), /більшою за 0/);
+  assert.throws(() => ctx.writeOrderToSheet_({ order_number: "X", items: [{ product_type: "other", quantity: 0.5 }] }), /не меншою за 1/,
+    "для виробів правило «від 1 штуки» не змінилось");
+
+  // Правка в картці: дробова кількість послуги не округлюється; перемикання кошика на послугу
+  // прибирає площу кошика.
+  const us = makeSheet([orderRow("ORD-150926-030", "Нове", { 13: 450, 14: 600, 15: 200, 16: 1, 17: 1.16, 41: "Кошик" })]);
+  const uctx = load({
+    PropertiesService: { getScriptProperties: () => makeProps() },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    SpreadsheetApp: { flush() {} },
+  });
+  uctx.adminOrdersSheet_ = () => us;
+  uctx.recalcRow_ = () => {};
+  uctx.applyFinanceToRow_ = () => {};
+  uctx.syncOrderPaymentState_ = () => {};
+  uctx.syncProcessingEvent_ = () => {};
+  uctx.adminGetOrder_ = () => ({ status: "ok" });
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-030", patch: { product_kind: "Послуга", quantity: 2.5, size_w: 0, size_h: 0, size_d: 0 } });
+  assert.equal(us.data[1][41], "Послуга");
+  assert.equal(us.data[1][16], 2.5, "2,5 м² після правки не стає 3");
+  assert.equal(us.data[1][17], "", "площа кошика прибрана");
+  assert.equal(us.data[1][13], "", "розміри кошика прибрані");
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-030", patch: { product_kind: "Кошик", quantity: 2.4 } });
+  assert.equal(us.data[1][16], 2, "для кошика — ціла кількість, як і раніше");
+
+  // Повідомлення підряднику для рядка-послуги.
+  const row = orderRow(ORD, "Нове", { 7: "Порошкове фарбування; Гнуття металу", 8: "Фарбування кришки", 40: "Фарбування кришки", 41: "Послуга", 42: "Ширина кришки 450 мм\nФарбування: верх — золото", 9: "золото/чорний" });
+  const pctx = processingContext(makeSheet([row]), makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" }), makeCalendar(), []);
+  const text = pctx.adminContractorPreview_({ order_number: ORD, options: { finance: true } }).text;
+  assert.ok(text.includes("🛠 <b>ПОСЛУГИ</b>"), "лише послуги — заголовок «ПОСЛУГИ»");
+  assert.ok(!text.includes("🏭 <b>ВИРОБНИЦТВО</b>"));
+  assert.ok(text.includes("• Послуга: <b>Порошкове фарбування, Гнуття металу</b>"));
+  assert.ok(text.includes("• Назва: <b>Фарбування кришки</b>"));
+  assert.ok(text.includes("• Ширина кришки 450 мм") && text.includes("• Колір: <b>золото/чорний</b>"));
+  assert.ok(!text.includes("м² ×"), "жодної розкладки за площею кошика");
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
@@ -691,4 +783,5 @@ testSheetStatusProcessing();
 testFilesCountBackfill();
 testSmallUpload();
 testProcessingPreviewSections();
+testServiceKind();
 console.log("contractor-send tests: OK");
