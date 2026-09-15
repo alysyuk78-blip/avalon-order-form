@@ -3841,11 +3841,18 @@ function syncProcessingEvent_(sh, num) {
   return "created";
 }
 
+/** Завдання підряднику: одне — рядком, кілька (кабінет зберігає їх через «; ») — списком. */
+function tasksLines_(task) {
+  var items = String(task || "").split(/\s*[;\n]\s*/).filter(function (t) { return t; });
+  if (items.length <= 1) return "• Завдання: <b>" + esc_(items[0] || "опрацювати замовлення") + "</b>\n";
+  return "• Завдання:\n" + items.map(function (t) { return "   — <b>" + esc_(t) + "</b>\n"; }).join("");
+}
+
 /** Заголовок повідомлення підряднику: навіщо йому це замовлення саме зараз. */
 function contractorPrefix_(purpose, update, lastPurpose, due, task) {
   if (purpose === "processing") {
     return (update ? "🔄 <b>ОНОВЛЕНО — НА ОПРАЦЮВАННЯ</b>" : "🧮 <b>НА ОПРАЦЮВАННЯ</b> — ще не у виробництво") + "\n"
-      + "• Завдання: <b>" + esc_(task || "опрацювати замовлення") + "</b>\n"
+      + tasksLines_(task)
       + "• Термін: " + (due ? "<b>до " + fmtDate_(due) + "</b>" : "не вказано") + "\n\n";
   }
   if (update && lastPurpose === "processing") return "✅ <b>ПОГОДЖЕНО — ЗАПУСКАЄМО У ВИРОБНИЦТВО</b>\n\n";

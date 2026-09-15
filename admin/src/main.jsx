@@ -1463,8 +1463,22 @@ import finance from '../../lib/admin-finance.js';
       const d = new Date();
       return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
     }
-    // Швидкі варіанти завдання для «На опрацювання» — можна вписати й своє.
+    // Швидкі варіанти завдання для «На опрацювання» — можна обрати кілька й вписати своє.
     const PROCESSING_TASKS = ["Порахувати виробничу вартість", "Розробити конструктив нової моделі", "Підготувати креслення"];
+    // Кілька завдань зберігаються одним рядком через «; » (колонка AV) — так їх видно й у таблиці.
+    function splitTasks(text) {
+      return String(text || "").split(/\s*[;\n]\s*/).map(t => t.trim()).filter(Boolean);
+    }
+    function hasTask(text, task) {
+      return splitTasks(text).some(t => t.toLowerCase() === task.toLowerCase());
+    }
+    function toggleTask(text, task) {
+      const items = splitTasks(text);
+      const next = hasTask(text, task)
+        ? items.filter(t => t.toLowerCase() !== task.toLowerCase())
+        : items.concat(task);
+      return next.join("; ");
+    }
     function createdLabel(iso) {
       const d = new Date(iso);
       return isNaN(d.getTime()) ? "" : d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit" });
@@ -1573,6 +1587,7 @@ import finance from '../../lib/admin-finance.js';
       const [preview, setPreview] = useState({ text: "", error: "" });
       const pendingRef = useRef({ fp: "", rid: "" });
       const previewSeq = useRef(0);
+      const [previewAttempt, setPreviewAttempt] = useState(0);   // «Спробувати ще раз» у перегляді
 
       // Мета надсилання: на опрацювання (вартість, конструктив — ще не у виробництво)
       // чи у виробництво. Типово — за поточним статусом; зміна статусу може попросити іншу.
@@ -1647,7 +1662,7 @@ import finance from '../../lib/admin-finance.js';
           }
         }, 350);
         return () => clearTimeout(timer);
-      }, [previewOpen, optionsKey, purposeKey, orderNumber, sent]);
+      }, [previewOpen, optionsKey, purposeKey, orderNumber, sent, previewAttempt]);
 
       // Повтор із тим самим request_id безпечний: скрипт не надішле дубль, а поки
       // перший запит ще триває — відповідає «pending». Повторюємо лише тайм-аути й
@@ -1777,13 +1792,20 @@ import finance from '../../lib/admin-finance.js';
               <div className="field">
                 <label htmlFor="proc-task">Що зробити підряднику</label>
                 <input id="proc-task" value={procTask} maxLength={500}
-                  placeholder="Напр. порахувати виробничу вартість"
+                  placeholder="Оберіть одне чи кілька завдань нижче або впишіть своє"
                   onChange={e => setProcTask(e.target.value)} />
-                <div className="send-chips">
-                  {PROCESSING_TASKS.map(t => (
-                    <button type="button" key={t} className={procTask === t ? "active" : ""} onClick={() => setProcTask(t)}>{t}</button>
-                  ))}
+                <div className="send-chips" role="group" aria-label="Завдання підряднику — можна кілька">
+                  {PROCESSING_TASKS.map(t => {
+                    const on = hasTask(procTask, t);
+                    return (
+                      <button type="button" key={t} aria-pressed={on} className={on ? "active" : ""}
+                        onClick={() => setProcTask(cur => toggleTask(cur, t))}>
+                        {on && <Check aria-hidden="true" />}{t}
+                      </button>
+                    );
+                  })}
                 </div>
+                <small className="send-hint">Можна обрати кілька. Своє завдання допишіть через «;».</small>
               </div>
               <div className="field">
                 <label htmlFor="proc-due">Термін опрацювання *</label>
@@ -1866,7 +1888,14 @@ import finance from '../../lib/admin-finance.js';
             <div className={"send-preview" + (preview.loading && preview.text ? " is-stale" : "")} aria-live="polite" aria-busy={!!preview.loading}>
               {preview.loading && preview.text && <div className="send-preview-status">Оновлюю перегляд…</div>}
               {preview.error
-                ? <span className="error">{preview.error}</span>
+                ? (
+                  <div className="error-bar">
+                    <span className="error">{preview.error}</span>
+                    <button type="button" className="ghost error-retry" onClick={() => setPreviewAttempt(n => n + 1)}>
+                      Спробувати ще раз
+                    </button>
+                  </div>
+                )
                 : (preview.text ? <div className="send-preview-text">{renderTgHtml(preview.text)}</div> : "Формую повідомлення…")}
               {/* Файли підрядник отримує окремими повідомленнями одразу після тексту. */}
               {chosen.length > 0 ? (

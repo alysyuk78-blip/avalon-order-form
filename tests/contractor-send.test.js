@@ -644,6 +644,14 @@ function testProcessingPreviewSections() {
   assert.ok(!proc.includes("ФІНАНСИ"), "порожній розділ фінансів не показуємо");
   assert.ok(!proc.includes("ДОСТАВКА"), "порожній розділ доставки не показуємо");
 
+  // Кілька завдань — окремими рядками, щоб підрядник нічого не пропустив.
+  const multi = ctx.adminContractorPreview_({
+    order_number: ORD, purpose: "processing", processing_due: "2026-09-18",
+    processing_task: "Порахувати виробничу вартість; Підготувати креслення", options: {},
+  }).text;
+  assert.ok(multi.includes("• Завдання:\n   — <b>Порахувати виробничу вартість</b>\n   — <b>Підготувати креслення</b>\n"),
+    "кілька завдань — списком");
+
   // Коли дані є — розділи на місці.
   const full = makeSheet([orderRow(ORD, "Нове", { 26: "Нова пошта", 28: "2026-09-25" })]);
   const ctx2 = processingContext(full, props, makeCalendar(), []);
