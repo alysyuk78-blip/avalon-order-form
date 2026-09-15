@@ -4499,7 +4499,8 @@ import finance from '../../lib/admin-finance.js';
             // знімком їх не затираємо, лише чекаємо свіжих із таблиці.
             if (!hasLocal || snapAt > (Number(local.savedAt) || 0)) apply(data, snapAt);
             if ((Number(snap.age_ms) || 0) < SNAPSHOT_FRESH_MS) {
-              setSnapshotFresh(true);
+              // Таблицю у фоні не смикаємо, але й зміни не відкриваємо: знімок міг відстати від
+              // щойно зробленої зміни. Картка сама звірить своє замовлення з таблицею.
               return data;
             }
             // 2. Свіжі дані з таблиці — у фоні: кабінет уже показує знімок, а крутиться лише ↻.

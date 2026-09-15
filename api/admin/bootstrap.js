@@ -23,7 +23,11 @@ module.exports = async function handler(req, res) {
     }
     const readAt = Date.now();
     const data = await callAdminSheets("bootstrap", {});
-    const stored = await saveSnapshot(data, readAt);
+    // Знімок — найкраще зусилля: дані з таблиці вже є, тож на сховище чекаємо не довше 4,5 с.
+    const stored = await Promise.race([
+      saveSnapshot(data, readAt),
+      new Promise((resolve) => setTimeout(() => resolve("timeout"), 4500)),
+    ]);
     return res.status(200).json({ ...data, snapshot: { source: "sheets", saved_at: readAt, age_ms: 0, stored } });
   } catch (err) {
     console.error("admin/bootstrap:", err);
