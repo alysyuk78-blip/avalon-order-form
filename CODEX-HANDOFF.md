@@ -20,6 +20,12 @@
   «Видалити позицію «…»?» → `DELETE /api/admin/order?order_number&row` →
   `adminDeleteOrderItem_` (перевірка належності рядка, звірка під замком, `syncOrderPaymentState_`).
   ⚠️ Останню позицію видалити не можна — для відмови є статус «Скасовано».
+- Після рев'ю: номер рядка — нестабільний ідентифікатор (видалення рядка вище зсуває нижчі).
+  Кабінет надсилає `expect` (basket_type, construction, quantity, basket_model,
+  product_kind позиції, яку бачить) і в DELETE, і в PATCH; `assertItemIdentity_` звіряє з
+  таблицею (кількість як у `mapOrderRow_`: порожня = 1). З `expect` і чужим рядком PATCH
+  більше не бере мовчки першу позицію. Внутрішній waitLock прибрано — `delete_order_item`
+  у ADMIN_WRITE_ACTIONS, doPost уже тримає замок.
 - Тести: `testModelPhotoAndFinanceLines`, `testDeleteOrderItem`, DELETE у admin-files-api.
   ⚠️ Потрібен деплій Apps Script.
 

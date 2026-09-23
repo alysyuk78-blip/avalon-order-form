@@ -850,12 +850,38 @@ function testDeleteOrderItem() {
   assert.throws(() => ctx.adminDeleteOrderItem_({ order_number: ORD, row: 4 }), /Список позицій змінився/,
     "чужий рядок не видаляємо");
   assert.throws(() => ctx.adminDeleteOrderItem_({ order_number: ORD, row: 1 }), /рядок позиції/);
-  ctx.adminDeleteOrderItem_({ order_number: ORD, row: 3 });
+  // Рядки зсунулись (у іншому вікні видалили рядок вище): рядок 3 тепер інша позиція —
+  // звірка за вмістом не дає видалити сусідню.
+  assert.throws(() => ctx.adminDeleteOrderItem_({ order_number: ORD, row: 3, expect: { basket_model: "Зі знімною боковиною" } }),
+    /Список позицій змінився/, "видаляємо лише ту позицію, яку бачить кабінет");
+  assert.equal(sheet.data.length, 4, "нічого не видалено");
+  ctx.adminDeleteOrderItem_({ order_number: ORD, row: 3, expect: { basket_model: "Друга позиція", quantity: 1 } });
   assert.equal(sheet.data.length, 3, "рядок прибрано");
   assert.deepEqual(sheet.data.slice(1).map((r) => r[0]), [ORD, "ORD-110926-002"], "прибрано саме потрібний рядок");
   assert.equal(sheet.data[1][40], "Зі знімною боковиною", "перша позиція лишилась незмінною");
   assert.throws(() => ctx.adminDeleteOrderItem_({ order_number: ORD, row: 2 }), /остання позиція/,
     "останню позицію не видаляємо — для відмови є статус «Скасовано»");
+
+  // Правка позиції: після зсуву рядків — відмова, а не правка сусідньої.
+  const us = makeSheet([orderRow(ORD, "Нове", { 40: "Перша" }), orderRow(ORD, "Нове", { 40: "Друга" })]);
+  const uctx = load({
+    PropertiesService: { getScriptProperties: () => makeProps() },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    SpreadsheetApp: { flush() {} },
+  });
+  uctx.adminOrdersSheet_ = () => us;
+  uctx.recalcRow_ = () => {};
+  uctx.syncOrderPaymentState_ = () => {};
+  uctx.syncProcessingEvent_ = () => {};
+  uctx.adminGetOrder_ = () => ({ status: "ok" });
+  assert.throws(() => uctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: { color: "Чорний" }, expect: { basket_model: "Друга" } }),
+    /Список позицій змінився/);
+  assert.equal(us.data[1][9], "", "сусідню позицію не змінено");
+  assert.throws(() => uctx.adminUpdateOrder_({ order_number: ORD, row: 9, patch: { color: "Чорний" }, expect: { basket_model: "Друга" } }),
+    /Список позицій змінився/, "чужий рядок із expect — відмова, а не правка першої позиції");
+  us.data[2][16] = "";   // порожня кількість у таблиці = 1 у кабінеті — не хибна відмова
+  uctx.adminUpdateOrder_({ order_number: ORD, row: 3, patch: { color: "Чорний" }, expect: { basket_model: "Друга", quantity: 1 } });
+  assert.equal(us.data[2][9], "Чорний", "правильна позиція змінена");
 }
 
 testMessageOptions();

@@ -3188,6 +3188,29 @@ function adminCreateOrder_(data) {
 }
 
 /**
+ * Номер рядка — не стабільний ідентифікатор позиції: видалення будь-якого рядка вище
+ * зсуває всі нижчі. Тому кабінет разом із рядком надсилає, що саме він бачить у цій
+ * позиції (expect), і ми звіряємо це з таблицею. Розбіжність → «оновіть картку», а не
+ * правка чи видалення сусідньої позиції.
+ */
+function assertItemIdentity_(sh, row, expect) {
+  if (!expect || typeof expect !== "object") return;
+  var v = sh.getRange(row, 1, 1, 45).getValues()[0];
+  var actual = {
+    basket_type: v[7], construction: v[8], quantity: v[16],
+    basket_model: v[40], product_kind: v[41]
+  };
+  Object.keys(actual).forEach(function (key) {
+    if (expect[key] == null) return;
+    var want = String(expect[key]).trim();
+    var have = String(actual[key] == null ? "" : actual[key]).trim();
+    // Як у mapOrderRow_: порожня кількість у таблиці — це 1 у кабінеті.
+    if (key === "quantity") { want = String(Number(want) || 1); have = String(cellNum_(actual.quantity) || 1); }
+    if (want !== have) throw new Error("Список позицій змінився. Оновіть картку й повторіть");
+  });
+}
+
+/**
  * Прибрати ОДНУ позицію замовлення (рядок таблиці). Останню позицію не видаляємо:
  * замовлення без позицій зникло б із воронки й фінансів — для відмови є статус «Скасовано».
  */
@@ -3209,17 +3232,9 @@ function adminDeleteOrderItem_(data) {
   if (rows.length < 2) {
     throw new Error("Це остання позиція замовлення. Щоб прибрати замовлення, поставте статус «Скасовано»");
   }
-  var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
-  try {
-    // Ще раз звіряємо рядок під замком: між перевіркою й видаленням таблицю могли змінити.
-    if (String(sh.getRange(row, 1).getValue() || "").trim() !== num) {
-      throw new Error("Список позицій змінився. Оновіть картку й повторіть");
-    }
-    sh.deleteRow(row);
-  } finally {
-    lock.releaseLock();
-  }
+  // Дія в ADMIN_WRITE_ACTIONS: doPost уже тримає замок скрипта, другий waitLock завис би.
+  assertItemIdentity_(sh, row, data.expect);
+  sh.deleteRow(row);
   // Виручка замовлення змінилась — перераховуємо галочки оплат.
   try { syncOrderPaymentState_(num); } catch (syncErr) { /* не валимо видалення */ }
   return adminGetOrder_({ order_number: num });
@@ -3266,7 +3281,12 @@ function adminUpdateOrder_(data) {
   if (!targetRows.length) throw new Error("Order not found");
 
   var row = data.row ? Number(data.row) : targetRows[0];
-  if (targetRows.indexOf(row) < 0) row = targetRows[0];
+  if (targetRows.indexOf(row) < 0) {
+    // Кабінет знає, яку позицію правив, — тоді мовчки брати першу не можна.
+    if (data.expect) throw new Error("Список позицій змінився. Оновіть картку й повторіть");
+    row = targetRows[0];
+  }
+  assertItemIdentity_(sh, row, data.expect);
 
   var oldStatus = canonStatus_(sh.getRange(row, 3).getValue());
 

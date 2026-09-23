@@ -1438,6 +1438,20 @@ import finance from '../../lib/admin-finance.js';
       try { localStorage.setItem(SEND_OPTIONS_KEY, JSON.stringify(opts)); } catch (e) { /* не критично */ }
     }
 
+    /**
+     * Що кабінет бачить у позиції — сервер звіряє це з таблицею перед правкою чи видаленням.
+     * Номер рядка сам по собі ненадійний: видалення рядка вище зсуває всі нижчі.
+     */
+    function itemExpect(item) {
+      if (!item) return undefined;
+      return {
+        basket_type: String(item.basket_type || ""),
+        construction: String(item.construction || ""),
+        quantity: Number(item.quantity) || 0,
+        basket_model: String(item.basket_model || ""),
+        product_kind: String(item.product_kind || ""),
+      };
+    }
     /** Коротка назва позиції для списку та підтверджень: «Кошик 1 · Зі знімною боковиною». */
     function itemTitle(item, index) {
       const kind = item.product_kind === SERVICE_KIND ? "Послуга"
@@ -2171,7 +2185,7 @@ import finance from '../../lib/admin-finance.js';
         const res = await api("/api/admin/order", {
           method: "PATCH",
           token,
-          body: { order_number: orderNumber, row: form && form.row, patch },
+          body: { order_number: orderNumber, row: form && form.row, patch, expect: itemExpect(data && data.items && data.items[itemIdx]) },
         });
         setData(res);
         applyItemToForm(res, itemIdx);
@@ -2255,7 +2269,7 @@ import finance from '../../lib/admin-finance.js';
           const res = await api("/api/admin/order", {
             method: "PATCH",
             token,
-            body: { order_number: orderNumber, row: form.row, patch },
+            body: { order_number: orderNumber, row: form.row, patch, expect: itemExpect(data && data.items && data.items[itemIdx]) },
           });
           setData(res);
           applyItemToForm(res, itemIdx);
@@ -2294,7 +2308,7 @@ import finance from '../../lib/admin-finance.js';
         setBusy(true); setError("");
         try {
           const res = await api("/api/admin/order?order_number=" + encodeURIComponent(orderNumber)
-            + "&row=" + encodeURIComponent(item.row), { method: "DELETE", token });
+            + "&row=" + encodeURIComponent(item.row), { method: "DELETE", token, body: { expect: itemExpect(item) } });
           setData(res);
           setItemIdx(0);
           applyItemToForm(res, 0);

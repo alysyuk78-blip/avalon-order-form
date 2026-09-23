@@ -6,6 +6,18 @@ const contractorHandler = require("../../lib/admin-contractor-handler");
 // Тариф Vercel Hobby дозволяє не більше 12 серверних функцій, і в проєкті їх
 // рівно 12. Тому файли замовлення й надсилання підряднику живуть тут:
 // /api/admin/order?resource=files|contractor.
+// Лише поля, за якими звіряємо позицію, і лише рядки/числа.
+const EXPECT_KEYS = ["basket_type", "construction", "quantity", "basket_model", "product_kind"];
+function cleanExpect(raw) {
+  const out = {};
+  EXPECT_KEYS.forEach((key) => {
+    const value = raw[key];
+    if (typeof value === "string") out[key] = value.slice(0, 300);
+    else if (typeof value === "number" && isFinite(value)) out[key] = value;
+  });
+  return out;
+}
+
 function resourceOf(req) {
   return String((req.query && req.query.resource) || (req.body && req.body.resource) || "");
 }
@@ -35,6 +47,8 @@ module.exports = async function handler(req, res) {
         order_number: orderNumber,
         row: body.row,
         patch: body.patch || body,
+        // Що кабінет бачить у цій позиції — щоб не правити сусідню після зсуву рядків.
+        ...(body.expect && typeof body.expect === "object" ? { expect: cleanExpect(body.expect) } : {}),
       });
       return res.status(200).json(data);
     }
@@ -46,7 +60,8 @@ module.exports = async function handler(req, res) {
       const row = Number(query.row || (req.body && req.body.row) || 0);
       if (!orderNumber) return res.status(400).json({ error: "order_number required" });
       if (!(row >= 2)) return res.status(400).json({ error: "row required" });
-      const data = await callAdminSheets("delete_order_item", { order_number: orderNumber, row });
+      const expect = req.body && req.body.expect && typeof req.body.expect === "object" ? cleanExpect(req.body.expect) : null;
+      const data = await callAdminSheets("delete_order_item", { order_number: orderNumber, row, ...(expect ? { expect } : {}) });
       return res.status(200).json(data);
     }
 
