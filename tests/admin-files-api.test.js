@@ -68,6 +68,16 @@ async function run() {
   assert.equal(o.statusCode, 200);
   assert.equal(calls.pop().action, "get_order");
 
+  // Видалення однієї позиції замовлення (DELETE без resource).
+  o = await call(order, { method: "DELETE", query: { order_number: ORD, row: "3" } });
+  assert.equal(o.statusCode, 200);
+  assert.deepEqual(calls.pop(), { action: "delete_order_item", payload: { order_number: ORD, row: 3 } });
+  o = await call(order, { method: "DELETE", query: { order_number: ORD } });
+  assert.equal(o.statusCode, 400, "без рядка позиції нічого не видаляємо");
+  o = await call(order, { method: "DELETE", query: { row: "3" } });
+  assert.equal(o.statusCode, 400, "без номера замовлення нічого не видаляємо");
+  assert.equal(calls.length, 0);
+
   let r = await call(files, { method: "GET", query: { order_number: "ORD-1" } });
   assert.equal(r.statusCode, 400, "невірний номер замовлення відсікається до Apps Script");
   assert.equal(calls.length, 0);

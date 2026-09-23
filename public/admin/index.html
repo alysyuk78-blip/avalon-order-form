@@ -684,6 +684,20 @@
     /* Поки формується новий перегляд, старий приглушений — щоб не видавався за актуальний. */
     .send-preview.is-stale .send-preview-text { opacity: .4; }
     .send-preview-status { font-size: 12px; font-weight: 650; color: var(--muted); margin-bottom: 6px; white-space: normal; }
+    /* Позиції замовлення: олівець — скорегувати, кошик — прибрати позицію. */
+    .item-list { display: grid; gap: 6px; margin: 0 0 12px; }
+    .item-row {
+      display: flex; align-items: center; gap: 8px; min-width: 0;
+      padding: 8px 10px; border-radius: 12px; background: var(--control-bg);
+    }
+    .item-row.active { background: rgba(143,115,64,.12); }
+    .item-row-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+    .item-row-main strong { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+    .item-row-main span { font-size: 11.5px; color: var(--muted); }
+    .item-row .icon-button { width: 34px; height: 34px; flex: 0 0 34px; background: #fff; }
+    /* Фото моделі — прев'ю над текстом повідомлення, як побачить підрядник. */
+    .send-preview-photo { display: block; width: 100%; max-height: 220px; object-fit: cover; border-radius: 10px; margin-bottom: 8px; background: #dfe6ee; }
+    .send-preview.is-stale .send-preview-photo { opacity: .4; }
     /* Файли, що підуть підряднику слідом за текстом. */
     .send-preview-files {
       margin-top: 12px; padding-top: 10px; border-top: 1px dashed rgba(28,33,36,.18);

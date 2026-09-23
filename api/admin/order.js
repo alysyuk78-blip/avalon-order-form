@@ -39,6 +39,17 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(data);
     }
 
+    if (req.method === "DELETE") {
+      // Прибрати одну позицію замовлення (рядок таблиці) — з картки замовлення.
+      const query = req.query || {};
+      const orderNumber = String(query.order_number || (req.body && req.body.order_number) || "").trim();
+      const row = Number(query.row || (req.body && req.body.row) || 0);
+      if (!orderNumber) return res.status(400).json({ error: "order_number required" });
+      if (!(row >= 2)) return res.status(400).json({ error: "row required" });
+      const data = await callAdminSheets("delete_order_item", { order_number: orderNumber, row });
+      return res.status(200).json(data);
+    }
+
     return res.status(405).json({ error: "Method not allowed" });
   } catch (err) {
     console.error("admin/order:", err);

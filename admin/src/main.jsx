@@ -22,6 +22,7 @@ import {
   PanelTopClose,
   PanelTopOpen,
   Paperclip,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -121,6 +122,7 @@ import finance from '../../lib/admin-finance.js';
       info: Info,
       close: (props) => <MaskIcon src="/admin/icons/close.png" size={props.size} className={props.className} />,
       trash: (props) => <MaskIcon src="/admin/icons/trash.png" size={props.size} className={props.className} />,
+      edit: Pencil,
       check: Check,
       collapseCards: PanelTopClose,
       expandCards: PanelTopOpen,
@@ -1436,6 +1438,14 @@ import finance from '../../lib/admin-finance.js';
       try { localStorage.setItem(SEND_OPTIONS_KEY, JSON.stringify(opts)); } catch (e) { /* не критично */ }
     }
 
+    /** Коротка назва позиції для списку та підтверджень: «Кошик 1 · Зі знімною боковиною». */
+    function itemTitle(item, index) {
+      const kind = item.product_kind === SERVICE_KIND ? "Послуга"
+        : item.product_kind === "Кронштейни" ? "Кронштейни"
+        : item.product_kind === "Інший виріб" ? "Виріб" : "Кошик";
+      const name = String(item.basket_model || item.basket_type || item.construction || "").trim();
+      return kind + " " + (index + 1) + (name ? " · " + name : "");
+    }
     function fileSizeLabel(bytes) {
       const n = Number(bytes) || 0;
       if (n >= 1024 * 1024) return (Math.round(n / 1024 / 1024 * 10) / 10).toLocaleString("uk-UA") + " МБ";
@@ -1689,7 +1699,7 @@ import finance from '../../lib/admin-finance.js';
               method: "POST", token,
               body: { action: "preview", order_number: orderNumber, options: JSON.parse(optionsKey), ...JSON.parse(purposeKey) },
             });
-            if (seq === previewSeq.current) setPreview({ text: r.text || "", error: "", loading: false });
+            if (seq === previewSeq.current) setPreview({ text: r.text || "", photo: r.photo || "", error: "", loading: false });
           } catch (e) {
             if (seq === previewSeq.current) setPreview({ text: "", error: e.message || "Не вдалося сформувати перегляд", loading: false });
           }
@@ -1929,6 +1939,10 @@ import finance from '../../lib/admin-finance.js';
           {previewOpen && (
             <div className={"send-preview" + (preview.loading && preview.text ? " is-stale" : "")} aria-live="polite" aria-busy={!!preview.loading}>
               {preview.loading && preview.text && <div className="send-preview-status">Оновлюю перегляд…</div>}
+              {/* Фото моделі підрядник бачить тим самим повідомленням, над текстом. */}
+              {!preview.error && preview.photo && (
+                <img className="send-preview-photo" src={preview.photo} alt="Фото моделі з каталогу" loading="lazy" />
+              )}
               {preview.error
                 ? (
                   <div className="error-bar">
@@ -2263,6 +2277,35 @@ import finance from '../../lib/admin-finance.js';
         );
       }
 
+      // Позиції замовлення: корегування з підтвердженням і видалення рядка з таблиці.
+      function askEditItem(idx) {
+        if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return; }
+        if (idx === itemIdx) return;
+        if (!window.confirm("Ви точно хочете скорегувати позицію «" + itemTitle(items[idx], idx) + "»?")) return;
+        selectItem(idx);
+      }
+      async function removeItem(item, idx) {
+        if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return; }
+        if (items.length < 2) {
+          setError("Це остання позиція замовлення. Щоб прибрати замовлення, поставте статус «Скасовано».");
+          return;
+        }
+        if (!window.confirm("Видалити позицію «" + itemTitle(item, idx) + "» із замовлення? Дію не можна скасувати.")) return;
+        setBusy(true); setError("");
+        try {
+          const res = await api("/api/admin/order?order_number=" + encodeURIComponent(orderNumber)
+            + "&row=" + encodeURIComponent(item.row), { method: "DELETE", token });
+          setData(res);
+          setItemIdx(0);
+          applyItemToForm(res, 0);
+          if (onChanged) onChanged(res);
+        } catch (e) {
+          setError(e.message || "Не вдалося видалити позицію");
+        } finally {
+          setBusy(false);
+        }
+      }
+
       async function changeStatus(newStatus) {
         if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return; }
         if (!confirmStatusChange(form.status, newStatus)) return;
@@ -2500,6 +2543,22 @@ import finance from '../../lib/admin-finance.js';
             })}>Зберегти клієнта</button>
 
             <div className="section-title">Товар{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</div>
+            {items.length > 1 && (
+              <div className="item-list">
+                {items.map((it, i) => (
+                  <div key={it.row || i} className={"item-row" + (i === itemIdx ? " active" : "")}>
+                    <div className="item-row-main">
+                      <strong>{itemTitle(it, i)}</strong>
+                      <span>{(Number(it.quantity) || 1) + " " + (it.unit || "шт.") + " · " + money(it.revenue)}</span>
+                    </div>
+                    <IconButton icon="edit" label={"Скорегувати «" + itemTitle(it, i) + "»"}
+                      disabled={busy || stale} onClick={() => askEditItem(i)} />
+                    <IconButton icon="trash" label={"Видалити «" + itemTitle(it, i) + "»"}
+                      disabled={busy || stale} onClick={() => removeItem(it, i)} />
+                  </div>
+                ))}
+              </div>
+            )}
             {/* Стандартна формула (₴/м²) — лише для кошиків; вироби не з каталогу й послуги не перераховуються. */}
             {(!form.product_kind || form.product_kind === "Кошик") && (
               <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>

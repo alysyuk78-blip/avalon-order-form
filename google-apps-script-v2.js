@@ -34,7 +34,7 @@ var HDR_FONT = "Google Sans";
 var CAL_KEY = "AVALON";
 
 // Дії кабінету, що ПИШУТЬ у таблицю — лише вони потребують блокування скрипта.
-var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "upsert_partner",
+var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "delete_order_item", "upsert_partner",
   "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment",
   "settlement_pdf", "settlement_send", "migrate_legacy_payments"];
 
@@ -644,11 +644,32 @@ function tgApi_(method, payload) {
 }
 
 // Надіслати повідомлення в чат і (опційно) в конкретну тему (гілку).
-function tgSendTo_(chatId, text, threadId) {
+/**
+ * photoUrl — фото моделі показуємо ПРЕВʼЮ до того самого повідомлення (link_preview_options),
+ * а не окремою картинкою: у чаті це один блок «фото + текст». Якщо Telegram не зможе
+ * завантажити фото, повідомлення все одно піде — просто без картинки.
+ */
+function tgSendTo_(chatId, text, threadId, photoUrl) {
   if (!chatId) { console.error("Немає chat_id для надсилання"); return null; }
-  var payload = { chat_id: chatId, text: text, parse_mode: "HTML", disable_web_page_preview: true };
+  var payload = { chat_id: chatId, text: text, parse_mode: "HTML" };
+  if (photoUrl) {
+    payload.link_preview_options = {
+      url: String(photoUrl),
+      prefer_large_media: true,
+      show_above_text: true
+    };
+  } else {
+    payload.disable_web_page_preview = true;
+  }
   if (threadId) payload.message_thread_id = Number(threadId);
-  return tgApi_("sendMessage", payload);
+  var res = tgApi_("sendMessage", payload);
+  if (photoUrl && (!res || !res.ok)) {
+    // Прев'ю не прийнято (старіший Bot API чи недоступне фото) — текст важливіший за картинку.
+    var plain = { chat_id: payload.chat_id, text: payload.text, parse_mode: "HTML", disable_web_page_preview: true };
+    if (payload.message_thread_id) plain.message_thread_id = payload.message_thread_id;
+    res = tgApi_("sendMessage", plain);
+  }
+  return res;
 }
 
 function getOwnerChat_() {
@@ -725,6 +746,55 @@ function notifyOwnerPaymentChange_(sh, row, col, checked) {
   notifyOwner_(msg);
 }
 
+// Моделі каталогу: назва й фото з публічного сайту. Підрядник бачить у повідомленні і
+// назву моделі («Зі знімною боковиною»), і саме фото — тим самим повідомленням.
+var SITE_URL_DEFAULT = "https://avalon-order-form.vercel.app";
+var MODEL_CATALOG = {
+  "AVL-01":    { name: "Суцільний",                photo: "avl-01-solid.jpg" },
+  "AVL-02":    { name: "Екран під утеплювач",      photo: "avl-02-insulation-screen.jpg" },
+  "AVL-03":    { name: "Універсальний",            photo: "avl-03-universal.jpg" },
+  "AVL-04":    { name: "Зі знімною боковиною",     photo: "avl-04-removable-side.jpg" },
+  "AVL-05":    { name: "Розбірний",                photo: "avl-05-disassembled.jpg" },
+  "AVL-06":    { name: "Ламель з кришкою",         photo: "avl-06-lamella-cover.jpg" },
+  "AVL-06/1":  { name: "Ламельний",                photo: "avl-09-louver.jpg" },
+  "AVL-07":    { name: "Закритий на підставці",    photo: "avl-07-stand.jpg" },
+  "AVL-08":    { name: "Горизонтальний монтаж",    photo: "avl-08-horizontal.jpg" },
+  "AVL-K-01":  { name: "Кронштейни декоративні",   photo: "avl-k-01-brackets.jpg" },
+  "AVL-SK-01": { name: "Кронштейна система",       photo: "avl-sk-01-system.jpg" }
+};
+function siteUrl_() {
+  var custom = "";
+  try { custom = PropertiesService.getScriptProperties().getProperty("SITE_URL") || ""; } catch (e) { custom = ""; }
+  return String(custom || SITE_URL_DEFAULT).replace(/\/+$/, "");
+}
+/** Модель позиції: за кодом AVL-… у назві чи конструкції, або за назвою моделі. */
+function modelInfo_(it) {
+  var hay = [it && it.basket_model, it && it.basket_model_name, it && it.construction_type].join(" ");
+  var code = String(hay).toUpperCase().match(/AVL-(?:SK-|K-)?\d{2}(?:\/\d)?/);
+  var id = code ? code[0] : "";
+  if (!id) {
+    var wanted = String((it && (it.basket_model_name || it.basket_model)) || "").trim().toLowerCase();
+    if (wanted) {
+      for (var key in MODEL_CATALOG) {
+        if (MODEL_CATALOG[key].name.toLowerCase() === wanted) { id = key; break; }
+      }
+    }
+  }
+  var info = id ? MODEL_CATALOG[id] : null;
+  if (!info) return null;
+  return { id: id, name: info.name, photo: siteUrl_() + "/images/basket-models/" + info.photo };
+}
+/** Фото першої позиції з відомою моделлю — для прев'ю в повідомленні підряднику. */
+function orderPreviewPhoto_(data) {
+  var items = (data && Array.isArray(data.items) && data.items.length) ? data.items : [data];
+  for (var i = 0; i < items.length; i++) {
+    if (items[i] && (items[i].product_type === "other" || items[i].product_type === "service")) continue;
+    var info = modelInfo_(items[i]);
+    if (info) return info.photo;
+  }
+  return "";
+}
+
 function esc_(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -769,7 +839,7 @@ function createOrderTopic_(data, opts, prefix) {
   var r = tgApi_("createForumTopic", { chat_id: chat, name: num || "Замовлення" });
   if (r && r.ok && r.result && r.result.message_thread_id) threadId = r.result.message_thread_id;
   // якщо Теми вимкнені / бот не адмін — threadId лишиться null, повідомлення піде в загальний чат
-  var sent = tgSendTo_(chat, (prefix || "") + buildProductionMsg_(data, opts), threadId);
+  var sent = tgSendTo_(chat, (prefix || "") + buildProductionMsg_(data, opts), threadId, orderPreviewPhoto_(data));
   if (num && sent && sent.ok) {
     p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
     p.setProperty("sent_" + num, nowIsoKyiv_());                        // коли — показуємо в CRM
@@ -956,6 +1026,12 @@ function buildProductionMsg_(data, opts) {
   function itemUnit(it) {
     return esc_(String(it.unit || (it.product_type === "bracket" ? "комп." : "шт.")).trim() || "шт.");
   }
+  function itemLabel_(it, i) {
+    var base = it.product_type === "bracket" ? "Кронштейни"
+             : it.product_type === "other" ? "Виріб"
+             : it.product_type === "service" ? "Послуга" : "Кошик";
+    return base + " " + (i + 1);
+  }
   function breakdown(it) {
     var zero = { basketArea: 0, coverArea: 0, basketRate: 0, coverRate: 0, basketCost: 0, coverCost: 0, total: 0 };
     // Розкладка «м² × ₴/м²» чинна ЛИШЕ для кошиків. Кронштейни й довільні вироби
@@ -1034,8 +1110,16 @@ function buildProductionMsg_(data, opts) {
       return;
     }
     if (multi) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
-    m += "• Тип: <b>" + esc_(it.basket_type) + "</b>\n";
-    m += "• Конструкція: <b>" + esc_(it.construction_type) + "</b>\n";
+    // Порожні «Тип:» і «Конструкція:» не друкуємо — у повідомленні вони виглядали як загублені дані.
+    if (String(it.basket_type || "").trim()) m += "• Тип: <b>" + esc_(it.basket_type) + "</b>\n";
+    // Конструкція + модель: «Суцільний · AVL-04 · Зі знімною боковиною» — підрядник одразу
+    // бачить, яка саме це модель каталогу (фото тієї ж моделі йде прев'ю до повідомлення).
+    var model = modelInfo_(it);
+    var constrLine = String(it.construction_type || "");
+    if (model && constrLine.toLowerCase().indexOf(model.name.toLowerCase()) < 0) {
+      constrLine = (constrLine ? constrLine + " · " : "") + (constrLine.toUpperCase().indexOf(model.id) < 0 ? model.id + " · " : "") + model.name;
+    }
+    if (String(constrLine || "").trim()) m += "• Конструкція: <b>" + esc_(constrLine) + "</b>\n";
     if (it.has_cover) m += "• Верхня кришка: <b>Так</b>\n";
     if (color) m += "• Колір: <b>" + color + "</b>\n";
     if (pattern) m += "• Візерунок: <b>" + pattern + "</b>\n";
@@ -1060,8 +1144,15 @@ function buildProductionMsg_(data, opts) {
   if (multi) {
     items.forEach(function (it, i) {
       var b = breakdown(it), c = Number(it.cost_total) || b.total; grand += c;
-      if (b.basketCost > 0) fin += "• Кошик " + (i + 1) + ": " + b.basketArea.toFixed(2) + " м² × " + money_(b.basketRate) + " ₴ = <b>" + money_(b.basketCost) + " ₴</b>\n";
-      if (b.coverCost > 0) fin += "  Верхня кришка: " + b.coverArea.toFixed(2) + " м² × " + money_(b.coverRate) + " ₴ = <b>" + money_(b.coverCost) + " ₴</b>\n";
+      var label = itemLabel_(it, i);
+      if (b.basketCost > 0) {
+        fin += "• " + label + ": " + b.basketArea.toFixed(2) + " м² × " + money_(b.basketRate) + " ₴ = <b>" + money_(b.basketCost) + " ₴</b>\n";
+        if (b.coverCost > 0) fin += "  Верхня кришка: " + b.coverArea.toFixed(2) + " м² × " + money_(b.coverRate) + " ₴ = <b>" + money_(b.coverCost) + " ₴</b>\n";
+      } else if (c > 0) {
+        // Позиція без розмірів (ціну веде менеджер) теж має бути видима: інакше вона мовчки
+        // ховалася всередині «Разом виробнича», і підрядник не бачив, за що ці гроші.
+        fin += "• " + label + ": <b>" + money_(c) + " ₴</b>\n";
+      }
     });
     if (grand > 0) fin += "• <b>Разом виробнича: " + money_(grand) + " ₴</b>\n";
   } else {
@@ -1381,7 +1472,7 @@ function sendUpdateToContractor() {
   if (!ord) { ui.alert("Не вдалося зібрати дані замовлення " + num + "."); return; }
   var chat = p.getProperty("TG_CONTRACTOR_CHAT");
   var text = "🔄 <b>ОНОВЛЕНО ЗАМОВЛЕННЯ</b> (зміни від замовника):\n\n" + buildProductionMsg_(ord);
-  var sent = tgSendTo_(chat, text, thread === "0" ? null : thread);
+  var sent = tgSendTo_(chat, text, thread === "0" ? null : thread, orderPreviewPhoto_(ord));
   if (sent && sent.ok) ui.alert("✅ Оновлення надіслано підряднику в гілку " + num + ".");
   else ui.alert("⚠️ Не вдалося надіслати. Перевір права бота «Керувати гілками» в групі.");
 }
@@ -2638,6 +2729,7 @@ function handleAdminRequest_(data) {
     if (action === "list_orders") return jsonOut(adminListOrders_(data));
     if (action === "get_order") return jsonOut(adminGetOrder_(data));
     if (action === "update_order") return jsonOut(adminUpdateOrder_(data));
+    if (action === "delete_order_item") return jsonOut(adminDeleteOrderItem_(data));
     if (action === "create_order") return jsonOut(adminCreateOrder_(data));
     if (action === "list_payments") return jsonOut(adminListPayments_(data));
     if (action === "settlement_data") return jsonOut(adminSettlementData_(data));
@@ -3093,6 +3185,44 @@ function adminCreateOrder_(data) {
   created.order_number = written.order_number;
   created.row = written.row;
   return created;
+}
+
+/**
+ * Прибрати ОДНУ позицію замовлення (рядок таблиці). Останню позицію не видаляємо:
+ * замовлення без позицій зникло б із воронки й фінансів — для відмови є статус «Скасовано».
+ */
+function adminDeleteOrderItem_(data) {
+  var num = String(data.order_number || "").trim();
+  if (!orderNumberValid_(num)) throw new Error("Невірний номер замовлення");
+  var row = Number(data.row || 0);
+  if (!(row >= 2)) throw new Error("Вкажіть рядок позиції");
+  var sh = adminOrdersSheet_();
+  var last = sh.getLastRow();
+  if (last < 2) throw new Error("Немає замовлень");
+  var nums = sh.getRange(2, 1, last - 1, 1).getValues();
+  var rows = [];
+  for (var i = 0; i < nums.length; i++) {
+    if (String(nums[i][0] || "").trim() === num) rows.push(i + 2);
+  }
+  if (!rows.length) throw new Error("Order not found");
+  if (rows.indexOf(row) < 0) throw new Error("Список позицій змінився. Оновіть картку й повторіть");
+  if (rows.length < 2) {
+    throw new Error("Це остання позиція замовлення. Щоб прибрати замовлення, поставте статус «Скасовано»");
+  }
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    // Ще раз звіряємо рядок під замком: між перевіркою й видаленням таблицю могли змінити.
+    if (String(sh.getRange(row, 1).getValue() || "").trim() !== num) {
+      throw new Error("Список позицій змінився. Оновіть картку й повторіть");
+    }
+    sh.deleteRow(row);
+  } finally {
+    lock.releaseLock();
+  }
+  // Виручка замовлення змінилась — перераховуємо галочки оплат.
+  try { syncOrderPaymentState_(num); } catch (syncErr) { /* не валимо видалення */ }
+  return adminGetOrder_({ order_number: num });
 }
 
 function adminUpdateOrder_(data) {
@@ -3945,7 +4075,8 @@ function adminContractorPreview_(data) {
   var text = contractorPrefix_(purpose, update, p.getProperty("sent_purpose_" + num) || "", due, task)
     + commentBlock_(data.comment)
     + buildProductionMsg_(ord, contractorOptions_(data.options));
-  return { status: "ok", text: text, update: update, sent_at: p.getProperty("sent_" + num) || "" };
+  // photo — те саме прев'ю, що побачить підрядник над текстом.
+  return { status: "ok", text: text, photo: orderPreviewPhoto_(ord), update: update, sent_at: p.getProperty("sent_" + num) || "" };
 }
 
 function adminContractorSend_(data) {
@@ -3973,7 +4104,7 @@ function adminContractorSend_(data) {
     if (update) {
       // Уже надсилали — наступне повідомлення йде в ту саму гілку замовлення.
       var tg = contractorChat_();
-      var sent = tgSendTo_(tg.chat, prefix + buildProductionMsg_(ord, opts), thread === "0" ? null : thread);
+      var sent = tgSendTo_(tg.chat, prefix + buildProductionMsg_(ord, opts), thread === "0" ? null : thread, orderPreviewPhoto_(ord));
       if (!sent || !sent.ok) throw new Error("Telegram не прийняв повідомлення: " + telegramError_(sent));
       p.setProperty("sent_" + num, nowIsoKyiv_());
     } else {
