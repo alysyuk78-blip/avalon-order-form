@@ -1541,13 +1541,14 @@ function setupOrders(sheet) {
     "ID запиту",         // AS (45): захист від дублювання після мережевого тайм-ауту
     "Комісія з маржі, %", // AT (46): % ВІД ВАЛОВОГО ПРИБУТКУ, не від ціни продажу
     "Термін опрацювання підрядником", // AU (47): до якої дати підрядник має відповісти
-    "Завдання підряднику"             // AV (48): що саме опрацювати (вартість, конструктив…)
+    "Завдання підряднику",            // AV (48): що саме опрацювати (вартість, конструктив…)
+    "Причина скасування"              // AW (49): обовʼязкова при скасуванні з CRM
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
-  // Ширини A..AV — рівно стільки ж, скільки заголовків (останні: термін і завдання підряднику).
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150,150,260];
+  // Ширини A..AW — рівно стільки ж, скільки заголовків (останні: опрацювання й причина скасування).
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150,150,260,260];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -2025,6 +2026,16 @@ function legacyPaidState_(revenue, marginDue, agChecked, ahChecked) {
  * аркуш «Виплати», підрядник її не утримує. Якщо відняти і її, борг підрядника
  * по всіх старих ?ref-замовленнях зменшиться безпідставно.
  */
+/**
+ * Маржа стає БОРГОМ підрядника («до виплати») лише коли замовлення погоджене й пішло у
+ * виготовлення. «Нове» й «В опрацюванні підрядником» ще може бути скасоване замовником —
+ * там маржа лише прогноз і в «до отримання» / акт звірки не потрапляє.
+ */
+var MARGIN_OWED_STATUSES = ["Виготовлення", "Готове", "Відправлено", "Завершено"];
+function marginOwed_(status) {
+  return MARGIN_OWED_STATUSES.indexOf(canonStatus_(status)) >= 0;
+}
+
 function marginDue_(profit, commission, commissionPct) {
   var gross = Number(profit) || 0;
   if (gross <= 0) return gross;                       // збиткова угода: комісії немає
@@ -2053,6 +2064,7 @@ function syncOrderPaymentState_(orderNumber) {
   var commissionPct = sh.getMaxColumns() >= COMMISSION_PCT_COL
     ? cellNum_(sh.getRange(rows[0], COMMISSION_PCT_COL).getValue()) : null;
   var due = marginDue_(profit, commission, commissionPct);
+  var owed = marginOwed_(sh.getRange(rows[0], 3).getValue());
   var payments = readPayments_(orderNumber);
   var agChecked = !!sh.getRange(rows[0], 33).getValue();
   var ahChecked = !!sh.getRange(rows[0], 34).getValue();
@@ -2061,9 +2073,9 @@ function syncOrderPaymentState_(orderNumber) {
     // (інакше вже оплачені замовлення показувались би як повний борг).
     var lg = legacyPaidState_(revenue, due, agChecked, ahChecked);
     return {
-      revenue: revenue, profit: profit, commission: commission, margin_due: due,
+      revenue: revenue, profit: profit, commission: commission, margin_due: due, margin_owed: owed,
       client_paid: lg.client_paid, client_left: Math.max(0, revenue - lg.client_paid),
-      margin_received: lg.margin_paid_sum, margin_left: Math.max(0, due - lg.margin_paid_sum),
+      margin_received: lg.margin_paid_sum, margin_left: owed ? Math.max(0, due - lg.margin_paid_sum) : 0,
       legacy: true
     };
   }
@@ -2075,9 +2087,9 @@ function syncOrderPaymentState_(orderNumber) {
     if (!!sh.getRange(r, 34).getValue() !== marginDone) sh.getRange(r, 34).setValue(marginDone);
   });
   return {
-    revenue: revenue, profit: profit, commission: commission, margin_due: due,
+    revenue: revenue, profit: profit, commission: commission, margin_due: due, margin_owed: owed,
     client_paid: totals.client_paid, client_left: Math.max(0, revenue - totals.client_paid),
-    margin_received: totals.margin_paid_sum, margin_left: Math.max(0, due - totals.margin_paid_sum)
+    margin_received: totals.margin_paid_sum, margin_left: owed ? Math.max(0, due - totals.margin_paid_sum) : 0
   };
 }
 
@@ -2576,7 +2588,8 @@ function adminMigrateLegacyPayments_(data) {
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 48; // A–AV (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT; опрацювання AU–AV)
+var ADMIN_ORDER_COLS = 49; // A–AW (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT; опрацювання AU–AV; причина скасування AW)
+var CANCEL_REASON_COL = 49;  // AW: чому скасовано — обовʼязково при скасуванні з CRM
 // Статуси замовлення. «В опрацюванні підрядником» — підрядник рахує виробничу
 // вартість / розробляє конструктив; «Виготовлення» — раніше називалось «В роботі».
 var STATUS_PROCESSING = "В опрацюванні підрядником";
@@ -2655,13 +2668,13 @@ function ensureDiscountColumns_(sheet) {
 
 function ensureDiscountColumnsOnce_() {
   var props = PropertiesService.getScriptProperties();
-  // V7: після додавання AU–AV (опрацювання підрядником) заголовки треба проставити ще раз.
-  if (props.getProperty("ORDERS_COLS_V7_READY") === "1") return;
+  // V8: після додавання AW (причина скасування) заголовки треба проставити ще раз.
+  if (props.getProperty("ORDERS_COLS_V8_READY") === "1") return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) return;
   ensureDiscountColumns_(sheet);
-  props.setProperty("ORDERS_COLS_V7_READY", "1");
+  props.setProperty("ORDERS_COLS_V8_READY", "1");
 }
 
 /** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
@@ -2690,7 +2703,8 @@ function ensureContactColumns_(sheet) {
     { col: 45, title: "ID запиту", key: "ID запиту", width: 210 },
     { col: COMMISSION_PCT_COL, title: "Комісія з маржі, %", key: "Комісія з маржі", width: 150 },
     { col: PROCESSING_DUE_COL, title: "Термін опрацювання підрядником", key: "Термін опрацювання", width: 150 },
-    { col: PROCESSING_TASK_COL, title: "Завдання підряднику", key: "Завдання підряднику", width: 260 }
+    { col: PROCESSING_TASK_COL, title: "Завдання підряднику", key: "Завдання підряднику", width: 260 },
+    { col: CANCEL_REASON_COL, title: "Причина скасування", key: "Причина скасування", width: 260 }
   ];
   extra.forEach(function (e) {
     var head = String(sheet.getRange(1, e.col).getValue() || "");
@@ -2853,7 +2867,8 @@ function mapOrderRow_(rowIndex, v) {
     request_id: String(v[44] || ""),
     commission_pct: cellNum_(v[45]),   // AT: ставка комісії партнера/ТОВ, % від маржі
     processing_due: toISODate(v[46]) || "",        // AU: термін опрацювання підрядником
-    processing_task: String(v[47] || "").trim()    // AV: що зробити підряднику
+    processing_task: String(v[47] || "").trim(),   // AV: що зробити підряднику
+    cancel_reason: String(v[48] || "").trim()      // AW: чому скасовано
   };
 }
 
@@ -2918,6 +2933,7 @@ function adminGroupOrders_(orders, payments) {
         commission_pct: o.commission_pct,  // ставка спільна для позицій замовлення
         processing_due: o.processing_due,  // термін опрацювання підрядником
         processing_task: o.processing_task,
+        cancel_reason: o.cancel_reason,  // причина скасування (AW)
         list_price: 0,
         discount_uah: 0
       };
@@ -2963,7 +2979,8 @@ function adminGroupOrders_(orders, payments) {
     g.client_paid_sum = t.client_paid;
     g.client_left = Math.max(0, (Number(g.revenue) || 0) - t.client_paid);
     g.margin_received = t.margin_paid_sum;
-    g.margin_left = Math.max(0, g.margin_due - t.margin_paid_sum);
+    g.margin_owed = marginOwed_(g.status);
+    g.margin_left = g.margin_owed ? Math.max(0, g.margin_due - t.margin_paid_sum) : 0;
     return g;
   });
   groups.sort(function (a, b) {
@@ -3003,10 +3020,11 @@ function adminGetOrder_(data) {
       var due = marginDue_(prof, com, group && group.commission_pct);
       var t = pay.length ? payTotals
         : legacyPaidState_(rev, due, !!(group && group.client_paid), !!(group && group.margin_paid));
+      var owed = !!(group && marginOwed_(group.status));
       return {
-        revenue: rev, profit: prof, commission: com, margin_due: due,
+        revenue: rev, profit: prof, commission: com, margin_due: due, margin_owed: owed,
         client_paid: t.client_paid, client_left: Math.max(0, rev - t.client_paid),
-        margin_received: t.margin_paid_sum, margin_left: Math.max(0, due - t.margin_paid_sum),
+        margin_received: t.margin_paid_sum, margin_left: owed ? Math.max(0, due - t.margin_paid_sum) : 0,
         legacy: !pay.length
       };
     })()
@@ -3289,6 +3307,16 @@ function adminUpdateOrder_(data) {
   assertItemIdentity_(sh, row, data.expect);
 
   var oldStatus = canonStatus_(sh.getRange(row, 3).getValue());
+
+  // Скасування — лише з причиною: без неї потім не зрозуміти, чому замовлення зникло.
+  var cancelReason = patch.cancel_reason != null ? String(patch.cancel_reason).trim().slice(0, 500) : null;
+  delete patch.cancel_reason;
+  if (patch.status === "Скасовано" && oldStatus !== "Скасовано" && !cancelReason) {
+    throw new Error("Вкажіть причину скасування");
+  }
+  if (cancelReason && (patch.status === "Скасовано" || (patch.status == null && oldStatus === "Скасовано"))) {
+    targetRows.forEach(function (r) { sh.getRange(r, CANCEL_REASON_COL).setValue(cancelReason); });
+  }
 
   // ── Дані клієнта й замовлення: спільні для всіх позицій, тож пишемо в усі рядки ──
   var ORDER_FIELDS = { source: 4, client: 5, city: 7, transport: 27, address: 28,

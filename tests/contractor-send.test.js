@@ -347,7 +347,7 @@ function testContractorSendFlow() {
 
 // ── Аркуш «Замовлення» в памʼяті (сценарії зі статусами й терміном) ─────────
 function makeSheet(rows) {
-  const W = 48;
+  const W = 49;
   const pad = (r) => { const a = r.slice(); while (a.length < W) a.push(""); return a; };
   const data = [new Array(W).fill("")].concat(rows.map(pad));
   return {
@@ -383,7 +383,7 @@ function makeSheet(rows) {
 }
 
 function orderRow(num, status, extra) {
-  const r = new Array(48).fill("");
+  const r = new Array(49).fill("");
   r[0] = num; r[2] = status; r[4] = "Олександр Заєць"; r[5] = "'+380673406685"; r[6] = "Київ";
   r[16] = 1; r[19] = 9650; r[21] = 13790; r[22] = 4140; r[40] = "Ковш для трактора"; r[41] = "Інший виріб";
   Object.keys(extra || {}).forEach((k) => { r[Number(k)] = extra[k]; });
@@ -466,7 +466,7 @@ function testStatusesMigrationAndCanon() {
   assert.equal(mapped.processing_task, "Розробити конструктив");
 
   const widths = CODE.match(/var widths = \[([^\]]+)\]/)[1].split(",").length;
-  assert.equal(ctx.ADMIN_ORDER_COLS, 48);
+  assert.equal(ctx.ADMIN_ORDER_COLS, 49);
   assert.equal(widths, ctx.ADMIN_ORDER_COLS, "ширин колонок стільки ж, скільки колонок");
 }
 
@@ -884,6 +884,49 @@ function testDeleteOrderItem() {
   assert.equal(us.data[2][9], "Чорний", "правильна позиція змінена");
 }
 
+
+// ── Маржа до виплати — лише з «Виготовлення»; скасування — лише з причиною ──
+function testMarginOwedAndCancelReason() {
+  const ctx = load({ PropertiesService: { getScriptProperties: () => makeProps() } });
+  const g = (status) => ctx.adminGroupOrders_([{ order_number: ORD, status, quantity: 1, revenue: 6587, profit: 1451 }], [])[0];
+  ["Нове", "В опрацюванні підрядником", "Скасовано"].forEach((st) => {
+    assert.equal(g(st).margin_owed, false, st + ": маржа ще не до виплати");
+    assert.equal(g(st).margin_left, 0, st + ": «до отримання» = 0");
+    // Скасовані й раніше не входили в суми; для решти маржа лишається видимою як прогноз.
+    assert.equal(g(st).margin_due, st === "Скасовано" ? 0 : 1451, st + ": маржа-прогноз");
+  });
+  ["Виготовлення", "Готове", "Відправлено", "Завершено"].forEach((st) => {
+    assert.equal(g(st).margin_owed, true);
+    assert.equal(g(st).margin_left, 1451, st + ": з цього етапу — до виплати");
+  });
+
+  const sheet = makeSheet([orderRow(ORD, "Нове"), orderRow(ORD, "Нове")]);
+  const uctx = load({
+    PropertiesService: { getScriptProperties: () => makeProps() },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    SpreadsheetApp: { flush() {} },
+  });
+  uctx.adminOrdersSheet_ = () => sheet;
+  uctx.recalcRow_ = () => {};
+  uctx.syncOrderPaymentState_ = () => {};
+  uctx.syncProcessingEvent_ = () => {};
+  uctx.notifyOwnerStatusChange_ = () => {};
+  uctx.adminGetOrder_ = () => ({ status: "ok" });
+  assert.throws(() => uctx.adminUpdateOrder_({ order_number: ORD, patch: { status: "Скасовано" } }), /причину скасування/);
+  assert.throws(() => uctx.adminUpdateOrder_({ order_number: ORD, patch: { status: "Скасовано", cancel_reason: "   " } }), /причину скасування/);
+  assert.equal(sheet.data[1][2], "Нове", "без причини статус не змінено");
+  uctx.adminUpdateOrder_({ order_number: ORD, patch: { status: "Скасовано", cancel_reason: "  Клієнт знайшов дешевше  " } });
+  assert.deepEqual(sheet.data.slice(1).map((r) => r[2]), ["Скасовано", "Скасовано"]);
+  assert.deepEqual(sheet.data.slice(1).map((r) => r[48]), ["Клієнт знайшов дешевше", "Клієнт знайшов дешевше"],
+    "причина в колонці AW усіх позицій");
+  assert.equal(uctx.mapOrderRow_(2, sheet.data[1]).cancel_reason, "Клієнт знайшов дешевше", "CRM бачить причину");
+  // Уточнити причину вже скасованого — можна; повернути в роботу — причина не потрібна.
+  uctx.adminUpdateOrder_({ order_number: ORD, patch: { cancel_reason: "Дорого" } });
+  assert.equal(sheet.data[1][48], "Дорого");
+  uctx.adminUpdateOrder_({ order_number: ORD, patch: { status: "Нове" } });
+  assert.equal(sheet.data[1][2], "Нове");
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
@@ -898,4 +941,5 @@ testProcessingPreviewSections();
 testServiceKind();
 testModelPhotoAndFinanceLines();
 testDeleteOrderItem();
+testMarginOwedAndCancelReason();
 console.log("contractor-send tests: OK");

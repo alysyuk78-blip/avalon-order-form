@@ -32,7 +32,13 @@ import {
 } from 'lucide-react';
 import finance from '../../lib/admin-finance.js';
 
-    const { groupPaymentMetrics } = finance;
+    const { groupPaymentMetrics, marginOwed } = finance;
+    // До погодження («Нове», «В опрацюванні підрядником») маржа не «до отримання» — навіть
+    // якщо дані прийшли з кешу, зробленого до цього правила.
+    function withMarginRule(group) {
+      if (!group || marginOwed(group)) return group;
+      return { ...group, margin_left: 0 };
+    }
 
     // «В опрацюванні підрядником» — підрядник рахує вартість / розробляє конструктив;
     // «Виготовлення» — раніше «В роботі» (стару назву читаємо як нову).
@@ -481,7 +487,7 @@ import finance from '../../lib/admin-finance.js';
         if (!statusesByOrder[key]) statusesByOrder[key] = [];
         statusesByOrder[key].push(item.status);
       });
-      return (data.groups || []).map(group => ({
+      return (data.groups || []).map(group => withMarginRule({
         ...group,
         ...resolveOrderStatus(statusesByOrder[group.order_number] || [group.status]),
       }));
@@ -580,6 +586,7 @@ import finance from '../../lib/admin-finance.js';
           client_left: Number(order.client_left) || 0,
           margin_received: Number(order.margin_received) || 0,
           margin_left: Number(order.margin_left) || 0,
+          margin_owed: marginOwed(order),
           legacy: !(Number(order.payments_count) > 0),
         },
       };
@@ -1171,10 +1178,58 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
+    // Скасування — лише з причиною. Вікно показує App (CancelReasonHost), а тут — обіцянка:
+    // причина (рядок) або null, якщо менеджер передумав.
+    const CANCEL_REASONS = ["Клієнт відмовився", "Дорого для клієнта", "Не виходить на звʼязок", "Замовив в іншому місці", "Дублікат замовлення"];
+    function askCancelReason(orderNumber, current) {
+      return new Promise(resolve => {
+        window.dispatchEvent(new CustomEvent("avalon-ask-cancel-reason", {
+          detail: { orderNumber, current: current || "", resolve },
+        }));
+      });
+    }
+    function CancelReasonHost() {
+      const [req, setReq] = useState(null);
+      const [text, setText] = useState("");
+      const inputRef = useRef(null);
+      useEffect(() => {
+        function onAsk(e) { setReq(e.detail); setText(e.detail.current || ""); }
+        window.addEventListener("avalon-ask-cancel-reason", onAsk);
+        return () => window.removeEventListener("avalon-ask-cancel-reason", onAsk);
+      }, []);
+      useEffect(() => { if (req && inputRef.current) inputRef.current.focus(); }, [req]);
+      if (!req) return null;
+      const reason = text.trim();
+      const close = (value) => { req.resolve(value); setReq(null); setText(""); };
+      return createPortal(
+        <div className="modal-backdrop" onClick={() => close(null)}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="cancel-title"
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => { if (e.key === "Escape") close(null); }}>
+            <h3 id="cancel-title">Скасувати {req.orderNumber}?</h3>
+            <p>Вкажіть причину — без неї замовлення не перемістити в «Скасовано».</p>
+            <div className="send-chips" role="group" aria-label="Типові причини">
+              {CANCEL_REASONS.map(r => (
+                <button type="button" key={r} className={reason === r ? "active" : ""} onClick={() => setText(r)}>{r}</button>
+              ))}
+            </div>
+            <div className="field" style={{ marginTop: 10 }}>
+              <label htmlFor="cancel-reason">Причина скасування *</label>
+              <textarea id="cancel-reason" ref={inputRef} rows={3} maxLength={500} value={text}
+                placeholder="Напр. клієнт знайшов дешевше / передумав / не на звʼязку тиждень"
+                onChange={e => setText(e.target.value)} />
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="btn warn-btn" disabled={!reason} onClick={() => close(reason)}>Скасувати замовлення</button>
+              <button type="button" className="btn secondary" onClick={() => close(null)}>Не скасовувати</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      );
+    }
+
     function confirmStatusChange(fromStatus, toStatus) {
-      if (toStatus === "Скасовано") {
-        return window.confirm("Скасувати замовлення?");
-      }
       // Зміна статусу з CRM нічого не надсилає сама: підряднику — лише кнопкою з
       // пташками, що саме показувати. Тож і попереджати тут нема про що.
       return true;
@@ -1340,7 +1395,9 @@ import finance from '../../lib/admin-finance.js';
               <div className="field-static">
                 <b>{money(s.margin_received || 0)}</b> / {money(marginDue)}
                 <span className={(s.margin_left || 0) > 0 ? "field-static-note debt" : "field-static-note"}>
-                  {(s.margin_left || 0) > 0 ? "до отримання " + money(s.margin_left)
+                  {s.margin_owed === false && !(Number(s.margin_received) > 0)
+                    ? "до виплати — після переходу у «Виготовлення»"
+                    : (s.margin_left || 0) > 0 ? "до отримання " + money(s.margin_left)
                     : marginOverreceived > 0 ? "понад нову маржу " + money(marginOverreceived) : "повністю"}
                 </span>
               </div>
@@ -2322,13 +2379,17 @@ import finance from '../../lib/admin-finance.js';
 
       async function changeStatus(newStatus) {
         if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return; }
-        if (!confirmStatusChange(form.status, newStatus)) return;
+        let cancelReason = null;
+        if (newStatus === "Скасовано") {
+          cancelReason = await askCancelReason(orderNumber);
+          if (!cancelReason) return;
+        } else if (!confirmStatusChange(form.status, newStatus)) return;
         const prevOrder = (data && data.order) || {};
         const alreadySent = !!prevOrder.contractor_sent;
         const prevStatus = form.status;
         setForm({ ...form, status: newStatus });
         // Підряднику надсилає лише кнопка «Надіслати підряднику» — з пташками.
-        await save({ status: newStatus, manual_contractor_send: true });
+        await save({ status: newStatus, manual_contractor_send: true, ...(cancelReason ? { cancel_reason: cancelReason } : {}) });
         // Опрацювання — завжди блок надсилання (потрібні завдання й термін).
         // Виготовлення — якщо ще не надсилали або підрядник щойно опрацьовував:
         // йому треба сказати, що погоджено й можна виготовляти.
@@ -2488,6 +2549,19 @@ import finance from '../../lib/admin-finance.js';
                 onClick={() => changeStatus("Скасовано")}
               >Скасувати</button>
             </div>
+
+            {form.status === "Скасовано" && (
+              <div className="cancel-reason-block">
+                <div>
+                  <span>Причина скасування</span>
+                  <strong>{order.cancel_reason || "не вказано"}</strong>
+                </div>
+                <button type="button" className="link-btn" disabled={busy || stale} onClick={async () => {
+                  const reason = await askCancelReason(orderNumber, order.cancel_reason);
+                  if (reason) await save({ cancel_reason: reason });
+                }}>{order.cancel_reason ? "Змінити" : "Вказати"}</button>
+              </div>
+            )}
 
             {form.status === MISSING_STATUS && (
               <div className="error" style={{ marginBottom: 10 }}>
@@ -3280,18 +3354,22 @@ import finance from '../../lib/admin-finance.js';
       async function moveToStatus(orderNumber, newStatus) {
         const current = groups.find(g => g.order_number === orderNumber);
         if (!current || current.status === newStatus) return;
-        if (!confirmStatusChange(current.status, newStatus)) return;
+        let cancelReason = null;
+        if (newStatus === "Скасовано") {
+          cancelReason = await askCancelReason(orderNumber);
+          if (!cancelReason) return;
+        } else if (!confirmStatusChange(current.status, newStatus)) return;
         const prev = groups;
         setMoving(orderNumber);
         setGroups(list => list.map(g => g.order_number === orderNumber
-          ? { ...g, status: newStatus, raw_statuses: [newStatus], status_issue: "" }
+          ? { ...g, status: newStatus, raw_statuses: [newStatus], status_issue: "", ...(cancelReason ? { cancel_reason: cancelReason } : {}) }
           : g));
         try {
           const result = await api("/api/admin/order", {
             method: "PATCH",
             token,
             // Статус із CRM більше не шле підряднику сам — для цього є кнопка з пташками.
-            body: { order_number: orderNumber, patch: { status: newStatus, manual_contractor_send: true } },
+            body: { order_number: orderNumber, patch: { status: newStatus, manual_contractor_send: true, ...(cancelReason ? { cancel_reason: cancelReason } : {}) } },
           });
           onOrderChanged && onOrderChanged(result);
           // Опрацювання — завжди відкриваємо блок надсилання (потрібні завдання й термін).
@@ -3584,6 +3662,9 @@ import finance from '../../lib/admin-finance.js';
                             )}
                             {g.margin_left > 0 && g.client_left === 0 && (
                               <div className="card-payment margin">Маржа до отримання: {money(g.margin_left)}</div>
+                            )}
+                            {g.status === "Скасовано" && g.cancel_reason && (
+                              <div className="card-cancel-reason" title={g.cancel_reason}>Причина: {g.cancel_reason}</div>
                             )}
                             {/* Лише явне false зі свіжих даних — старий кеш сторінки не знає цього поля. */}
                             {g.contractor_sent === false && [STATUS_PROCESSING, STATUS_PRODUCTION, "Готове"].includes(g.status) && (
@@ -4709,7 +4790,7 @@ import finance from '../../lib/admin-finance.js';
           nextItems.length ? nextItems.map(item => item.status) : [detail.order.status]
         );
         const summary = detail.payment_summary || {};
-        const nextOrder = {
+        const nextOrder = withMarginRule({
           ...detail.order,
           ...resolved,
           client_paid_sum: summary.client_paid ?? detail.order.client_paid_sum,
@@ -4718,7 +4799,8 @@ import finance from '../../lib/admin-finance.js';
           margin_left: summary.margin_left ?? detail.order.margin_left,
           margin_due: summary.margin_due ?? detail.order.margin_due,
           commission: summary.commission ?? detail.order.commission,
-        };
+          margin_owed: summary.margin_owed ?? detail.order.margin_owed,
+        });
 
         setGroups(current => {
           const found = current.some(group => group.order_number === orderNumber);
@@ -4840,6 +4922,7 @@ import finance from '../../lib/admin-finance.js';
       return (
         <>
         <TooltipLayer />
+        <CancelReasonHost />
         <UpdateBanner />
         <div className="app">
           <div className="top" ref={topRef}>
