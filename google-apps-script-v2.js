@@ -165,7 +165,8 @@ function writeOrderToSheet_(data) {
       // довільних виробів цю формулу не застосовуємо — «площа ковша» за розкроєм
       // кошика нічого не означає і лише збиває з пантелику в таблиці та звітах.
       var areaApplies = it.product_type !== "bracket" && it.product_type !== "other" && it.product_type !== "service";
-      if (areaApplies && w && h) areaM2 = ((w * h + 2 * d * h) + (it.has_cover ? w * d : 0)) / 1000000;
+      var sideArea = areaApplies ? removableSideArea_(it, h, d) : 0;   // AVL-04: знімна боковина
+      if (areaApplies && w && h) areaM2 = ((w * h + 2 * d * h) + (it.has_cover ? w * d : 0)) / 1000000 + sideArea;
       if (it.price_total != null && it.price_total !== "") {
         total = Math.round(Number(it.price_total));
         if (it.area_m2 != null) areaM2 = Number(it.area_m2);
@@ -184,7 +185,7 @@ function writeOrderToSheet_(data) {
         // Площинна формула — лише для кошиків. Кронштейни й довільні вироби
         // (пергола, стенд…) отримують ціну від менеджера, не з ₴/м².
         var constrLower = String(it.construction_type || "").toLowerCase();
-        var basketArea = (w * h + 2 * d * h) / 1000000;
+        var basketArea = (w * h + 2 * d * h) / 1000000 + sideArea;
         var coverArea = it.has_cover ? (w * d) / 1000000 : 0;
         // «розбір» (не «розбірний»), щоб ловити й «Розбірна» (AVL-02), і «Розбірний (з 3-х частин)».
         var ppm2 = constrLower.indexOf("розбір") >= 0 ? 2170 : 2030;
@@ -525,7 +526,10 @@ function recalcRow_(sh, row) {
   var qty = Number(v[16]) || 1;
   if (!(w && h)) return; // без розмірів не перераховуємо (напр. «розрахує менеджер»)
   var MARKUP = 1 / (1 - 0.2593);
-  var basketAreaM2 = (w * h + 2 * d * h) / 1000000;
+  var modelName = sh.getMaxColumns() >= 41 ? String(sh.getRange(row, 41).getValue() || "") : "";
+  // AVL-04: + знімна бічна панель (висота × глибина) — за тією ж ставкою, що й стінки.
+  var basketAreaM2 = (w * h + 2 * d * h) / 1000000
+    + removableSideArea_({ construction_type: construction, basket_model: modelName }, h, d);
   var hasCover = String(construction || "").toLowerCase().indexOf("кришка") >= 0;
   var coverAreaM2 = hasCover ? (w * d) / 1000000 : 0;
   var areaM2 = basketAreaM2 + coverAreaM2;
@@ -762,6 +766,21 @@ var MODEL_CATALOG = {
   "AVL-K-01":  { name: "Кронштейни декоративні",   photo: "avl-k-01-brackets.jpg" },
   "AVL-SK-01": { name: "Кронштейна система",       photo: "avl-sk-01-system.jpg" }
 };
+/**
+ * AVL-04 «Зі знімною боковиною»: окрім лицевої й двох бічних стінок має ще одну бічну —
+ * знімну панель (висота × глибина). Так рахує і калькулятор (sectional_frame:
+ * «3 бічні стінки + лицева» за 2030 ₴/м²). Без неї собівартість і повідомлення
+ * підряднику занижували кошик на площу однієї боковини.
+ */
+function hasRemovableSide_(it) {
+  var hay = [it && it.construction_type, it && it.construction, it && it.basket_model, it && it.basket_model_name].join(" ");
+  return /AVL-04(?!\d)/i.test(hay) || /знімн\S*\s+бокови/i.test(hay);
+}
+/** Площа знімної бічної панелі AVL-04 (м² на один кошик) або 0. */
+function removableSideArea_(it, h, d) {
+  return (h && d && hasRemovableSide_(it)) ? (h * d) / 1000000 : 0;
+}
+
 function siteUrl_() {
   var custom = "";
   try { custom = PropertiesService.getScriptProperties().getProperty("SITE_URL") || ""; } catch (e) { custom = ""; }
@@ -1033,7 +1052,7 @@ function buildProductionMsg_(data, opts) {
     return base + " " + (i + 1);
   }
   function breakdown(it) {
-    var zero = { basketArea: 0, coverArea: 0, basketRate: 0, coverRate: 0, basketCost: 0, coverCost: 0, total: 0 };
+    var zero = { qty: 1, basketArea: 0, coverArea: 0, sideArea: 0, basketRate: 0, coverRate: 0, basketCost: 0, coverCost: 0, sideCost: 0, total: 0 };
     // Розкладка «м² × ₴/м²» чинна ЛИШЕ для кошиків. Кронштейни й довільні вироби
     // (ковш, пергола, стенд…) мають ціну від менеджера, тож рахувати їх за площею
     // кошика — вигадувати цифри, яких підрядник не бачив.
@@ -1049,7 +1068,15 @@ function buildProductionMsg_(data, opts) {
     var coverRate = Number(it.cover_cost_per_m2) || 1920;
     var basketCost = Number(it.basket_cost_total) || Math.round(basketArea * basketRate * qty);
     var coverCost = hasCover ? (Number(it.cover_cost_total) || Math.round(coverArea * coverRate * qty)) : 0;
-    return { basketArea: basketArea, coverArea: coverArea, basketRate: basketRate, coverRate: coverRate, basketCost: basketCost, coverCost: coverCost, total: basketCost + coverCost };
+    // AVL-04: знімна бічна панель — окремим рядком, щоб підрядник бачив, з чого сума.
+    var sideArea = Number(it.basket_area_m2) ? 0 : removableSideArea_(it, h, d);
+    var sideCost = sideArea ? Math.round(sideArea * basketRate * qty) : 0;
+    return {
+      qty: qty, basketArea: basketArea, coverArea: coverArea, sideArea: sideArea,
+      basketRate: basketRate, coverRate: coverRate,
+      basketCost: basketCost, coverCost: coverCost, sideCost: sideCost,
+      total: basketCost + coverCost + sideCost
+    };
   }
 
   var m = "📌 <b>Замовлення №" + esc_(data.order_number) + "</b>\n";
@@ -1141,13 +1168,31 @@ function buildProductionMsg_(data, opts) {
   // виглядали як збій.
   var fin = "";
   var grand = 0;
+  // «0.99 м² × 2 030 ₴/м² × 2 шт. = 4 019 ₴» — кількість у формулі обовʼязково: без неї
+  // 0,99 × 2 030 ≠ 4 019, і підрядник не розумів, звідки сума. Площу — до тисячних
+  // (0.275, а не 0.28), щоб множення сходилось із результатом.
+  function areaLine(label, area, rate, it, cost, perM2Bold) {
+    var qty = Number(it.quantity) || 1;
+    var a = String(Math.round(area * 1000) / 1000);
+    return label + ": " + a + " м² × " + (perM2Bold ? "<b>" + money_(rate) + " ₴/м²</b>" : money_(rate) + " ₴/м²")
+      + (qty > 1 ? " × " + qty + " " + itemUnit(it) : "")
+      + " = <b>" + money_(cost) + " ₴</b>\n";
+  }
+  // Сума, вписана менеджером, може відрізнятися від розрахунку за площею — показуємо різницю,
+  // щоб рядки завжди сходились із «Вартістю виробничою».
+  function adjustmentLine(prefix, diff) {
+    if (Math.abs(diff) < 1) return "";
+    return prefix + "Коригування менеджера: <b>" + (diff > 0 ? "+" : "−") + money_(Math.abs(diff)) + " ₴</b>\n";
+  }
   if (multi) {
     items.forEach(function (it, i) {
       var b = breakdown(it), c = Number(it.cost_total) || b.total; grand += c;
       var label = itemLabel_(it, i);
-      if (b.basketCost > 0) {
-        fin += "• " + label + ": " + b.basketArea.toFixed(2) + " м² × " + money_(b.basketRate) + " ₴ = <b>" + money_(b.basketCost) + " ₴</b>\n";
-        if (b.coverCost > 0) fin += "  Верхня кришка: " + b.coverArea.toFixed(2) + " м² × " + money_(b.coverRate) + " ₴ = <b>" + money_(b.coverCost) + " ₴</b>\n";
+      if (b.total > 0) {
+        fin += areaLine("• " + label, b.basketArea, b.basketRate, it, b.basketCost, false);
+        if (b.sideCost > 0) fin += areaLine("  Знімна бічна панель", b.sideArea, b.basketRate, it, b.sideCost, false);
+        if (b.coverCost > 0) fin += areaLine("  Верхня кришка", b.coverArea, b.coverRate, it, b.coverCost, false);
+        fin += adjustmentLine("  ", c - b.total);
       } else if (c > 0) {
         // Позиція без розмірів (ціну веде менеджер) теж має бути видима: інакше вона мовчки
         // ховалася всередині «Разом виробнича», і підрядник не бачив, за що ці гроші.
@@ -1157,8 +1202,12 @@ function buildProductionMsg_(data, opts) {
     if (grand > 0) fin += "• <b>Разом виробнича: " + money_(grand) + " ₴</b>\n";
   } else {
     var it = items[0], b = breakdown(it), c = Number(it.cost_total) || b.total;
-    if (b.basketCost > 0) fin += "• Кошик: " + b.basketArea.toFixed(2) + " м² × <b>" + money_(b.basketRate) + " ₴/м²</b> = <b>" + money_(b.basketCost) + " ₴</b>\n";
-    if (b.coverCost > 0) fin += "• Верхня кришка: " + b.coverArea.toFixed(2) + " м² × <b>" + money_(b.coverRate) + " ₴/м²</b> = <b>" + money_(b.coverCost) + " ₴</b>\n";
+    if (b.total > 0) {
+      fin += areaLine("• Кошик", b.basketArea, b.basketRate, it, b.basketCost, true);
+      if (b.sideCost > 0) fin += areaLine("• Знімна бічна панель", b.sideArea, b.basketRate, it, b.sideCost, true);
+      if (b.coverCost > 0) fin += areaLine("• Верхня кришка", b.coverArea, b.coverRate, it, b.coverCost, true);
+      fin += adjustmentLine("• ", c - b.total);
+    }
     if (c > 0) fin += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
   }
   fin += marginInfo.priceLine;

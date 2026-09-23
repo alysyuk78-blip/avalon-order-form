@@ -158,8 +158,10 @@ function testProductionMessageSkipsBasketRateForOtherProducts() {
       size_w: 1000, size_h: 500, size_d: 300, quantity: 2, unit: "шт.",
     }],
   }));
-  assert.ok(/Кошик: 0\.80 м² × <b>2 030 ₴\/м²<\/b>/.test(basket), "кошик має лишитись із розкладкою по м²");
-  assert.ok(/Верхня кришка: 0\.30 м²/.test(basket));
+  assert.ok(/Кошик: 0\.8 м² × <b>2 030 ₴\/м²<\/b> × 2 шт\. = <b>3 248 ₴<\/b>/.test(basket),
+    "кошик має лишитись із розкладкою по м², з кількістю у формулі");
+  assert.ok(/Верхня кришка: 0\.3 м² × <b>1 920 ₴\/м²<\/b> × 2 шт\./.test(basket));
+  assert.ok(!/Знімна бічна панель/.test(basket), "AVL-01 — без знімної панелі");
 }
 
 function testStandardRecalculationClearsStaleDiscount() {
@@ -178,6 +180,7 @@ function testStandardRecalculationClearsStaleDiscount() {
     getMaxColumns: () => 48,
     getRange(_row, column, _rows, columns) {
       if (column === 42) return { getValue: () => "Кошик" };
+      if (column === 41) return { getValue: () => "" };
       if (column === 1 && columns === 17) return { getValues: () => [row] };
       return {
         setValues(values) {
@@ -191,6 +194,52 @@ function testStandardRecalculationClearsStaleDiscount() {
   context.recalcRow_(sheet, 2);
   assert.equal(writes[18].length, 7);
   assert.deepEqual(Array.from(writes[35]), [writes[18][4], 0, 0], "прайс і знижка мають відповідати новій виручці");
+}
+
+// AVL-04 «Зі знімною боковиною»: + бічна панель (висота × глибина), як у калькуляторі.
+function testRemovableSidePanelPricing() {
+  const context = loadAppsScript();
+  const recalc = (construction, model) => {
+    const writes = {};
+    const row = new Array(17).fill("");
+    row[8] = construction; row[10] = "K1"; row[13] = 800; row[14] = 550; row[15] = 500; row[16] = 2;
+    context.recalcRow_({
+      getMaxColumns: () => 49,
+      getRange(_r, column, _rows, columns) {
+        if (column === 42) return { getValue: () => "Кошик" };
+        if (column === 41) return { getValue: () => model };
+        if (column === 1 && columns === 17) return { getValues: () => [row] };
+        return { setValues(values) { writes[column] = values[0]; return this; } };
+      },
+    }, 2);
+    return writes[18];
+  };
+  const avl04 = recalc("Суцільний · AVL-04", "Зі знімною боковиною");
+  assert.equal(avl04[0], 1.27, "площа: 0,99 (лицева + 2 боковини) + 0,275 (знімна панель), до сотих");
+  assert.equal(avl04[2], 5136, "собівартість 2 кошиків: 4 019 + 1 117 = 5 136, як у калькуляторі");
+  const byName = recalc("Суцільний", "Зі знімною боковиною");
+  assert.equal(byName[2], 5136, "модель впізнається і за назвою");
+  const avl01 = recalc("Суцільний · AVL-01", "Суцільний");
+  assert.equal(avl01[2], 4019, "інші моделі — без знімної панелі");
+
+  // Контекстний тест повідомлення підряднику: окремий рядок і сума, що сходиться.
+  const ctx = loadAppsScript({ Utilities: { formatDate: () => "23.09.2026, 18:21" }, Date });
+  const msg = ctx.buildProductionMsg_({
+    order_number: "ORD-210926-016",
+    items: [{ product_type: "basket", construction_type: "Суцільний · AVL-04", basket_model_name: "Зі знімною боковиною",
+      size_w: 800, size_h: 550, size_d: 500, quantity: 2, unit: "шт.", cost_total: 5136 }],
+  }, { finance: true });
+  assert.ok(msg.includes("• Кошик: 0.99 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>4 019 ₴</b>"));
+  assert.ok(msg.includes("• Знімна бічна панель: 0.275 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>1 117 ₴</b>"));
+  assert.ok(msg.includes("• Вартість виробнича: <b>5 136 ₴</b>"));
+  assert.ok(!msg.includes("Коригування"), "рядки сходяться — без коригування");
+
+  // Менеджер вписав іншу суму — різниця видна окремим рядком.
+  const edited = ctx.buildProductionMsg_({
+    order_number: "X",
+    items: [{ product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 2, unit: "шт.", cost_total: 4500 }],
+  }, { finance: true });
+  assert.ok(edited.includes("• Коригування менеджера: <b>+481 ₴</b>"), "4 019 + 481 = 4 500");
 }
 
 function testPaymentDeletionChecksStableIdentity() {
@@ -439,6 +488,7 @@ testSheetMarginDue();
 testProductionMessageSkipsBasketRateForOtherProducts();
 testContractorMessageShowsMarginToPay();
 testStandardRecalculationClearsStaleDiscount();
+testRemovableSidePanelPricing();
 testPaymentDeletionChecksStableIdentity();
 testBootstrapReadsPaymentsOnce();
 testOrderDetailReadsOnlyMatchedRows();

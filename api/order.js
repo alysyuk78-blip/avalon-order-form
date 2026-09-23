@@ -21,12 +21,28 @@ const COMPLEX_PATTERNS = ["K3", "K4", "K6", "K8", "K9"];
 const MARKUP = 1 / (1 - 0.2593); // ~1.3503 — та сама націнка, що у формі
 const COVER_COST_PER_M2 = 1920;
 
+// AVL-04 «Зі знімною боковиною»: + одна бічна стінка (висота × глибина) — знімна панель.
+// Так рахують калькулятор і Apps Script (hasRemovableSide_).
+function hasRemovableSide(it) {
+  const hay = [it && it.construction_type, it && it.basket_model, it && it.basket_model_name].join(" ");
+  return /AVL-04(?!\d)/i.test(hay) || /знімн\S*\s+бокови/i.test(hay);
+}
+function removableSideArea(it, h, d) {
+  return h && d && hasRemovableSide(it) ? (h * d) / 1_000_000 : 0;
+}
+// «0.99 м² × 2 030 ₴/м² × 2 шт. = 4 019 ₴»: кількість у формулі, площа до тисячних.
+function areaFormula(area, rate, qty, bold) {
+  const a = String(Math.round(area * 1000) / 1000);
+  const r = `${Number(rate || 0).toLocaleString("uk-UA")} ₴/м²`;
+  return `${a} м² × ${bold ? `<b>${r}</b>` : r}${qty > 1 ? ` × ${qty} шт.` : ""}`;
+}
+
 function productionBreakdown(it) {
   // Розкладка «м² × ₴/м²» чинна ЛИШЕ для кошиків. Кронштейни й довільні вироби
   // мають ціну від менеджера — рахувати їх за площею кошика означало б показати
   // підряднику вигадану суму.
-  if (it.product_type === "bracket" || it.product_type === "other") {
-    return { hasCover: false, basketArea: 0, coverArea: 0, basketRate: 0, coverRate: 0, basketCost: 0, coverCost: 0, total: 0 };
+  if (it.product_type === "bracket" || it.product_type === "other" || it.product_type === "service") {
+    return { qty: 1, hasCover: false, basketArea: 0, coverArea: 0, sideArea: 0, basketRate: 0, coverRate: 0, basketCost: 0, coverCost: 0, sideCost: 0, total: 0 };
   }
   const qty = Number(it.quantity) || 1;
   const w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
@@ -39,7 +55,9 @@ function productionBreakdown(it) {
   const coverRate = Number(it.cover_cost_per_m2) || COVER_COST_PER_M2;
   const basketCost = Number(it.basket_cost_total) || Math.round(basketArea * basketRate * qty);
   const coverCost = hasCover ? (Number(it.cover_cost_total) || Math.round(coverArea * coverRate * qty)) : 0;
-  return { hasCover, basketArea, coverArea, basketRate, coverRate, basketCost, coverCost, total: basketCost + coverCost };
+  const sideArea = Number(it.basket_area_m2) ? 0 : removableSideArea(it, h, d);
+  const sideCost = sideArea ? Math.round(sideArea * basketRate * qty) : 0;
+  return { qty, hasCover, basketArea, coverArea, sideArea, basketRate, coverRate, basketCost, coverCost, sideCost, total: basketCost + coverCost + sideCost };
 }
 
 function calcPriceForMessage(order) {
@@ -60,7 +78,7 @@ function calcPriceForMessage(order) {
   const d = Number(order.size_d) || 0;
   const qty = Number(order.quantity) || 1;
   if (!w || !h) return null;
-  const areaM2 = (w * h + 2 * d * h) / 1_000_000;
+  const areaM2 = (w * h + 2 * d * h) / 1_000_000 + removableSideArea(order, h, d);
   let costPerM2 = order.construction_type?.toLowerCase().includes("розбірний") ? 2170 : 2030;
   let pricePerM2 = Math.round(costPerM2 * MARKUP);
   if (order.basket_type?.toLowerCase().includes("антивандал")) pricePerM2 = Math.round(pricePerM2 * 1.35);
@@ -230,15 +248,17 @@ function formatTelegramMessage(order) {
     items.forEach((it, i) => {
       const b = productionBreakdown(it), cost = Number(it.cost_total) || b.total;
       grandCost += cost;
-      if (b.basketCost > 0) msg += `• Кошик ${i + 1}: ${b.basketArea.toFixed(2)} м² × ${num(b.basketRate)} ₴ = <b>${num(b.basketCost)} ₴</b>\n`;
-      if (b.coverCost > 0) msg += `  Верхня кришка: ${b.coverArea.toFixed(2)} м² × ${num(b.coverRate)} ₴ = <b>${num(b.coverCost)} ₴</b>\n`;
+      if (b.basketCost > 0) msg += `• Кошик ${i + 1}: ${areaFormula(b.basketArea, b.basketRate, b.qty)} = <b>${num(b.basketCost)} ₴</b>\n`;
+      if (b.sideCost > 0) msg += `  Знімна бічна панель: ${areaFormula(b.sideArea, b.basketRate, b.qty)} = <b>${num(b.sideCost)} ₴</b>\n`;
+      if (b.coverCost > 0) msg += `  Верхня кришка: ${areaFormula(b.coverArea, b.coverRate, b.qty)} = <b>${num(b.coverCost)} ₴</b>\n`;
     });
     if (grandCost > 0) msg += `• <b>Разом виробнича: ${num(grandCost)} ₴</b>\n`;
   } else {
     const it = items[0], b = productionBreakdown(it), cost = Number(it.cost_total) || b.total;
     grandCost = cost;
-    if (b.basketCost > 0) msg += `• Кошик: ${b.basketArea.toFixed(2)} м² × <b>${num(b.basketRate)} ₴/м²</b> = <b>${num(b.basketCost)} ₴</b>\n`;
-    if (b.coverCost > 0) msg += `• Верхня кришка: ${b.coverArea.toFixed(2)} м² × <b>${num(b.coverRate)} ₴/м²</b> = <b>${num(b.coverCost)} ₴</b>\n`;
+    if (b.basketCost > 0) msg += `• Кошик: ${areaFormula(b.basketArea, b.basketRate, b.qty, true)} = <b>${num(b.basketCost)} ₴</b>\n`;
+    if (b.sideCost > 0) msg += `• Знімна бічна панель: ${areaFormula(b.sideArea, b.basketRate, b.qty, true)} = <b>${num(b.sideCost)} ₴</b>\n`;
+    if (b.coverCost > 0) msg += `• Верхня кришка: ${areaFormula(b.coverArea, b.coverRate, b.qty, true)} = <b>${num(b.coverCost)} ₴</b>\n`;
     if (cost > 0) msg += `• Вартість виробнича: <b>${num(cost)} ₴</b>\n`;
   }
   if (grandCost === 0) msg += `• <i>Потрібен індивідуальний прорахунок менеджера</i>\n`;
@@ -409,3 +429,6 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: "Internal server error" });
   }
 }
+
+// Для тестів: текст повідомлення власнику.
+module.exports.formatTelegramMessage = formatTelegramMessage;
