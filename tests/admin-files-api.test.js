@@ -68,6 +68,23 @@ async function run() {
   assert.equal(o.statusCode, 200);
   assert.equal(calls.pop().action, "get_order");
 
+  // Видалення однієї позиції замовлення (DELETE без resource).
+  o = await call(order, { method: "DELETE", query: { order_number: ORD, row: "3" } });
+  assert.equal(o.statusCode, 200);
+  assert.deepEqual(calls.pop(), { action: "delete_order_item", payload: { order_number: ORD, row: 3 } });
+  // Що бачить кабінет у позиції — доходить до Apps Script лише відомими полями.
+  o = await call(order, { method: "DELETE", query: { order_number: ORD, row: "3" },
+    body: { expect: { basket_model: "Зі знімною боковиною", quantity: 2, hack: "x", construction: { evil: 1 } } } });
+  assert.deepEqual(calls.pop().payload, { order_number: ORD, row: 3, expect: { basket_model: "Зі знімною боковиною", quantity: 2 } });
+  o = await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { color: "Чорний" }, expect: { product_kind: "Кошик" } } });
+  assert.deepEqual(calls.pop(), { action: "update_order", payload: { order_number: ORD, row: 4, patch: { color: "Чорний" }, expect: { product_kind: "Кошик" } } });
+
+  o = await call(order, { method: "DELETE", query: { order_number: ORD } });
+  assert.equal(o.statusCode, 400, "без рядка позиції нічого не видаляємо");
+  o = await call(order, { method: "DELETE", query: { row: "3" } });
+  assert.equal(o.statusCode, 400, "без номера замовлення нічого не видаляємо");
+  assert.equal(calls.length, 0);
+
   let r = await call(files, { method: "GET", query: { order_number: "ORD-1" } });
   assert.equal(r.statusCode, 400, "невірний номер замовлення відсікається до Apps Script");
   assert.equal(calls.length, 0);

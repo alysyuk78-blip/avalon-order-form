@@ -347,12 +347,13 @@ function testContractorSendFlow() {
 
 // ── Аркуш «Замовлення» в памʼяті (сценарії зі статусами й терміном) ─────────
 function makeSheet(rows) {
-  const W = 48;
+  const W = 49;
   const pad = (r) => { const a = r.slice(); while (a.length < W) a.push(""); return a; };
   const data = [new Array(W).fill("")].concat(rows.map(pad));
   return {
     data,
     getLastRow: () => data.length,
+    deleteRow: (r) => { data.splice(r - 1, 1); },
     getMaxColumns: () => W,
     getMaxRows: () => 1000,
     setConditionalFormatRules: () => {},
@@ -382,7 +383,7 @@ function makeSheet(rows) {
 }
 
 function orderRow(num, status, extra) {
-  const r = new Array(48).fill("");
+  const r = new Array(49).fill("");
   r[0] = num; r[2] = status; r[4] = "Олександр Заєць"; r[5] = "'+380673406685"; r[6] = "Київ";
   r[16] = 1; r[19] = 9650; r[21] = 13790; r[22] = 4140; r[40] = "Ковш для трактора"; r[41] = "Інший виріб";
   Object.keys(extra || {}).forEach((k) => { r[Number(k)] = extra[k]; });
@@ -465,7 +466,7 @@ function testStatusesMigrationAndCanon() {
   assert.equal(mapped.processing_task, "Розробити конструктив");
 
   const widths = CODE.match(/var widths = \[([^\]]+)\]/)[1].split(",").length;
-  assert.equal(ctx.ADMIN_ORDER_COLS, 48);
+  assert.equal(ctx.ADMIN_ORDER_COLS, 49);
   assert.equal(widths, ctx.ADMIN_ORDER_COLS, "ширин колонок стільки ж, скільки колонок");
 }
 
@@ -772,6 +773,160 @@ function testServiceKind() {
   assert.ok(!text.includes("м² ×"), "жодної розкладки за площею кошика");
 }
 
+
+// ── Модель у конструкції, фото моделі та видимі позиції у фінансах ──
+function testModelPhotoAndFinanceLines() {
+  const props = makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" });
+  // Як у замовленні ORD-210926-016: перша позиція з розмірами, друга — «розрахує менеджер»,
+  // але зі своєю виробничою вартістю.
+  const withSizes = orderRow(ORD, "Нове", {
+    7: "", 8: "Суцільний · AVL-04", 9: "Сірий (RAL 7016)", 10: "K1",
+    13: 800, 14: 550, 15: 500, 16: 2, 19: 4019, 21: 5000, 40: "Зі знімною боковиною", 41: "Кошик",
+  });
+  const noSizes = orderRow(ORD, "Нове", {
+    7: "", 8: "", 9: "", 10: "", 13: "", 14: "", 15: "", 16: 1, 19: 1117, 21: 1587, 40: "", 41: "Кошик",
+  });
+  const tg = [];
+  const ctx = processingContext(makeSheet([withSizes, noSizes]), props, makeCalendar(), tg);
+  const preview = ctx.adminContractorPreview_({ order_number: ORD, options: { finance: true } });
+
+  assert.ok(preview.text.includes("• Конструкція: <b>Суцільний · AVL-04 · Зі знімною боковиною</b>"),
+    "у конструкції видно назву моделі каталогу");
+  assert.ok(preview.text.includes("• Кошик 2: <b>1 117 ₴</b>"),
+    "позиція без розмірів теж видима у фінансах, а не ховається в «Разом»");
+  assert.ok(preview.text.includes("<b>Разом виробнича: 5 136 ₴</b>"));
+  assert.ok(!preview.text.includes("• Тип: <b></b>") && !preview.text.includes("• Конструкція: <b></b>"),
+    "порожні рядки «Тип» і «Конструкція» не друкуємо");
+  assert.equal(preview.photo, "https://avalon-order-form.vercel.app/images/basket-models/avl-04-removable-side.jpg",
+    "перегляд показує те саме фото моделі, що піде підряднику");
+
+  // Фото йде ПРЕВʼЮ до того самого повідомлення, а не окремою картинкою.
+  ctx.adminContractorSend_({ order_number: ORD, purpose: "production", request_id: "ph1" });
+  const sends = tg.filter((x) => x.method === "sendMessage");
+  assert.equal(sends.length, 1, "одне повідомлення, без окремого фото");
+  assert.equal(tg.filter((x) => x.method === "sendPhoto").length, 0);
+  const lp = sends[0].payload.link_preview_options;
+  assert.ok(lp && lp.url.endsWith("avl-04-removable-side.jpg"), "фото моделі — прев'ю повідомлення");
+  assert.equal(lp.show_above_text, true, "фото над текстом");
+  assert.ok(!sends[0].payload.disable_web_page_preview, "прев'ю не вимкнене");
+
+  // Telegram не прийняв прев'ю — повідомлення все одно доходить, просто без фото.
+  const tg2 = [];
+  const ctx2 = processingContext(makeSheet([withSizes]), makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" }), makeCalendar(), tg2);
+  let first = true;
+  ctx2.tgApi_ = (method, payload) => {
+    tg2.push({ method, payload });
+    if (method === "createForumTopic") return { ok: true, result: { message_thread_id: 55 } };
+    if (method === "sendMessage" && first) { first = false; return { ok: false, description: "Bad Request: unknown field link_preview_options" }; }
+    return { ok: true, result: {} };
+  };
+  const res2 = ctx2.adminContractorSend_({ order_number: ORD, purpose: "production", request_id: "ph2" });
+  assert.equal(res2.status, "ok", "повідомлення доставлене попри відмову прев'ю");
+  const tries = tg2.filter((x) => x.method === "sendMessage");
+  assert.equal(tries.length, 2);
+  assert.ok(tries[0].payload.link_preview_options && !tries[1].payload.link_preview_options, "повтор — без прев'ю");
+
+  // Замовлення без моделі каталогу (послуга) — жодного прев'ю, повідомлення як було.
+  const svc = processingContext(makeSheet([orderRow("ORD-110926-777", "Нове", { 41: "Послуга", 7: "Лазерне різання", 40: "Різання" })]),
+    makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" }), makeCalendar(), []);
+  assert.equal(svc.adminContractorPreview_({ order_number: "ORD-110926-777", options: {} }).photo, "");
+}
+
+// ── Видалення позиції із замовлення ──
+function testDeleteOrderItem() {
+  const sheet = makeSheet([
+    orderRow(ORD, "Нове", { 40: "Зі знімною боковиною" }),
+    orderRow(ORD, "Нове", { 40: "Друга позиція" }),
+    orderRow("ORD-110926-002", "Нове"),
+  ]);
+  const ctx = load({
+    PropertiesService: { getScriptProperties: () => makeProps() },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+  });
+  ctx.adminOrdersSheet_ = () => sheet;
+  ctx.syncOrderPaymentState_ = () => {};
+  ctx.adminGetOrder_ = () => ({ status: "ok" });
+
+  assert.throws(() => ctx.adminDeleteOrderItem_({ order_number: ORD, row: 4 }), /Список позицій змінився/,
+    "чужий рядок не видаляємо");
+  assert.throws(() => ctx.adminDeleteOrderItem_({ order_number: ORD, row: 1 }), /рядок позиції/);
+  // Рядки зсунулись (у іншому вікні видалили рядок вище): рядок 3 тепер інша позиція —
+  // звірка за вмістом не дає видалити сусідню.
+  assert.throws(() => ctx.adminDeleteOrderItem_({ order_number: ORD, row: 3, expect: { basket_model: "Зі знімною боковиною" } }),
+    /Список позицій змінився/, "видаляємо лише ту позицію, яку бачить кабінет");
+  assert.equal(sheet.data.length, 4, "нічого не видалено");
+  ctx.adminDeleteOrderItem_({ order_number: ORD, row: 3, expect: { basket_model: "Друга позиція", quantity: 1 } });
+  assert.equal(sheet.data.length, 3, "рядок прибрано");
+  assert.deepEqual(sheet.data.slice(1).map((r) => r[0]), [ORD, "ORD-110926-002"], "прибрано саме потрібний рядок");
+  assert.equal(sheet.data[1][40], "Зі знімною боковиною", "перша позиція лишилась незмінною");
+  assert.throws(() => ctx.adminDeleteOrderItem_({ order_number: ORD, row: 2 }), /остання позиція/,
+    "останню позицію не видаляємо — для відмови є статус «Скасовано»");
+
+  // Правка позиції: після зсуву рядків — відмова, а не правка сусідньої.
+  const us = makeSheet([orderRow(ORD, "Нове", { 40: "Перша" }), orderRow(ORD, "Нове", { 40: "Друга" })]);
+  const uctx = load({
+    PropertiesService: { getScriptProperties: () => makeProps() },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    SpreadsheetApp: { flush() {} },
+  });
+  uctx.adminOrdersSheet_ = () => us;
+  uctx.recalcRow_ = () => {};
+  uctx.syncOrderPaymentState_ = () => {};
+  uctx.syncProcessingEvent_ = () => {};
+  uctx.adminGetOrder_ = () => ({ status: "ok" });
+  assert.throws(() => uctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: { color: "Чорний" }, expect: { basket_model: "Друга" } }),
+    /Список позицій змінився/);
+  assert.equal(us.data[1][9], "", "сусідню позицію не змінено");
+  assert.throws(() => uctx.adminUpdateOrder_({ order_number: ORD, row: 9, patch: { color: "Чорний" }, expect: { basket_model: "Друга" } }),
+    /Список позицій змінився/, "чужий рядок із expect — відмова, а не правка першої позиції");
+  us.data[2][16] = "";   // порожня кількість у таблиці = 1 у кабінеті — не хибна відмова
+  uctx.adminUpdateOrder_({ order_number: ORD, row: 3, patch: { color: "Чорний" }, expect: { basket_model: "Друга", quantity: 1 } });
+  assert.equal(us.data[2][9], "Чорний", "правильна позиція змінена");
+}
+
+
+// ── Маржа до виплати — лише з «Виготовлення»; скасування — лише з причиною ──
+function testMarginOwedAndCancelReason() {
+  const ctx = load({ PropertiesService: { getScriptProperties: () => makeProps() } });
+  const g = (status) => ctx.adminGroupOrders_([{ order_number: ORD, status, quantity: 1, revenue: 6587, profit: 1451 }], [])[0];
+  ["Нове", "В опрацюванні підрядником", "Скасовано"].forEach((st) => {
+    assert.equal(g(st).margin_owed, false, st + ": маржа ще не до виплати");
+    assert.equal(g(st).margin_left, 0, st + ": «до отримання» = 0");
+    // Скасовані й раніше не входили в суми; для решти маржа лишається видимою як прогноз.
+    assert.equal(g(st).margin_due, st === "Скасовано" ? 0 : 1451, st + ": маржа-прогноз");
+  });
+  ["Виготовлення", "Готове", "Відправлено", "Завершено"].forEach((st) => {
+    assert.equal(g(st).margin_owed, true);
+    assert.equal(g(st).margin_left, 1451, st + ": з цього етапу — до виплати");
+  });
+
+  const sheet = makeSheet([orderRow(ORD, "Нове"), orderRow(ORD, "Нове")]);
+  const uctx = load({
+    PropertiesService: { getScriptProperties: () => makeProps() },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    SpreadsheetApp: { flush() {} },
+  });
+  uctx.adminOrdersSheet_ = () => sheet;
+  uctx.recalcRow_ = () => {};
+  uctx.syncOrderPaymentState_ = () => {};
+  uctx.syncProcessingEvent_ = () => {};
+  uctx.notifyOwnerStatusChange_ = () => {};
+  uctx.adminGetOrder_ = () => ({ status: "ok" });
+  assert.throws(() => uctx.adminUpdateOrder_({ order_number: ORD, patch: { status: "Скасовано" } }), /причину скасування/);
+  assert.throws(() => uctx.adminUpdateOrder_({ order_number: ORD, patch: { status: "Скасовано", cancel_reason: "   " } }), /причину скасування/);
+  assert.equal(sheet.data[1][2], "Нове", "без причини статус не змінено");
+  uctx.adminUpdateOrder_({ order_number: ORD, patch: { status: "Скасовано", cancel_reason: "  Клієнт знайшов дешевше  " } });
+  assert.deepEqual(sheet.data.slice(1).map((r) => r[2]), ["Скасовано", "Скасовано"]);
+  assert.deepEqual(sheet.data.slice(1).map((r) => r[48]), ["Клієнт знайшов дешевше", "Клієнт знайшов дешевше"],
+    "причина в колонці AW усіх позицій");
+  assert.equal(uctx.mapOrderRow_(2, sheet.data[1]).cancel_reason, "Клієнт знайшов дешевше", "CRM бачить причину");
+  // Уточнити причину вже скасованого — можна; повернути в роботу — причина не потрібна.
+  uctx.adminUpdateOrder_({ order_number: ORD, patch: { cancel_reason: "Дорого" } });
+  assert.equal(sheet.data[1][48], "Дорого");
+  uctx.adminUpdateOrder_({ order_number: ORD, patch: { status: "Нове" } });
+  assert.equal(sheet.data[1][2], "Нове");
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
@@ -784,4 +939,7 @@ testFilesCountBackfill();
 testSmallUpload();
 testProcessingPreviewSections();
 testServiceKind();
+testModelPhotoAndFinanceLines();
+testDeleteOrderItem();
+testMarginOwedAndCancelReason();
 console.log("contractor-send tests: OK");

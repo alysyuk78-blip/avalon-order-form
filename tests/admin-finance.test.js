@@ -20,7 +20,9 @@ function testPaymentMetrics() {
     }),
     {
       clientSettled: true,
+      owed: true,
       marginDue: 1000,
+      marginForecast: 0,
       marginReady: 1000,
       marginReceived: 400,
       marginDebt: 600,
@@ -52,6 +54,24 @@ function testPaymentMetrics() {
     margin_left: 200,
   });
   assert.equal(repriced.marginDebt, 200, "після перерахунку борг має дорівнювати новому залишку");
+
+  // До погодження («Нове», «В опрацюванні підрядником») маржа — прогноз, а не борг.
+  ["Нове", "В опрацюванні підрядником", "Скасовано"].forEach((status) => {
+    const m = groupPaymentMetrics({ status, revenue: 5000, profit: 1000, client_left: 0, margin_received: 0, margin_left: 1000 });
+    assert.equal(m.owed, false, status + ": маржа ще не до виплати");
+    assert.equal(m.marginLeft, 0, status + ": без «до отримання»");
+    assert.equal(m.marginDebt, 0, status + ": без боргу підрядника");
+    assert.equal(m.marginReady, 0);
+    assert.equal(m.marginDue, 0, status + ": не входить у суму до виплати");
+    assert.equal(m.marginForecast, 1000, status + ": лишається як прогноз");
+  });
+  ["Виготовлення", "В роботі", "Готове", "Відправлено", "Завершено"].forEach((status) => {
+    const m = groupPaymentMetrics({ status, revenue: 5000, profit: 1000, client_left: 0, margin_received: 0, margin_left: 1000 });
+    assert.equal(m.owed, true, status + ": з цього етапу маржа до виплати");
+    assert.equal(m.marginDebt, 1000);
+  });
+  assert.equal(groupPaymentMetrics({ status: "Нове", margin_owed: true, revenue: 5000, profit: 1000, client_left: 0, margin_left: 1000 }).marginDebt, 1000,
+    "явний прапорець із сервера має пріоритет");
 }
 
 function loadAppsScript(extra) {
@@ -225,7 +245,7 @@ function testBootstrapReadsPaymentsOnce() {
 
 function testOrderDetailReadsOnlyMatchedRows() {
   const context = loadAppsScript();
-  const row = new Array(48).fill("");
+  const row = new Array(49).fill("");
   row[0] = "ORD-010126-001";
   row[2] = "В роботі";
   row[4] = "Тест";
@@ -250,7 +270,7 @@ function testOrderDetailReadsOnlyMatchedRows() {
           }),
         };
       }
-      if (r === 7 && c === 1 && rows === 1 && cols === 48) {
+      if (r === 7 && c === 1 && rows === 1 && cols === 49) {
         fullReads.push(r);
         return { getValues: () => [row] };
       }
@@ -401,11 +421,11 @@ function testSheetCommissionFormula() {
   assert.equal(formulas[26], '=IF($W7="";"";$W7-$Y7)', "чистий прибуток = валовий − комісія");
 
   // Схема таблиці розширена до AT (46) — інакше читання картки впаде.
-  assert.equal(context.ADMIN_ORDER_COLS, 48);
+  assert.equal(context.ADMIN_ORDER_COLS, 49);  // …AW — причина скасування
   assert.equal(context.COMMISSION_PCT_COL, 46);
 
   // mapOrderRow_ має віддавати ставку в CRM.
-  const row = new Array(48).fill("");
+  const row = new Array(49).fill("");
   row[0] = "ORD-010126-001";
   row[45] = 30;
   assert.equal(context.mapOrderRow_(7, row).commission_pct, 30);
