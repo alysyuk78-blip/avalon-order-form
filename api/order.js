@@ -30,9 +30,10 @@ function hasRemovableSide(it) {
 function removableSideArea(it, h, d) {
   return h && d && hasRemovableSide(it) ? (h * d) / 1_000_000 : 0;
 }
-// «0.99 м² × 2 030 ₴/м² × 2 шт. = 4 019 ₴»: кількість у формулі, площа до тисячних.
+// «0.99 м² × 2 030 ₴/м² × 2 шт. = 4 019 ₴»: кількість у формулі, площа з повною точністю
+// (мм → до 6 знаків), щоб показані множники давали показану суму.
 function areaFormula(area, rate, qty, bold) {
-  const a = String(Math.round(area * 1000) / 1000);
+  const a = String(Math.round(area * 1_000_000) / 1_000_000);
   const r = `${Number(rate || 0).toLocaleString("uk-UA")} ₴/м²`;
   return `${a} м² × ${bold ? `<b>${r}</b>` : r}${qty > 1 ? ` × ${qty} шт.` : ""}`;
 }

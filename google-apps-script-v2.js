@@ -400,7 +400,8 @@ function onEditDelivery(e) {
 
     // Перерахунок фінансів при зміні розмірів/кількості/типу/конструкції/візерунка.
     // H=8, I=9, K=11, N=14, O=15, P=16, Q=17.
-    if ([8, 9, 11, 14, 15, 16, 17].indexOf(col) >= 0) {
+    // 41 (AO, модель): від неї залежить знімна бічна панель AVL-04.
+    if ([8, 9, 11, 14, 15, 16, 17, 41].indexOf(col) >= 0) {
       for (var ri = 0; ri < range.getNumRows(); ri++) recalcRow_(sh, range.getRow() + ri);
       return;
     }
@@ -1169,11 +1170,11 @@ function buildProductionMsg_(data, opts) {
   var fin = "";
   var grand = 0;
   // «0.99 м² × 2 030 ₴/м² × 2 шт. = 4 019 ₴» — кількість у формулі обовʼязково: без неї
-  // 0,99 × 2 030 ≠ 4 019, і підрядник не розумів, звідки сума. Площу — до тисячних
-  // (0.275, а не 0.28), щоб множення сходилось із результатом.
+  // 0,99 × 2 030 ≠ 4 019, і підрядник не розумів, звідки сума. Площу — з повною точністю
+  // (розміри в мм → до 6 знаків: 0.9955, 0.275), щоб показані множники давали показану суму.
   function areaLine(label, area, rate, it, cost, perM2Bold) {
     var qty = Number(it.quantity) || 1;
-    var a = String(Math.round(area * 1000) / 1000);
+    var a = String(Math.round(area * 1000000) / 1000000);
     return label + ": " + a + " м² × " + (perM2Bold ? "<b>" + money_(rate) + " ₴/м²</b>" : money_(rate) + " ₴/м²")
       + (qty > 1 ? " × " + qty + " " + itemUnit(it) : "")
       + " = <b>" + money_(cost) + " ₴</b>\n";

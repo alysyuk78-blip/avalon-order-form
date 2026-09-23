@@ -240,6 +240,13 @@ function testRemovableSidePanelPricing() {
     items: [{ product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 2, unit: "шт.", cost_total: 4500 }],
   }, { finance: true });
   assert.ok(edited.includes("• Коригування менеджера: <b>+481 ₴</b>"), "4 019 + 481 = 4 500");
+
+  // Площа з повною точністю: показані множники дають показану суму (810×550×500).
+  const precise = ctx.buildProductionMsg_({
+    order_number: "X",
+    items: [{ product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 810, size_h: 550, size_d: 500, quantity: 2, unit: "шт." }],
+  }, { finance: true });
+  assert.ok(precise.includes("• Кошик: 0.9955 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>4 042 ₴</b>"), "0,9955 × 2 030 × 2 = 4 041,73 → 4 042");
 }
 
 function testPaymentDeletionChecksStableIdentity() {
