@@ -2095,7 +2095,8 @@ import pricing from '../../lib/avalon-pricing.js';
       const notInCalculator = !!code && ["AVL-06", "AVL-06/1", "AVL-08"].includes(code[0]);
       // Чи вже збережені в позиції рівно ці числа й ці вхідні дані.
       const num = v => Number(v) || 0;
-      const inputsSaved = ["construction", "basket_model", "specs"].every(k => String(form[k] || "") === String(saved[k] || ""))
+      // Тип і візерунок теж тут: від них залежить, чи позиція рахується формулою взагалі.
+      const inputsSaved = ["construction", "basket_model", "specs", "basket_type", "pattern"].every(k => String(form[k] || "") === String(saved[k] || ""))
         && ["size_w", "size_h", "size_d"].every(k => num(form[k]) === num(saved[k]))
         && (num(form.quantity) || 1) === (num(saved.quantity) || 1);
       const moneySaved = !!calc && num(saved.cost_total) === calc.costTotal && num(saved.revenue) === calc.total
@@ -2211,7 +2212,9 @@ import pricing from '../../lib/avalon-pricing.js';
               )}
             </>
           )}
-          {!notInCalculator && !individual && saved.row ? (
+          {/* Калькулятор бере позицію такою, як вона ЗБЕРЕЖЕНА: якщо збережена рахується
+              індивідуально, формульна ціна калькулятора затерла б суми менеджера. */}
+          {!notInCalculator && !individual && !pricing.avalonIsIndividualPricing(saved.basket_type, saved.pattern) && saved.row ? (
             <div className="pricing-calc-link">
               <button className="btn secondary" type="button" disabled={disabled || !inputsSaved}
                 onClick={() => window.location.assign(calcUrlFor(orderNumber, saved.row))}>
