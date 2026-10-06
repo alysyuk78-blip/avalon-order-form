@@ -2075,10 +2075,12 @@ import pricing from '../../lib/avalon-pricing.js';
       return list > 0 && uah > 0 ? Math.round(uah / list * 10000) / 100 : 0;
     }
     function calcPosition(form) {
-      if (!(Number(form.size_w) > 0 && Number(form.size_h) > 0)) return null;
-      return pricing.avalonPriceItem(
-        { construction: form.construction, model: form.basket_model, specs: form.specs,
-          width: form.size_w, height: form.size_h, depth: form.size_d, quantity: form.quantity },
+      const input = { construction: form.construction, model: form.basket_model, specs: form.specs,
+        width: form.size_w, height: form.size_h, depth: form.size_d, quantity: form.quantity };
+      // Кошику потрібні всі три розміри (екрану — ширина й висота): без глибини формула
+      // порахувала б одну лицеву стінку.
+      if (!pricing.avalonItemSized(input)) return null;
+      return pricing.avalonPriceItem(input,
         { discountPct: formDiscountPct(form), commissionPct: form.commission_pct });
     }
     function PricingBlock({ form, setForm, saved, savedCommission, disabled, onApply, orderNumber }) {
@@ -2162,7 +2164,7 @@ import pricing from '../../lib/avalon-pricing.js';
             </p>
           )}
           {!calc ? (
-            <p className="margin-calc-note">Вкажіть ширину й висоту в розділі «Товар» — і тут зʼявиться розрахунок.</p>
+            <p className="margin-calc-note">Вкажіть ширину, висоту й глибину в розділі «Товар» — і тут зʼявиться розрахунок.</p>
           ) : (
             <>
               <div className="pricing-lines">

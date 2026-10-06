@@ -335,6 +335,16 @@ function avalonCostLines(p) {
   return lines;
 }
 
+/**
+ * Чи досить розмірів, щоб рахувати позицію формулою: ширина й висота — завжди, глибина — для
+ * всього, крім екрана (у нього глибина — борти, і вона може бути нульовою). Кошик без глибини
+ * формула порахувала б як одну лицеву стінку — тобто занизила б ціну.
+ */
+function avalonItemSized(item) {
+  var type = avalonModelType(item.construction, item.model);
+  return avalonNum(item.width) > 0 && avalonNum(item.height) > 0 && (type === "screen" || avalonNum(item.depth) > 0);
+}
+
 /** Розрахунок позиції замовлення, як вона лежить у таблиці/кабінеті (текстові поля). */
 function avalonPriceItem(item, extra) {
   var e = extra || {};
@@ -508,13 +518,30 @@ function writeOrderToSheet_(data) {
     // Але якщо попередня спроба встигла записати лише ЧАСТИНУ позицій (скрипт обірвався
     // посеред замовлення), вважати замовлення готовим не можна — дописуємо решту під той
     // самий номер (resumeRows).
+    //
+    // Позначка в колонці AS: поки рядок позиції ще заповнюється, там «~ID» (у роботі); щойно
+    // записано все — фінанси, коментар, формули, комісію — стає «ID» (готово). Рядок, що
+    // лишився «у роботі», — недописаний: повтор прибирає його й записує позицію заново.
     var expectedItems = (Array.isArray(data.items) && data.items.length) ? data.items.length : 1;
     var resumeRows = [];
+    var reuseNumber = "";
     if (requestId && sheet.getLastRow() >= 2) {
       var existingIds = sheet.getRange(2, 45, sheet.getLastRow() - 1, 1).getValues();
-      var existingRows = [];
+      var existingRows = [], pendingRows = [];
       for (var ei = 0; ei < existingIds.length; ei++) {
-        if (String(existingIds[ei][0] || "").trim() === requestId) existingRows.push(ei + 2);
+        var marker = String(existingIds[ei][0] || "").trim();
+        if (marker === requestId) existingRows.push(ei + 2);
+        else if (marker === REQUEST_PENDING_PREFIX + requestId) pendingRows.push(ei + 2);
+      }
+      if (pendingRows.length) {
+        reuseNumber = String(sheet.getRange(pendingRows[0], 1).getValue() || "").trim();
+        // Знизу вгору, щоб номери рядків вище не зсувались. Недописані рядки стоять нижче
+        // за готові (позиції пишуться по порядку), тож existingRows лишаються чинними.
+        for (var pi = pendingRows.length - 1; pi >= 0; pi--) sheet.deleteRow(pendingRows[pi]);
+        if (data._append) {
+          var removedAbove = pendingRows.filter(function (r) { return r <= Number(data._append.afterRow); }).length;
+          data._append.afterRow = Number(data._append.afterRow) - removedAbove;
+        }
       }
       if (existingRows.length) {
         var existingNumber = String(sheet.getRange(existingRows[0], 1).getValue() || "").trim();
@@ -580,7 +607,10 @@ function writeOrderToSheet_(data) {
         base: sheet.getRange(resumeRows[0], 1, 1, 32).getValues()[0]
       };
       itemsIn = itemsIn.slice(resumeRows.length);
-    } else if (!append) data.order_number = nextOrderNumber();
+    } else if (!append) {
+      // Номер недописаного замовлення з попередньої спроби використовуємо знову — без пропуску.
+      data.order_number = orderNumberValid_(reuseNumber) ? reuseNumber : nextOrderNumber();
+    }
     var appendAfter = append ? Number(append.afterRow) : 0;
 
     itemsIn.forEach(function (it) {
@@ -593,7 +623,8 @@ function writeOrderToSheet_(data) {
       // Для кронштейнів і довільних виробів формулу не застосовуємо — «площа ковша» за
       // розкроєм кошика нічого не означає і лише збиває з пантелику в таблиці та звітах.
       var areaApplies = it.product_type !== "bracket" && it.product_type !== "other" && it.product_type !== "service";
-      var calc = (areaApplies && w && h)
+      // Без повних розмірів (для кошика потрібна й глибина) формулу не застосовуємо.
+      var calc = (areaApplies && avalonItemSized(pricingInput_(it)))
         ? avalonPriceItem(pricingInput_(it), { commissionPct: commissionPct, discountPct: it.discount_pct })
         : null;
       var formulaPriced = false;
@@ -668,12 +699,13 @@ function writeOrderToSheet_(data) {
         data.how_found || (data.how_found_custom || ""), notes                         // AE-AF
       ];
       var ROW_COLS = row.length;   // A–AF: стільки колонок оформлюємо нижче
-      // ID запиту (AS, 45) пишемо ТИМ САМИМ записом, що й рядок: якщо скрипт обірветься одразу
-      // після нього, повтор запиту побачить цю позицію як уже записану й не створить її вдруге.
+      // Позначку запиту (AS, 45) пишемо ТИМ САМИМ записом, що й рядок, — зі знаком «у роботі»:
+      // якщо скрипт обірветься посеред позиції, повтор запиту знайде недописаний рядок і
+      // замінить його, а не створить другий. «Готово» ставимо останньою дією нижче.
       // AG–AR між ними заповнюються нижче (галочки, знижка, контакт, виріб).
       if (requestId) {
         while (row.length < 44) row.push("");
-        row.push(requestId);
+        row.push(REQUEST_PENDING_PREFIX + requestId);
       }
       if (append) {
         // Спільні для замовлення колонки беремо з його першого рядка — дата, статус,
@@ -716,7 +748,6 @@ function writeOrderToSheet_(data) {
         specsText,
         unit || "шт."
       ]]);
-      sheet.getRange(lastRow, 45).setValue(requestId);
       // Ціна за формулою: фіксуємо й прайс зі знижкою (AI–AK), щоб картка показувала ті самі числа.
       if (formulaPriced) sheet.getRange(lastRow, 35, 1, 3).setValues([[calc.listTotal, calc.discountPct, calc.discountAmount]]);
       var itemComment = String(it.item_comment || it.model_comment || "").trim().slice(0, 1000);
@@ -733,12 +764,17 @@ function writeOrderToSheet_(data) {
       sheet.getRange(lastRow, 24).setNumberFormat('0.0"%"');        // X Маржа
       sheet.getRange(lastRow, 21).setFontWeight("bold");            // Ціна продажу 1шт
       if (lastRow % 2 === 0) rr.setBackground("#F8F6F2");
+      // Позицію записано повністю — знімаємо знак «у роботі» (остання дія для рядка).
+      if (requestId) sheet.getRange(lastRow, 45).setValue(requestId);
     });
   if (resumeRows.length) {
     return { order_number: data.order_number, row: resumeRows[0], rows: resumeRows.concat(writtenRows), completed: true };
   }
   return { order_number: data.order_number, row: lastRow, rows: writtenRows };
 }
+
+// Знак «рядок ще заповнюється» перед ID запиту в колонці AS (див. writeOrderToSheet_).
+var REQUEST_PENDING_PREFIX = "~";
 
 function findLastRealOrderRow_(sheet) {
   var last = sheet.getLastRow();
@@ -868,28 +904,32 @@ function onEditDelivery(e) {
     // AQ=43 характеристики (матеріал, кришки, опції AVL-03).
     // H=8 тип і K=11 візерунок: лише коли позиція перестала бути «індивідуальною»
     // (антивандальний / складний візерунок) і тепер рахується формулою.
-    if ([8, 9, 11, 14, 15, 16, 17, 41, 43].indexOf(col) >= 0) {
+    var pricingStart = [8, 9, 11, 14, 15, 16, 17, 41, 43].indexOf(col) >= 0;
+    var colEnd = col + range.getNumColumns() - 1;
+    // Вставлений діапазон зачепив колонку, що завжди міняє ціну (конструкція, розміри,
+    // кількість, модель) — перераховуємо, з якої б колонки він не починався (A:Q, G:Q…).
+    var coversAlways = [9, 14, 15, 16, 17, 41].some(function (c) { return c >= col && c <= colEnd; });
+    if (pricingStart || coversAlways) {
+      var doRecalc = coversAlways;
       var single = range.getNumRows() === 1 && range.getNumColumns() === 1;
-      var colEnd = col + range.getNumColumns() - 1;
-      // Вставлений діапазон зачепив колонку, що завжди міняє ціну (конструкція, розміри,
-      // кількість, модель) — перераховуємо, з якої б колонки він не починався.
-      var coversAlways = [9, 14, 15, 16, 17, 41].some(function (c) { return c >= col && c <= colEnd; });
-      if (!coversAlways) {
+      if (!doRecalc && single) {
         // Тип, візерунок, характеристики — вільний текст: старе значення відоме лише для однієї клітинки.
-        if (!single) return;
         var oldCell = e.oldValue == null ? "" : e.oldValue;
         if (col === 43) {
           // Перераховуємо лише коли змінилась опція, що впливає на ціну (а не, скажімо,
           // дописали модель кондиціонера).
-          if (JSON.stringify(avalonParseOptions("", oldCell)) === JSON.stringify(avalonParseOptions("", range.getValue()))) return;
+          doRecalc = JSON.stringify(avalonParseOptions("", oldCell)) !== JSON.stringify(avalonParseOptions("", range.getValue()));
         } else {
           var rowNow = sh.getRange(range.getRow(), 1, 1, 11).getValues()[0];
           var wasIndividual = col === 8 ? avalonIsIndividualPricing(oldCell, rowNow[10]) : avalonIsIndividualPricing(rowNow[7], oldCell);
-          if (!wasIndividual || avalonIsIndividualPricing(rowNow[7], rowNow[10])) return;
+          doRecalc = wasIndividual && !avalonIsIndividualPricing(rowNow[7], rowNow[10]);
         }
       }
-      for (var ri = 0; ri < range.getNumRows(); ri++) recalcRow_(sh, range.getRow() + ri);
-      return;
+      if (doRecalc) {
+        for (var ri = 0; ri < range.getNumRows(); ri++) recalcRow_(sh, range.getRow() + ri);
+      }
+      // Діапазон, що почався з іншої колонки (статус, дата…), обробляють ще й гілки нижче.
+      if (pricingStart) return;
     }
 
     // Статус «В опрацюванні підрядником» / «Виготовлення» → передати замовлення
@@ -1009,7 +1049,8 @@ function recalcRow_(sh, row) {
   var kind = String(v[41] || "");
   if (kind && kind.toLowerCase().indexOf("кошик") < 0) return;
   var w = Number(v[13]) || 0, h = Number(v[14]) || 0;
-  if (!(w && h)) return; // без розмірів не перераховуємо (напр. «розрахує менеджер»)
+  // Без розмірів не перераховуємо (напр. «розрахує менеджер»); кошику потрібна й глибина.
+  if (!avalonItemSized({ construction: v[8], model: v[40], width: w, height: h, depth: v[15] })) return;
   // Антивандальний кошик і складний візерунок рахуються індивідуально — вписані менеджером
   // суми не чіпаємо.
   if (avalonIsIndividualPricing(v[7], v[10])) return;
@@ -1550,7 +1591,7 @@ function buildProductionMsg_(data, opts) {
     // була б чужими цифрами.
     if (avalonIsIndividualPricing(it.basket_type, it.pattern)) return zero;
     var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
-    if (!(w && h)) return zero;
+    if (!avalonItemSized(pricingInput_(it))) return zero;
     var p = avalonPriceItem(pricingInput_(it));
     var lines = avalonCostLines(p), sum = 0;
     lines.forEach(function (l) { sum += l.cost; });

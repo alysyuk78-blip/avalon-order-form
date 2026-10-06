@@ -16,7 +16,7 @@ function coreOf(file) {
 
 // Змінив формулу — онови всі копії (npm run sync:pricing) і цю суму. Та сама сума стоїть у
 // тесті калькулятора (test/avalonPricing.test.mjs): розбіжність = алгоритми розʼїхались.
-const CORE_SHA256 = "9d1611fe568d3abb1978565cec88e35ceea19b1967cd20201b606d6c4bde1669";
+const CORE_SHA256 = "bd41d8c4c4be71e61d9608bf45732b9f2b00faa38052e167ac1602d4ded4bcf8";
 
 function testCopiesAreIdentical() {
   const root = path.join(__dirname, "..");
@@ -157,6 +157,15 @@ function testColorSurcharge() {
   assert.equal(P.avalonColorSurcharge(["RAL 6005"], { colorSurcharge: 300 }), 300, "сума — з налаштувань");
 }
 
+// Кошик без глибини формула не рахує (вийшла б одна лицева стінка); екрану досить ширини й висоти.
+function testItemSized() {
+  const item = (extra) => Object.assign({ construction: "Суцільний · AVL-01", model: "Суцільний", width: 800, height: 500, depth: 500 }, extra);
+  assert.equal(P.avalonItemSized(item({})), true);
+  [{ depth: "" }, { depth: 0 }, { width: 0 }, { height: "" }, { depth: null }].forEach((x) => assert.equal(P.avalonItemSized(item(x)), false, JSON.stringify(x)));
+  assert.equal(P.avalonItemSized(item({ construction: "Розбірна · AVL-02", depth: 0 })), true, "екран: глибина — борти, може бути 0");
+  assert.equal(P.avalonItemSized(item({ construction: "Розбірна · AVL-02", width: 0 })), false);
+}
+
 // Антивандальне виконання і складний візерунок дорожчі, а на скільки — рахується індивідуально:
 // формула такі позиції не оцінює.
 function testIndividualPricing() {
@@ -170,6 +179,7 @@ function testIndividualPricing() {
 }
 
 testCopiesAreIdentical();
+testItemSized();
 testIndividualPricing();
 testOwnerTovExample();
 testColorSurcharge();

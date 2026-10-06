@@ -18,7 +18,7 @@ module.exports.config = config;
 // ВИРОБНИЧА ВАРТІСТЬ (для повідомлення власнику)
 // ============================================================
 // Рахує ТОЙ САМИЙ алгоритм, що й калькулятор, кабінет CRM і таблиця: lib/avalon-pricing.js.
-const { avalonPriceItem, avalonCostLines, avalonIsIndividualPricing, avalonColorSurcharge } = require("../lib/avalon-pricing");
+const { avalonPriceItem, avalonCostLines, avalonIsIndividualPricing, avalonColorSurcharge, avalonItemSized } = require("../lib/avalon-pricing");
 
 function productionBreakdown(it) {
   const zero = { qty: 1, lines: [], sum: 0, total: 0, dims: "" };
@@ -30,14 +30,16 @@ function productionBreakdown(it) {
   // до них не застосовується.
   if (avalonIsIndividualPricing(it.basket_type, it.pattern)) return zero;
   const w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
-  if (!w || !h) return zero;
   let construction = String(it.construction_type || "");
   if (it.has_cover && !construction.toLowerCase().includes("кришка")) construction += " + кришка";
   const name = String(it.basket_model_name || "").trim(), code = String(it.basket_model || "").trim();
-  const p = avalonPriceItem({
+  const input = {
     construction, model: name && code && name !== code ? `${name} ${code}` : (name || code),
     specs: it.specs, width: w, height: h, depth: d, quantity: it.quantity,
-  });
+  };
+  // Без повних розмірів (кошику потрібна й глибина) формула нічого не рахує.
+  if (!avalonItemSized(input)) return zero;
+  const p = avalonPriceItem(input);
   const lines = avalonCostLines(p);
   // Ціна рахується на розмірах, округлених угору до 10 мм, — показуємо їх, коли вони інші.
   const rounded = p.width !== w || p.height !== h || p.depth !== d;

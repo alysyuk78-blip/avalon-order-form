@@ -1323,6 +1323,41 @@ function testAuditFixes() {
   resumed = t.ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", request_id: "req-partial", items: three });
   assert.deepEqual([resumed.duplicate, resumed.rows.length, t.raw.data.length], [true, 3, 5]);
 
+  // 1б. Позначка запиту: поки рядок заповнюється — «~ID», наприкінці — «ID». Недописаний рядок
+  //     («~ID») повтор прибирає й записує позицію заново — під тим самим номером замовлення.
+  t = make([Object.assign(basket({ 9: "Сірий (RAL 7016)", 40: "Перша" }), { 44: "req-mid" }),
+    Object.assign(orderRow(ORD, "Нове", { 40: "Друга (недописана)", 19: "", 21: "", 22: "" }), { 44: "~req-mid" }),
+    orderRow("ORD-110926-002", "Нове")]);
+  t.ctx.nextOrderNumber = () => "ORD-999999-999";
+  resumed = t.ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", request_id: "req-mid", items: three });
+  assert.deepEqual(t.raw.data.slice(1).map((r) => [r[0], r[40], r[44]]),
+    [[ORD, "Перша", "req-mid"], [ORD, "Друга", "req-mid"], [ORD, "Третя", "req-mid"], ["ORD-110926-002", "Ковш для трактора", ""]],
+    "недописаний рядок замінено повним, усі позначки — «готово»");
+  assert.deepEqual([resumed.rows.length, resumed.completed], [3, true]);
+  // Обірвалась найперша позиція: готових рядків немає, номер замовлення використовуємо той самий.
+  t = make([Object.assign(orderRow(ORD, "Нове", { 40: "Перша (недописана)" }), { 44: "~req-first" }), orderRow("ORD-110926-002", "Нове")]);
+  let issued = 0;
+  t.ctx.nextOrderNumber = () => { issued += 1; return "ORD-999999-999"; };
+  t.ctx.appendOrderRow_ = (sh, row) => { sh.insertRowsAfter(1, 1); sh.getRange(2, 1, 1, row.length).setValues([row]); return 2; };
+  resumed = t.ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", request_id: "req-first", items: three.slice(0, 1) });
+  assert.deepEqual([resumed.order_number, issued, !!resumed.duplicate], [ORD, 0, false], "номер не згорів і новий не видано");
+  assert.deepEqual(t.raw.data.slice(1).map((r) => [r[0], r[40], r[44]]), [[ORD, "Перша", "req-first"], ["ORD-110926-002", "Ковш для трактора", ""]]);
+  // Додавання позиції до замовлення (add_item), попередня спроба якого обірвалась: недописаний
+  // рядок прибрано, нова позиція стає на його місце, а не в чуже замовлення.
+  t = make([basket({ 9: "Сірий (RAL 7016)" }), Object.assign(orderRow(ORD, "Нове", { 40: "Монтаж (недописаний)", 41: "Послуга" }), { 44: "~req-add" }), orderRow("ORD-110926-002", "Нове")]);
+  t.ctx.adminAddOrderItem_({ order_number: ORD, request_id: "req-add",
+    item: { product_type: "service", basket_model_name: "Монтаж", construction_type: "Монтаж", basket_type: "Монтаж", quantity: 1, unit: "шт.", cost_total: 1500, price_total: 1500 } });
+  assert.deepEqual(t.raw.data.slice(1).map((r) => [r[0], r[40], r[44]]),
+    [[ORD, "Суцільний", ""], [ORD, "Монтаж", "req-add"], ["ORD-110926-002", "Ковш для трактора", ""]]);
+
+  // 1в. Кошик без глибини формулою не рахується (була б одна лицева стінка); екрану глибина не обовʼязкова.
+  t = make([]);
+  const noDepth = { product_type: "basket", basket_model: "AVL-01", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 500, size_d: "", quantity: 1 };
+  t.ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", items: [noDepth] });
+  assert.deepEqual([t.appended()[17], t.appended()[19], t.appended()[21]], ["", "", ""], "без глибини — без площі й автоціни");
+  t.ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", items: [Object.assign({}, noDepth, { basket_model: "AVL-02", construction_type: "Розбірна · AVL-02", size_h: 540, size_d: 0 })] });
+  assert.equal(t.appended()[19], 2577, "екран без бортів: 0,432 × 2 030 + кріплення 1 700");
+
   // 2. Заявка з форми: площа, розміри блока, опис власного візерунка, контакт без дубля.
   t = make([]);
   const zeros = { price_total: 0, area_m2: 0, cost_total: 0 };
@@ -1384,6 +1419,13 @@ function testAuditFixes() {
     getNumRows: () => 1, getNumColumns: () => cols, getValue: () => value } });
   edit(8, 10, undefined, "x");
   assert.deepEqual(recalced, [2], "діапазон H:Q зачепив розміри й кількість");
+  // Діапазон, що починається НЕ з «цінової» колонки (A:Q, G:Q), теж перераховує.
+  edit(1, 17, undefined, "x");
+  edit(7, 11, undefined, "x");
+  assert.deepEqual(recalced, [2, 2, 2]);
+  edit(1, 5, undefined, "x");
+  assert.deepEqual(recalced, [2, 2, 2], "A:E розмірів не зачіпає");
+  recalced.length = 1;
   edit(8, 1, "Декоративний", "Стандарт");
   edit(11, 1, "K1", "K2");
   edit(43, 1, "", "Кронштейн: K2");
