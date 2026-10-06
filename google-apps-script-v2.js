@@ -109,15 +109,15 @@ var AVALON_MATERIALS = {
   aluminium: "Алюміній"
 };
 // Код моделі каталогу → тип конструкції в розрахунку. Моделей AVL-06, 06/1, 08 в окремому
-// калькуляторі немає: вони рахуються як суцільний кошик (кришка — якщо є в конструкції).
+// калькуляторі немає: для них тип визначає текст конструкції («розбірний» → ставка розбірного,
+// інакше суцільного), кришка — якщо є в конструкції.
 var AVALON_MODEL_TYPES = {
   "AVL-01": "solid", "AVL-02": "screen", "AVL-03": "universal", "AVL-04": "sectional_frame",
-  "AVL-05": "sectional", "AVL-06": "solid", "AVL-06/1": "solid", "AVL-07": "closed", "AVL-08": "solid"
+  "AVL-05": "sectional", "AVL-07": "closed"
 };
 var AVALON_MODEL_NAMES = {
   "суцільний": "solid", "екран під утеплювач": "screen", "універсальний": "universal",
-  "зі знімною боковиною": "sectional_frame", "розбірний": "sectional", "закритий на підставці": "closed",
-  "ламель з кришкою": "solid", "ламельний": "solid", "горизонтальний монтаж": "solid"
+  "зі знімною боковиною": "sectional_frame", "розбірний": "sectional", "закритий на підставці": "closed"
 };
 
 // Прибирає шум плаваючої коми (1829.9999999998 → 1830), не змінюючи суму.
@@ -132,10 +132,15 @@ function avalonModelType(construction, model) {
   var hay = String(construction == null ? "" : construction) + " " + String(model == null ? "" : model);
   var code = hay.toUpperCase().match(/AVL-\d{2}(?:\/\d)?/);
   if (code && AVALON_MODEL_TYPES[code[0]]) return AVALON_MODEL_TYPES[code[0]];
+  var byText = String(construction == null ? "" : construction).toLowerCase().indexOf("розбір") >= 0 ? "sectional" : "solid";
+  // Код є, але моделі немає в калькуляторі (AVL-06, 06/1, 08) — лише за текстом конструкції:
+  // назва моделі чи слова в ній тип не визначають.
+  if (code) return byText;
   var name = String(model == null ? "" : model).replace(/^\s+|\s+$/g, "").toLowerCase();
   if (AVALON_MODEL_NAMES[name]) return AVALON_MODEL_NAMES[name];
-  if (/знімн\S*\s+бокови/i.test(hay)) return "sectional_frame";
-  return String(construction == null ? "" : construction).toLowerCase().indexOf("розбір") >= 0 ? "sectional" : "solid";
+  // «Зі знімною боковиною» / «…зі знімною боковою частиною» — без коду моделі.
+  if (/знімн\S*\s+боков/i.test(hay)) return "sectional_frame";
+  return byText;
 }
 
 /**
@@ -378,6 +383,23 @@ function pricingSignatureOfRow_(sh, row) {
     width: v[13], height: v[14], depth: v[15], quantity: v[16] });
 }
 
+/**
+ * Площа для колонки R — до сотих м², з «шкільним» округленням: 1,045 → 1,05.
+ * (toFixed тут помилявся на половинках: 1.045 у двійковому поданні трохи менше за 1,045.)
+ */
+function areaCell_(areaM2) {
+  return Math.round(Math.round(Number(areaM2) * 1000000) / 10000) / 100;
+}
+
+/**
+ * Вибір + уточнення до нього одним текстом: «Інший: дубове листя» (візерунок), колір з описом.
+ * Раніше в таблицю потрапляло лише «Інший», а опис клієнта губився.
+ */
+function withCustom_(value, custom) {
+  var v = String(value == null ? "" : value).trim(), c = String(custom == null ? "" : custom).trim();
+  return v && c && v !== c ? v + ": " + c : (v || c);
+}
+
 /** Чи це позиція «Доплата за колір» (рядок таблиці: вид у AP, назва в AO). */
 function isColorSurchargeRow_(v) {
   return /послуг/i.test(String(v[41] || ""))
@@ -396,8 +418,11 @@ function isColorSurchargeItem_(it) {
  * Працює лише до запуску у виробництво («Нове», «В опрацюванні підрядником»): далі ціна
  * погоджена з клієнтом і сама собою мінятись не повинна.
  * keepRow — рядок, який менеджер саме править: його не видаляємо.
+ * Менеджер може зняти доплату, видаливши її позицію: тоді вона не повертається, доки в
+ * замовленні є небазовий колір (позначка color_waived_<№> у властивостях скрипта).
  * Повертає true, якщо позиції замовлення змінились.
  */
+function colorWaivedKey_(orderNumber) { return "color_waived_" + orderNumber; }
 function syncColorSurcharge_(sh, orderNumber, keepRow) {
   var last = sh.getLastRow();
   if (last < 2) return false;
@@ -423,8 +448,13 @@ function syncColorSurcharge_(sh, orderNumber, keepRow) {
   var status = canonStatus_(base[2]);
   if (status !== "Нове" && status !== STATUS_PROCESSING) return false;
 
+  var props = PropertiesService.getScriptProperties();
+  var waived = props.getProperty(colorWaivedKey_(orderNumber)) === "1";
+  // Небазових кольорів більше немає — відмова від доплати втрачає сенс: якщо колір знову
+  // стане небазовим, це вже нова ситуація, і доплата зʼявиться знову.
+  if (waived && avalonColorSurcharge(allColors) === 0) { props.deleteProperty(colorWaivedKey_(orderNumber)); waived = false; }
   var amount = avalonColorSurcharge(pricedColors);
-  if (amount > 0 && !surcharges.length) {
+  if (amount > 0 && !surcharges.length && !waived) {
     var written = writeOrderToSheet_({
       order_number: orderNumber, request_id: "",
       _append: { afterRow: rows[rows.length - 1], base: base },
@@ -553,7 +583,8 @@ function writeOrderToSheet_(data) {
       if (calc) areaM2 = calc.area + calc.removableSideArea;
       if (it.price_total != null && it.price_total !== "") {
         total = Math.round(Number(it.price_total));
-        if (it.area_m2 != null) areaM2 = Number(it.area_m2);
+        // Площу з запиту беремо лише справжню: форма шле area_m2: 0 («не рахувала»).
+        if (Number(it.area_m2) > 0) areaM2 = Number(it.area_m2);
         costTotal = manualCost != null ? manualCost : Math.round(total / MARKUP);
         hasMoney = total > 0;
       } else if (manualCost != null) {
@@ -600,17 +631,19 @@ function writeOrderToSheet_(data) {
       else if (cm === "email" && data.contact_email) contactNote = "E-mail: " + String(data.contact_email).trim();
       else if (cm === "viber" && data.phone) contactNote = "Viber: " + data.phone;
       else if (cm === "whatsapp" && data.phone) contactNote = "WhatsApp: " + data.phone;
-      if (contactNote) notes = [notes, contactNote].filter(function (x) { return x; }).join("\n");
+      // Форма могла вже дописати цей самий рядок у примітки — двічі не повторюємо.
+      var hasContactNote = String(notes).split(/\n/).some(function (line) { return String(line || "").trim() === contactNote; });
+      if (contactNote && !hasContactNote) notes = [notes, contactNote].filter(function (x) { return x; }).join("\n");
 
       var row = [
         data.order_number || "", dateStr, "Нове", data.referral_source || "direct",   // A-D №,Дата,Статус,Джерело
         String((data.first_name || "") + " " + (data.last_name || "")).trim(),          // E Клієнт (без хвостового пробілу, коли прізвища немає)
         (data.phone ? "'" + data.phone : ""), data.city || "",                         // F-G Телефон,Місто
         it.basket_type || "", (it.construction_type || "") + (it.has_cover ? " + кришка" : ""),  // H-I (мітка кришки)
-        it.color || (it.color_custom || ""), it.pattern || (it.pattern_custom || ""),  // J-K
+        withCustom_(it.color, it.color_custom), withCustom_(it.pattern, it.pattern_custom),  // J-K
         it.ac_brand || "", it.ac_model || "",                                          // L-M Бренд,Модель
         w || "", h || "", d || "", qty,                                                // N-Q
-        areaM2 ? Number(areaM2.toFixed(2)) : "",                                        // R Площа
+        areaM2 ? areaCell_(areaM2) : "",                                                // R Площа
         costUnit, costTotal || "", priceUnit, revenue, profit, margin,                 // S-X
         "", "",                                                                        // Y-Z Комісія,Чистий (формули)
         data.transport || (data.transport_custom || ""), data.delivery_address || "",  // AA-AB
@@ -644,10 +677,18 @@ function writeOrderToSheet_(data) {
                : it.product_type === "other" ? "Інший виріб"
                : it.product_type === "service" ? "Послуга" : "Кошик";
       var unit = String(it.unit || (it.product_type === "bracket" ? "комп." : "шт.")).trim();
+      // Клієнт у формі вказав розміри блока кондиціонера — зберігаємо їх у характеристиках
+      // (тим самим записом, що й калькулятор): менеджер бачить, з чого пораховано кошик.
+      var specsText = String(it.specs || "");
+      if (!specsText && it.size_mode === "ac" && Number(it.block_w) > 0 && Number(it.block_h) > 0) {
+        var blockLines = ["Блок кондиціонера (В×Ш×Г): " + Number(it.block_h) + "×" + Number(it.block_w) + "×" + (Number(it.block_d) || 0) + " мм"];
+        if (it.covers_brackets === true) blockLines.push("Кошик закриває кронштейни (+120 мм висоти)");
+        specsText = blockLines.join("\n");
+      }
       sheet.getRange(lastRow, 41, 1, 4).setValues([[
         it.basket_model_name || it.basket_model || "",
         kind,
-        String(it.specs || ""),
+        specsText,
         unit || "шт."
       ]]);
       sheet.getRange(lastRow, 45).setValue(requestId);
@@ -801,19 +842,23 @@ function onEditDelivery(e) {
     // (антивандальний / складний візерунок) і тепер рахується формулою.
     if ([8, 9, 11, 14, 15, 16, 17, 41, 43].indexOf(col) >= 0) {
       var single = range.getNumRows() === 1 && range.getNumColumns() === 1;
-      if (col === 8 || col === 11) {
+      var colEnd = col + range.getNumColumns() - 1;
+      // Вставлений діапазон зачепив колонку, що завжди міняє ціну (конструкція, розміри,
+      // кількість, модель) — перераховуємо, з якої б колонки він не починався.
+      var coversAlways = [9, 14, 15, 16, 17, 41].some(function (c) { return c >= col && c <= colEnd; });
+      if (!coversAlways) {
+        // Тип, візерунок, характеристики — вільний текст: старе значення відоме лише для однієї клітинки.
         if (!single) return;
         var oldCell = e.oldValue == null ? "" : e.oldValue;
-        var rowNow = sh.getRange(range.getRow(), 1, 1, 11).getValues()[0];
-        var wasIndividual = col === 8 ? avalonIsIndividualPricing(oldCell, rowNow[10]) : avalonIsIndividualPricing(rowNow[7], oldCell);
-        if (!wasIndividual || avalonIsIndividualPricing(rowNow[7], rowNow[10])) return;
-      }
-      // Характеристики — вільний текст: перераховуємо лише коли змінилась опція, що впливає
-      // на ціну (а не, скажімо, дописали модель кондиціонера).
-      if (col === 43) {
-        if (!single) return;
-        var before = JSON.stringify(avalonParseOptions("", e.oldValue == null ? "" : e.oldValue));
-        if (before === JSON.stringify(avalonParseOptions("", range.getValue()))) return;
+        if (col === 43) {
+          // Перераховуємо лише коли змінилась опція, що впливає на ціну (а не, скажімо,
+          // дописали модель кондиціонера).
+          if (JSON.stringify(avalonParseOptions("", oldCell)) === JSON.stringify(avalonParseOptions("", range.getValue()))) return;
+        } else {
+          var rowNow = sh.getRange(range.getRow(), 1, 1, 11).getValues()[0];
+          var wasIndividual = col === 8 ? avalonIsIndividualPricing(oldCell, rowNow[10]) : avalonIsIndividualPricing(rowNow[7], oldCell);
+          if (!wasIndividual || avalonIsIndividualPricing(rowNow[7], rowNow[10])) return;
+        }
       }
       for (var ri = 0; ri < range.getNumRows(); ri++) recalcRow_(sh, range.getRow() + ri);
       return;
@@ -910,10 +955,12 @@ function normalizeCommissionPct_(value) {
  * аркуша «Дропшипери» за кодом джерела. Тож наявні замовлення рахуються як раніше.
  */
 function setCommissionFormulas_(sheet, row) {
-  var at = "$AT" + row, w = "$W" + row, q = "$Q" + row, d = "$D" + row;
+  var at = "$AT" + row, w = "$W" + row, q = "$Q" + row, d = "$D" + row, ap = "$AP" + row;
+  // Ставка партнера — «за кошик»: рядки-послуги (монтаж, доставка, доплата за колір,
+  // фарбування…) її не нараховують, інакше партнер отримував би ставку й за них.
   sheet.getRange(row, 25).setFormula(
     "=IFERROR(IF(N(" + at + ")>0;IF(" + w + ">0;ROUND(" + w + "*" + at + "/100;2);0);" +
-    q + "*VLOOKUP(" + d + ";" + SHEET_DROP + "!$A:$E;5;0));0)"
+    "IF(" + ap + "=\"Послуга\";0;" + q + "*VLOOKUP(" + d + ";" + SHEET_DROP + "!$A:$E;5;0)));0)"
   );
   sheet.getRange(row, 26).setFormula("=IF(" + w + "=\"\";\"\";" + w + "-$Y" + row + ")");
   sheet.getRange(row, 25, 1, 2).setNumberFormat("#,##0 ₴");
@@ -948,7 +995,7 @@ function recalcRow_(sh, row) {
   var margin = p.total ? Math.round((p.total - p.costTotal) / p.total * 1000) / 10 : "";
   // Один setValues на діапазон R..X — щоб не плодити зайвих спрацювань тригера.
   sh.getRange(row, 18, 1, 7).setValues([[
-    Number((p.area + p.removableSideArea).toFixed(2)),
+    areaCell_(p.area + p.removableSideArea),
     Math.round(p.costTotal / p.quantity), p.costTotal,
     Math.round(p.total / p.quantity), p.total, p.total - p.costTotal, margin
   ]]);
@@ -1395,10 +1442,10 @@ function buildOrderFromRows_(sh, orderNumber) {
  * в таблиці (ціну ще не погоджено) блок не показуємо — нулі лише заплутали б.
  */
 function marginForContractorBlock_(items, commissionPct) {
-  var revenue = 0, profit = 0, commission = 0, known = false;
+  var revenue = 0, profit = 0, commission = 0, known = false, unpriced = 0;
   (items || []).forEach(function (it) {
     var rev = Number(it.revenue) || 0;
-    if (rev > 0) known = true;
+    if (rev > 0) known = true; else unpriced += 1;
     revenue += rev;
     profit += Number(it.profit) || 0;
     commission += Number(it.commission) || 0;
@@ -1408,7 +1455,9 @@ function marginForContractorBlock_(items, commissionPct) {
   // Собівартість беремо з тієї ж пари, що й маржа в таблиці (V − W): тоді рядок
   // «ціна − собівартість = маржа» сходиться завжди, навіть якщо T не заповнена.
   var cost = revenue - profit;
-  var priceLine = "• Ціна для клієнта: <b>" + money2_(revenue) + " ₴</b>\n";
+  // Частина позицій ще без ціни — сума неповна, і це має бути видно.
+  var partial = unpriced ? " (без позицій, ціну яких ще не визначено)" : "";
+  var priceLine = "• Ціна для клієнта" + partial + ": <b>" + money2_(revenue) + " ₴</b>\n";
   var s = "\n🧮 <b>МАРЖА AVALON</b>\n";
   s += "• Маржа: " + money2_(revenue) + " − " + money2_(cost) + " = <b>" + money2_(profit) + " ₴</b>\n";
   if (profit <= 0) {
@@ -1457,7 +1506,10 @@ function buildProductionMsg_(data, opts) {
     var base = it.product_type === "bracket" ? "Кронштейни"
              : it.product_type === "other" ? "Виріб"
              : it.product_type === "service" ? "Послуга" : "Кошик";
-    return multiBlocks ? base + " " + (i + 1) : base;
+    var label = multiBlocks ? base + " " + (i + 1) : base;
+    // Послугу у фінансах називаємо по суті («Послуга 2 · Монтаж»), а не лише номером.
+    var serviceName = it.product_type === "service" ? String(it.basket_model_name || it.basket_model || "").trim() : "";
+    return serviceName ? label + " · " + esc_(serviceName) : label;
   }
   // Розкладка собівартості — тим самим алгоритмом, що рахує ціну (avalonPrice).
   function breakdown(it) {
@@ -1613,6 +1665,7 @@ function buildProductionMsg_(data, opts) {
     return prefix + label + ": <b>" + (diff > 0 ? "+" : "−") + money_(Math.abs(diff)) + " ₴</b>\n";
   }
   if (multi) {
+    var pendingLines = "", pendingCount = 0;
     items.forEach(function (it, i) {
       var b = breakdown(it), c = Number(it.cost_total) || b.total; grand += c;
       var label = itemLabel_(it, i);
@@ -1623,9 +1676,16 @@ function buildProductionMsg_(data, opts) {
         // Позиція без розмірів (ціну веде менеджер) теж має бути видима: інакше вона мовчки
         // ховалася всередині «Разом виробнича», і підрядник не бачив, за що ці гроші.
         fin += "• " + label + ": <b>" + money_(c) + " ₴</b>\n";
+      } else {
+        // Вартість ще не визначена (індивідуальний розрахунок, кронштейни, виріб не з каталогу).
+        pendingCount += 1;
+        pendingLines += "• " + label + ": <i>вартість уточнюється</i>\n";
       }
     });
-    if (grand > 0) fin += "• <b>Разом виробнича: " + money_(grand) + " ₴</b>\n";
+    // Коли пораховано лише частину позицій, решту показуємо явно, а підсумок підписуємо як
+    // неповний: інакше «Разом» читалось би як вартість усього замовлення.
+    if (grand > 0 && pendingCount) fin += pendingLines;
+    if (grand > 0) fin += "• <b>Разом виробнича" + (pendingCount ? " (без позицій, що уточнюються)" : "") + ": " + money_(grand) + " ₴</b>\n";
   } else {
     var it = items[0], b = breakdown(it), c = Number(it.cost_total) || b.total;
     if (b.sum > 0) {
@@ -1649,9 +1709,23 @@ function buildProductionMsg_(data, opts) {
     // примітках вони лише дублюються (а в багатопозиційних могли б і заплутати).
     // Контакти (Telegram / E-mail / Viber / WhatsApp) форма теж дописує в примітки —
     // їх прибираємо завжди: підрядник бачить їх лише в «Замовнику», якщо дозволено.
+    // Коментарі позицій уже стоять у їхніх блоках. Стара форма дописувала їх ще й у загальні
+    // примітки («AVL-05: текст») — такі рядки з хвоста прибираємо, щоб підрядник не відніс
+    // їх до всього замовлення. Так само — дубль посилання на кондиціонер із кодом моделі.
+    var itemCommentLines_ = {};
+    items.forEach(function (it) {
+      String((it && (it.comment || it.item_comment || it.model_comment)) || "").split(/\n+/).forEach(function (line) {
+        var key = String(line || "").trim().toLowerCase();
+        if (key) itemCommentLines_[key] = true;
+      });
+    });
     var noteLines = String(data.notes).split(/\n+/).filter(function (line) {
       var t = String(line || "").trim();
-      return t && !/^(Довжина кронштейнів|Віброподушки|Telegram|E-mail|Viber|WhatsApp)\s*:/i.test(t);
+      if (!t || /^(Довжина кронштейнів|Віброподушки|Telegram|E-mail|Viber|WhatsApp)\s*:/i.test(t)) return false;
+      if (itemCommentLines_[t.toLowerCase()]) return false;
+      var prefixed = t.match(/^AVL-[\w\/-]+:\s*(.+)$/i);
+      if (prefixed && (itemCommentLines_[prefixed[1].trim().toLowerCase()] || /^посилання на кондиціонер\s/i.test(prefixed[1]))) return false;
+      return true;
     });
     if (noteLines.length) {
       del += "• Додаткова інформація:\n";
@@ -2153,7 +2227,7 @@ function setupDropshippers(ss) {
   sh.getRange("A2:E2").setValues([["OSBB-Lvivska12","[ПІБ голови]","ОСББ","[тел / чат]",150]]);
   // Авто-формули (спадають донизу для всіх рядків з КОДом)
   var O = SHEET_ORDERS, P = SHEET_PAYOUTS;
-  sh.getRange("F2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(' + O + '!Q:Q;' + O + '!D:D;A2:A;' + O + '!C:C;"<>Скасовано")))');
+  sh.getRange("F2").setFormula(dropSoldFormula_());
   sh.getRange("G2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(' + O + '!V:V;' + O + '!D:D;A2:A;' + O + '!C:C;"<>Скасовано")))');
   sh.getRange("H2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(' + O + '!Y:Y;' + O + '!D:D;A2:A;' + O + '!C:C;"<>Скасовано")))');
   sh.getRange("I2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIF(' + P + '!B:B;A2:A;' + P + '!D:D)))');
@@ -2182,6 +2256,38 @@ function setupDropshippers(ss) {
   sh.setColumnWidth(c, 640);
   sh.getRange(1, c).setFontWeight("bold").setFontSize(11).setFontColor("#1B4332");
   return sh;
+}
+
+/** «Кошиків продано» партнера: кількість у його замовленнях без скасованих і без рядків-послуг. */
+function dropSoldFormula_() {
+  var O = SHEET_ORDERS;
+  return '=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(' + O + '!Q:Q;' + O + '!D:D;A2:A;' + O + '!C:C;"<>Скасовано";' + O + '!AP:AP;"<>Послуга")))';
+}
+
+/**
+ * Одноразово: рядки-послуги більше не нараховують партнерську ставку «за кошик», а
+ * «Кошиків продано» їх не рахує. Переставляємо формулу Y лише в рядках-послугах і формулу F2
+ * в «Дропшиперах» — тільки якщо там стоїть стара стандартна (власну формулу не чіпаємо).
+ */
+function ensureCommissionFormulaV2Once_(sheet) {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty("COMMISSION_FORMULA_V2_READY") === "1") return;
+  var last = sheet.getLastRow();
+  if (last >= 2 && sheet.getMaxColumns() >= 42) {
+    var kinds = sheet.getRange(2, 42, last - 1, 1).getValues();
+    for (var i = 0; i < kinds.length; i++) {
+      if (/послуг/i.test(String(kinds[i][0] || ""))) setCommissionFormulas_(sheet, i + 2);
+    }
+  }
+  try {
+    var drop = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_DROP);
+    if (drop) {
+      var cell = drop.getRange("F2");
+      var f = String(cell.getFormula() || "");
+      if (f.indexOf("SUMIFS(") >= 0 && f.indexOf("!Q:Q") >= 0 && f.indexOf("AP:AP") < 0) cell.setFormula(dropSoldFormula_());
+    }
+  } catch (dropErr) { console.error("Формула «Кошиків продано»: " + dropErr); }
+  props.setProperty("COMMISSION_FORMULA_V2_READY", "1");
 }
 
 function setupPayouts(ss) {
@@ -2510,6 +2616,16 @@ function marginOwed_(status) {
   return MARGIN_OWED_STATUSES.indexOf(canonStatus_(status)) >= 0;
 }
 
+/**
+ * Скільки маржі ще не отримано. Платежі ведуться цілими гривнями, а сума до виплати після
+ * комісії буває з копійками (8 492,40): залишок менше гривні — це округлення, а не борг.
+ * Без цього таке замовлення ніколи не ставало «маржу отримано» й висіло в акті звірки з 0,40 ₴.
+ */
+function marginLeft_(due, paid) {
+  var left = Math.round(((Number(due) || 0) - (Number(paid) || 0)) * 100) / 100;   // до копійок, без шуму
+  return left < 1 ? 0 : left;
+}
+
 function marginDue_(profit, commission, commissionPct) {
   var gross = Number(profit) || 0;
   if (gross <= 0) return gross;                       // збиткова угода: комісії немає
@@ -2549,13 +2665,13 @@ function syncOrderPaymentState_(orderNumber) {
     return {
       revenue: revenue, profit: profit, commission: commission, margin_due: due, margin_owed: owed,
       client_paid: lg.client_paid, client_left: Math.max(0, revenue - lg.client_paid),
-      margin_received: lg.margin_paid_sum, margin_left: owed ? Math.max(0, due - lg.margin_paid_sum) : 0,
+      margin_received: lg.margin_paid_sum, margin_left: owed ? marginLeft_(due, lg.margin_paid_sum) : 0,
       legacy: true
     };
   }
   var totals = paymentTotals_(payments);
   var clientDone = revenue > 0 && totals.client_paid >= revenue;
-  var marginDone = due > 0 && totals.margin_paid_sum >= due;
+  var marginDone = due > 0 && marginLeft_(due, totals.margin_paid_sum) === 0;
   rows.forEach(function (r) {
     if (!!sh.getRange(r, 33).getValue() !== clientDone) sh.getRange(r, 33).setValue(clientDone);
     if (!!sh.getRange(r, 34).getValue() !== marginDone) sh.getRange(r, 34).setValue(marginDone);
@@ -2563,7 +2679,7 @@ function syncOrderPaymentState_(orderNumber) {
   return {
     revenue: revenue, profit: profit, commission: commission, margin_due: due, margin_owed: owed,
     client_paid: totals.client_paid, client_left: Math.max(0, revenue - totals.client_paid),
-    margin_received: totals.margin_paid_sum, margin_left: owed ? Math.max(0, due - totals.margin_paid_sum) : 0
+    margin_received: totals.margin_paid_sum, margin_left: owed ? marginLeft_(due, totals.margin_paid_sum) : 0
   };
 }
 
@@ -3266,6 +3382,7 @@ function adminOrdersSheet_() {
   }
   ensureDiscountColumnsOnce_();
   ensureStatusesV2Once_(sheet);
+  try { ensureCommissionFormulaV2Once_(sheet); } catch (formulaErr) { console.error("Формула комісії: " + formulaErr); }
   return sheet;
 }
 
@@ -3478,7 +3595,7 @@ function adminGroupOrders_(orders, payments) {
     g.client_left = Math.max(0, (Number(g.revenue) || 0) - t.client_paid);
     g.margin_received = t.margin_paid_sum;
     g.margin_owed = marginOwed_(g.status);
-    g.margin_left = g.margin_owed ? Math.max(0, g.margin_due - t.margin_paid_sum) : 0;
+    g.margin_left = g.margin_owed ? marginLeft_(g.margin_due, t.margin_paid_sum) : 0;
     return g;
   });
   groups.sort(function (a, b) {
@@ -3522,7 +3639,7 @@ function adminGetOrder_(data) {
       return {
         revenue: rev, profit: prof, commission: com, margin_due: due, margin_owed: owed,
         client_paid: t.client_paid, client_left: Math.max(0, rev - t.client_paid),
-        margin_received: t.margin_paid_sum, margin_left: owed ? Math.max(0, due - t.margin_paid_sum) : 0,
+        margin_received: t.margin_paid_sum, margin_left: owed ? marginLeft_(due, t.margin_paid_sum) : 0,
         legacy: !pay.length
       };
     })()
@@ -3767,6 +3884,8 @@ function adminAddOrderItem_(data) {
         return merged;
       }
     }
+    // Доплату за колір додають явно (перенос із калькулятора) — попередня відмова від неї скасовується.
+    if (isColorSurchargeItem_(it)) PropertiesService.getScriptProperties().deleteProperty(colorWaivedKey_(num));
     var item = {
       product_type: it.product_type || "basket",
       basket_model: it.basket_model || "", basket_model_name: it.basket_model_name || it.basket_model || "",
@@ -3848,6 +3967,11 @@ function adminDeleteOrderItem_(data) {
   }
   // Дія в ADMIN_WRITE_ACTIONS: doPost уже тримає замок скрипта, другий waitLock завис би.
   assertItemIdentity_(sh, row, data.expect);
+  // Менеджер сам прибирає «Доплату за колір» — значить, вирішив її не брати: запамʼятовуємо,
+  // щоб синхронізація не повернула її за наступної ж правки.
+  if (isColorSurchargeRow_(sh.getRange(row, 1, 1, ADMIN_ORDER_COLS).getValues()[0])) {
+    PropertiesService.getScriptProperties().setProperty(colorWaivedKey_(num), "1");
+  }
   sh.deleteRow(row);
   // Прибрали останній кошик небазового кольору — доплата за колір більше не потрібна.
   try { syncColorSurcharge_(sh, num); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }

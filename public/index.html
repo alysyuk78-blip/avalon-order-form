@@ -681,11 +681,19 @@
     // ============================================================
     const BRACKET_LENGTHS = [450, 500, 600, 700]; // К1, К2, К3, К4 (мм)
     const roundUp10 = (v) => Math.ceil(v / 10) * 10;
-    function basketFromAC({ ac_w, ac_h, ac_d, coversBrackets = false }) {
+    // Універсальний AVL-03 має власні кронштейни під довжину кошика: питання «закрити
+    // кронштейни» до нього не застосовується (як і в калькуляторі).
+    const modelHasOwnBrackets = (modelId) => modelId === "AVL-03";
+    function basketFromAC({ ac_w, ac_h, ac_d, coversBrackets = false, model = "" }) {
       const W = Number(ac_w) || 0, H = Number(ac_h) || 0, D = Number(ac_d) || 0;
       if (!W || !H || !D) return null;
       const FRONT_GAP = 50;
       const wallGap = 150; // стандартний мінімальний зазор до стіни
+      if (modelHasOwnBrackets(model)) {
+        // Глибина = блок + зазор до стіни + передній зазор (кронштейни K1–K4 не підбираються);
+        // +120 мм «закрити кронштейни» не додається.
+        return { size_w: roundUp10(W + 100), size_h: roundUp10(H), size_d: roundUp10(D + wallGap + FRONT_GAP), bracket: null };
+      }
       // Глибина: кронштейн має бути ≥ глибина блоку + зазор до стіни; беремо найближчий стандартний (К1–К4).
       const required = D + wallGap;
       const bracket = BRACKET_LENGTHS.find(b => b >= required) || required;
@@ -1601,7 +1609,8 @@
           ac_w: acDims.w,
           ac_h: acDims.h,
           ac_d: acDims.d,
-          coversBrackets: coversBrackets === true
+          coversBrackets: coversBrackets === true,
+          model: selectedModelId
         });
         setForm(current => ({
           ...current,
@@ -1612,7 +1621,7 @@
           size_h: calculated ? calculated.size_h : "",
           size_d: calculated ? calculated.size_d : ""
         }));
-      }, [measureMode, acDims, coversBrackets]);
+      }, [measureMode, acDims, coversBrackets, selectedModelId]);
 
       const selectModel = (model) => {
         setSelectedModelId(model.id);
@@ -1648,7 +1657,7 @@
       const measurementIsComplete = () => {
         if (measureMode === "bracket_range") return bracketRangeIsValid();
         if (measureMode === "basket") return hasSize(form);
-        if (measureMode === "ac") return coversBrackets !== null && hasSize(form);
+        if (measureMode === "ac") return (modelHasOwnBrackets(selectedModelId) || coversBrackets !== null) && hasSize(form);
         if (measureMode === "model") return !!(sv(form.ac_brand) && sv(form.ac_model));
         return !!sv(form.ac_model_url);
       };
@@ -1728,7 +1737,7 @@
           ac_model_url: sv(form.ac_model_url),
           bracket_model_from: sv(form.bracket_model_from),
           bracket_model_to: sv(form.bracket_model_to),
-          covers_brackets: coversBrackets === true,
+          covers_brackets: coversBrackets === true && !modelHasOwnBrackets(selectedModel.id),
           bracket_length: "", vibro_pads: false
         };
       };
@@ -1813,15 +1822,15 @@
         try {
           patternFilePayload = await fileToOrderPayload(patternFile);
           const first = items[0];
-          const itemComments = items.filter(item => item.model_comment).map(item => `${item.basket_model}: ${item.model_comment}`).join("\n");
-          const acModelLinks = items.filter(item => item.ac_model_url).map(item => `${item.basket_model}: посилання на кондиціонер ${item.ac_model_url}`).join("\n");
-          const contactDetails = form.contact_method === "telegram" ? `Telegram: @${telegramHandle(form.contact_telegram)}` : form.contact_method === "email" ? `E-mail: ${sv(form.contact_email)}` : form.contact_method === "viber" ? `Viber: ${sv(form.phone)}` : form.contact_method === "whatsapp" ? `WhatsApp: ${sv(form.phone)}` : "";
+          // Коментар до моделі, посилання на кондиціонер і контакт сервер записує до своєї
+          // позиції / своїх колонок. У загальні примітки їх не дублюємо: інакше підрядник
+          // бачив той самий коментар ще й наприкінці повідомлення — як для всього замовлення.
           const orderPayload = {
             first_name: sv(form.first_name), last_name: sv(form.last_name), phone: sv(form.phone), city: sv(form.city),
             contact_method: form.contact_method, contact_telegram: telegramHandle(form.contact_telegram), contact_email: sv(form.contact_email),
             transport: form.transport, transport_custom: form.transport_custom, delivery_address: sv(form.delivery_address),
             delivery_location: form.delivery_location, delivery_date: form.delivery_date, payment_method: form.payment_method,
-            how_found: form.how_found, how_found_custom: form.how_found_custom, notes: [contactDetails, sv(form.notes), itemComments, acModelLinks].filter(Boolean).join("\n"),
+            how_found: form.how_found, how_found_custom: form.how_found_custom, notes: sv(form.notes),
             referral_source: form.referral_source || "direct", items, quote_required: true,
             price_total: 0, prepayment: 0, cost_total: 0, profit: 0,
             pattern_file: patternFilePayload,
@@ -2060,7 +2069,7 @@
                     {measureMode === "bracket_range" && <ErrorText visible={showErrors && !measurementIsComplete()}>Оберіть коректний діапазон потужності: від меншого до більшого значення BTU.</ErrorText>}
                     {measureMode === "basket" && <div className="grid grid-cols-3 gap-2"><Field label="Ширина, мм"><StyledInput type="number" min="1" value={form.size_w} onChange={event => set("size_w", event.target.value)} error={showErrors && !hasSize(form)} /></Field><Field label="Висота, мм"><StyledInput type="number" min="1" value={form.size_h} onChange={event => set("size_h", event.target.value)} error={showErrors && !hasSize(form)} /></Field><Field label="Глибина, мм"><StyledInput type="number" min="1" value={form.size_d} onChange={event => set("size_d", event.target.value)} error={showErrors && !hasSize(form)} /></Field></div>}
 
-                    {measureMode === "ac" && <div className="space-y-3"><p className="text-sm leading-6" style={{ color: "#66716b" }}>Вкажіть габарити зовнішнього блоку. Ми додамо необхідний запас для монтажу.</p><div className="grid grid-cols-3 gap-2"><Field label="Ширина, мм"><StyledInput type="number" min="1" value={acDims.w} onChange={event => setAcDims(current => ({ ...current, w: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Висота, мм"><StyledInput type="number" min="1" value={acDims.h} onChange={event => setAcDims(current => ({ ...current, h: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Глибина, мм"><StyledInput type="number" min="1" value={acDims.d} onChange={event => setAcDims(current => ({ ...current, d: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field></div><div className={`grid grid-cols-2 gap-2 ${showErrors && coversBrackets === null ? "catalog-choice-group is-error" : ""}`}>{[{ value: true, label: "Закрити кронштейни" }, { value: false, label: "Не закривати кронштейни" }].map(option => <button key={String(option.value)} type="button" onClick={() => setCoversBrackets(option.value)} className={`catalog-option catalog-choice text-sm font-semibold ${coversBrackets === option.value ? "is-active" : ""}`}>{option.label}</button>)}</div></div>}
+                    {measureMode === "ac" && <div className="space-y-3"><p className="text-sm leading-6" style={{ color: "#66716b" }}>Вкажіть габарити зовнішнього блоку. Ми додамо необхідний запас для монтажу.</p><div className="grid grid-cols-3 gap-2"><Field label="Ширина, мм"><StyledInput type="number" min="1" value={acDims.w} onChange={event => setAcDims(current => ({ ...current, w: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Висота, мм"><StyledInput type="number" min="1" value={acDims.h} onChange={event => setAcDims(current => ({ ...current, h: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field><Field label="Глибина, мм"><StyledInput type="number" min="1" value={acDims.d} onChange={event => setAcDims(current => ({ ...current, d: event.target.value }))} error={showErrors && !measurementIsComplete()} /></Field></div>{!modelHasOwnBrackets(selectedModelId) && <div className={`grid grid-cols-2 gap-2 ${showErrors && coversBrackets === null ? "catalog-choice-group is-error" : ""}`}>{[{ value: true, label: "Закрити кронштейни" }, { value: false, label: "Не закривати кронштейни" }].map(option => <button key={String(option.value)} type="button" onClick={() => setCoversBrackets(option.value)} className={`catalog-option catalog-choice text-sm font-semibold ${coversBrackets === option.value ? "is-active" : ""}`}>{option.label}</button>)}</div>}</div>}
 
                     {measureMode === "model" && <div className="grid gap-3 sm:grid-cols-2"><Field label="Бренд кондиціонера"><StyledInput placeholder="Напр. Daikin" value={form.ac_brand} onChange={event => set("ac_brand", event.target.value)} error={showErrors && !measurementIsComplete()} /></Field><Field label="Модель кондиціонера"><StyledInput placeholder="Напр. FTXF35" value={form.ac_model} onChange={event => set("ac_model", event.target.value)} error={showErrors && !measurementIsComplete()} /></Field></div>}
 

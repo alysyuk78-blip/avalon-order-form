@@ -1253,6 +1253,134 @@ function testColorSurchargeInSheet() {
   assert.ok(msg.includes("• Разом виробнича: 2 027 ₴"));
 }
 
+// ── Виправлення за аудитом 06.10.2026: зняття доплати за колір, дані форми, неповні підсумки ──
+function testAuditFixes() {
+  const styled = (sh) => Object.assign({}, sh, {
+    getRange: (...args) => {
+      const rng = sh.getRange(...args);
+      const proxy = new Proxy(rng, { get: (target, prop) => (prop in target ? target[prop] : () => proxy) });
+      return proxy;
+    },
+  });
+  const make = (rows) => {
+    const raw = makeSheet(rows);
+    const props = makeProps();
+    let appended = null;
+    const ctx = load({
+      SpreadsheetApp: { getActiveSpreadsheet: () => ({ getSheetByName: () => styled(raw) }), flush() {} },
+      Utilities: { formatDate: () => "06.10.2026 12:00" },
+      PropertiesService: { getScriptProperties: () => props },
+      LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    });
+    Object.assign(ctx, {
+      ensureDiscountColumns_: () => {}, getPatternFileInfo_: () => null, ensureContactColumns_: () => {},
+      setCommissionFormulas_: () => {}, applyOrderRowControls_: () => {}, withRequestCache_: (_p, _id, fn) => fn(),
+      adminOrdersSheet_: () => styled(raw), syncOrderPaymentState_: () => {}, syncProcessingEvent_: () => {},
+      adminGetOrder_: () => ({ status: "ok" }), nextOrderNumber: () => ORD,
+      appendOrderRow_: (sh, row) => { appended = row; sh.getRange(sh.getLastRow() + 1, 1, 1, row.length).setValues([row]); return sh.getLastRow(); },
+    });
+    return { raw, ctx, props, sh: styled(raw), appended: () => appended };
+  };
+  const basket = (extra) => orderRow(ORD, "Нове", Object.assign({ 8: "Суцільний · AVL-01", 9: "RAL 6005", 13: 800, 14: 500, 15: 500, 16: 1,
+    19: 1827, 21: 2466, 22: 639, 40: "Суцільний", 41: "Кошик" }, extra));
+  const surcharges = (raw) => raw.data.slice(1).filter((r) => r[40] === "Доплата за колір");
+  const same = { construction: "Суцільний · AVL-01", basket_model: "Суцільний", product_kind: "Кошик", specs: "", size_w: 800, size_h: 500, size_d: 500, quantity: 1 };
+
+  // 1. Менеджер видалив «Доплату за колір» — вона не повертається за наступних правок.
+  let t = make([basket({})]);
+  t.ctx.syncColorSurcharge_(t.sh, ORD);
+  assert.equal(surcharges(t.raw).length, 1);
+  t.ctx.adminDeleteOrderItem_({ order_number: ORD, row: 3 });
+  assert.equal(surcharges(t.raw).length, 0, "видалену вручну доплату одразу не повертаємо");
+  t.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 4 }) });
+  t.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: { cost_total: 7000, list_price: 9000, discount_pct: 0, discount_uah: 0, revenue: 9000 } });
+  assert.equal(surcharges(t.raw).length, 0, "і після правки кількості чи фінансів — теж");
+  // Колір став базовим → відмова знімається; знову небазовий — доплата зʼявляється, як для нового випадку.
+  t.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 4, color: "Білий (RAL 9016)" }) });
+  assert.equal(t.props.getProperty("color_waived_" + ORD), null);
+  t.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 4, color: "RAL 3000" }) });
+  assert.equal(surcharges(t.raw).length, 1);
+  // Калькулятор явно переносить доплату після відмови — вона додається, відмова скасовується.
+  t.ctx.adminDeleteOrderItem_({ order_number: ORD, row: 3 });
+  assert.equal(t.props.getProperty("color_waived_" + ORD), "1");
+  t.ctx.adminAddOrderItem_({ order_number: ORD, request_id: "calc-color-2",
+    item: { product_type: "service", basket_model_name: "Доплата за колір", construction_type: "Доплата за колір", basket_type: "Доплата за колір", quantity: 1, unit: "шт.", cost_total: 200, price_total: 200 } });
+  assert.equal(surcharges(t.raw).length, 1);
+  assert.equal(t.props.getProperty("color_waived_" + ORD), null);
+
+  // 2. Заявка з форми: площа, розміри блока, опис власного візерунка, контакт без дубля.
+  t = make([]);
+  const zeros = { price_total: 0, area_m2: 0, cost_total: 0 };
+  t.ctx.writeOrderToSheet_({ first_name: "Ірина", phone: "+380501112233", contact_method: "telegram", contact_telegram: "irka",
+    notes: "Telegram: @irka\nПодзвонити після 18", items: [Object.assign({ product_type: "basket", basket_model: "AVL-01", basket_model_name: "Суцільний",
+      construction_type: "Суцільний · AVL-01", color: "RAL 6005", pattern: "Інший", pattern_custom: "дубове листя", quantity: 2,
+      size_mode: "ac", size_w: 900, size_h: 550, size_d: 500, block_w: 800, block_h: 550, block_d: 300, covers_brackets: true }, zeros)] });
+  const row = t.appended();
+  assert.equal(row[17], 1.05, "площа порахована, хоч форма шле area_m2: 0");
+  assert.deepEqual([row[19], row[21]], ["", ""], "ціни заявка з форми не має — рахує менеджер");
+  assert.equal(row[10], "Інший: дубове листя", "опис власного візерунка не губиться");
+  assert.equal(row[31], "Telegram: @irka\nПодзвонити після 18", "контакт у примітках — один раз");
+  assert.equal(t.raw.data[1][42], "Блок кондиціонера (В×Ш×Г): 550×800×300 мм\nКошик закриває кронштейни (+120 мм висоти)");
+  assert.equal(t.ctx.withCustom_("RAL 6005", ""), "RAL 6005");
+  assert.equal(t.ctx.withCustom_("", "золото"), "золото");
+  assert.equal(t.ctx.withCustom_("Інший", "Інший"), "Інший");
+
+  // 3. Повідомлення: позиції без вартості видно, підсумки підписані як неповні, послуга — з назвою,
+  //    коментар позиції не дублюється наприкінці.
+  const mctx = load({ Utilities: { formatDate: () => "06.10.2026, 12:00" }, Date, PropertiesService: { getScriptProperties: () => makeProps() } });
+  const msg = mctx.buildProductionMsg_({ order_number: ORD,
+    notes: "Подзвонити після 18\nAVL-01: По 3 вуха на сторону\nAVL-01: посилання на кондиціонер https://x.test/a\nПо 3 вуха на сторону\nTelegram: @irka",
+    items: [
+      { product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 500, size_d: 500, quantity: 1, unit: "шт.", cost_total: 1827, revenue: 2466, profit: 639, comment: "По 3 вуха на сторону" },
+      { product_type: "basket", basket_type: "Антивандальний", construction_type: "Розбірний (з 3-х частин) · AVL-05", size_w: 750, size_h: 700, size_d: 440, quantity: 1, unit: "шт." },
+      { product_type: "service", basket_model_name: "Монтаж", basket_type: "Монтаж", quantity: 1, unit: "шт.", cost_total: 1500, revenue: 1500, profit: 0 },
+    ] }, { finance: true, notes: true }).replace(/<[^>]+>/g, "");
+  [
+    "• Кошик 1: 0.9 м² × 2 030 ₴/м² = 1 827 ₴",
+    "• Послуга 3 · Монтаж: 1 500 ₴",
+    "• Кошик 2: вартість уточнюється",
+    "• Разом виробнича (без позицій, що уточнюються): 3 327 ₴",
+    "• Ціна для клієнта (без позицій, ціну яких ще не визначено): 3 966 ₴",
+  ].forEach((line) => assert.ok(msg.includes(line), line + "\n---\n" + msg));
+  const tail = msg.slice(msg.indexOf("Додаткова інформація"));
+  assert.ok(tail.includes("Подзвонити після 18"));
+  assert.ok(!tail.includes("По 3 вуха") && !tail.includes("посилання на кондиціонер") && !tail.includes("@irka"), tail);
+  // Усе пораховано — жодних «уточнюється» і приміток про неповноту.
+  const full = mctx.buildProductionMsg_({ order_number: ORD, items: [
+    { product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 500, size_d: 500, quantity: 1, unit: "шт.", cost_total: 1827, revenue: 2466, profit: 639 },
+    { product_type: "service", basket_model_name: "Монтаж", quantity: 1, unit: "шт.", cost_total: 1500, revenue: 1500, profit: 0 },
+  ] }, { finance: true }).replace(/<[^>]+>/g, "");
+  assert.ok(!full.includes("уточнюється") && !full.includes("без позицій"), full);
+  assert.ok(full.includes("• Разом виробнича: 3 327 ₴") && full.includes("• Ціна для клієнта: 3 966 ₴"));
+  // Нічого не пораховано (свіжа заявка) — розділу фінансів, як і раніше, немає.
+  const fresh = mctx.buildProductionMsg_({ order_number: ORD, items: [
+    { product_type: "basket", basket_type: "Антивандальний", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 500, size_d: 500, quantity: 1, unit: "шт." },
+    { product_type: "bracket", basket_model_name: "AVL-K-01", quantity: 1, unit: "комп." },
+  ] }, { finance: true });
+  assert.ok(!fresh.includes("ФІНАНСИ"), "порожні «Фінанси» не друкуємо");
+
+  // 4. Правка прямо в таблиці: вставлений діапазон, що зачепив розміри, перераховує рядки —
+  //    навіть коли починається з колонки «Тип».
+  const et = make([basket({ 7: "Декоративний", 10: "K1" })]);
+  const recalced = [];
+  et.ctx.recalcRow_ = (_sh, r) => { recalced.push(r); };
+  const edit = (col, cols, oldValue, value) => et.ctx.onEditDelivery({ oldValue, range: {
+    getSheet: () => Object.assign({ getName: () => "Замовлення" }, et.sh), getRow: () => 2, getColumn: () => col,
+    getNumRows: () => 1, getNumColumns: () => cols, getValue: () => value } });
+  edit(8, 10, undefined, "x");
+  assert.deepEqual(recalced, [2], "діапазон H:Q зачепив розміри й кількість");
+  edit(8, 1, "Декоративний", "Стандарт");
+  edit(11, 1, "K1", "K2");
+  edit(43, 1, "", "Кронштейн: K2");
+  assert.deepEqual(recalced, [2], "тип, звичайний візерунок і нейтральні характеристики суми не чіпають");
+  et.raw.data[1][10] = "K2";
+  edit(11, 1, "K3", "K2");
+  assert.deepEqual(recalced, [2, 2], "складний візерунок замінили звичайним — повертається формула");
+  edit(43, 1, "", "Матеріал: Алюміній");
+  edit(14, 1, 800, 900);
+  assert.deepEqual(recalced, [2, 2, 2, 2]);
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
@@ -1272,4 +1400,5 @@ testItemComments();
 testAddOrderItem();
 testUnifiedPricingInSheet();
 testColorSurchargeInSheet();
+testAuditFixes();
 console.log("contractor-send tests: OK");

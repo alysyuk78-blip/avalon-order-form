@@ -2,10 +2,20 @@
   "version": 2,
   "buildCommand": "npm run build:admin",
   "redirects": [
-    { "source": "/calc", "destination": "/calc/", "permanent": false }
+    {
+      "source": "/calc",
+      "destination": "/calc/",
+      "permanent": false
+    }
   ],
   "rewrites": [
-    { "source": "/calc/:path*", "destination": "https://avalon-calculator.vercel.app/:path*" },
-    { "source": "/(.*)", "destination": "/public/$1" }
+    {
+      "source": "/calc/(.*)",
+      "destination": "https://avalon-calculator.vercel.app/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/public/$1"
+    }
   ]
 }

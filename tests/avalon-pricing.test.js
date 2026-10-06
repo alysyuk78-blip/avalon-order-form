@@ -16,7 +16,7 @@ function coreOf(file) {
 
 // Змінив формулу — онови всі копії (npm run sync:pricing) і цю суму. Та сама сума стоїть у
 // тесті калькулятора (test/avalonPricing.test.mjs): розбіжність = алгоритми розʼїхались.
-const CORE_SHA256 = "8abb9c3139395fba4faceb21e309d6331c93b635c48044a80eaa5f83609568bb";
+const CORE_SHA256 = "9d1611fe568d3abb1978565cec88e35ceea19b1967cd20201b606d6c4bde1669";
 
 function testCopiesAreIdentical() {
   const root = path.join(__dirname, "..");
@@ -79,6 +79,12 @@ function testOrderItemText() {
   assert.equal(type("Розбірний (з 3-х частин) · AVL-05", "Розбірний"), "sectional");
   assert.equal(type("Суцільний · AVL-07 + кришка", ""), "closed");
   assert.equal(type("Суцільний · AVL-06/1", "Ламельний"), "solid");
+  // Моделей AVL-06, 06/1, 08 у калькуляторі немає — ставку визначає текст конструкції, як і раніше.
+  assert.equal(type("Розбірний · AVL-06/1", "Ламельний кошик"), "sectional");
+  assert.equal(type("Суцільний · AVL-08", "Закритий кошик для монтажу на горизонтальну площу"), "solid");
+  assert.equal(type("Суцільний · AVL-06 + кришка", "Розбірний"), "solid", "з кодом моделі назва тип не визначає");
+  // Повна назва з форми без коду моделі.
+  assert.equal(type("Суцільний", "Суцільний кошик зі знімною боковою частиною"), "sectional_frame");
   assert.equal(type("Суцільний", "Розбірний AVL-05"), "sectional", "код моделі важливіший за текст конструкції");
   assert.equal(type("Розбірний (з 3-х частин)", ""), "sectional", "стара позиція без коду — за текстом конструкції");
   assert.equal(type("", ""), "solid");

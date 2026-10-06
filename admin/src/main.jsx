@@ -2113,7 +2113,7 @@ import pricing from '../../lib/avalon-pricing.js';
           )}
           <p className="margin-calc-note" style={{ marginTop: 0 }}>
             Модель: <b>{(code ? code[0] + " · " : "") + PRICING_TYPE_LABELS[type]}</b>
-            {notInCalculator ? " — цієї моделі немає в калькуляторі, рахується як суцільний кошик; перевірте суму." : ""}
+            {notInCalculator ? " — цієї моделі немає в калькуляторі: рахується за загальною формулою (стінки " + (type === "sectional" ? "розбірного" : "суцільного") + " кошика, кришка — якщо є); перевірте суму." : ""}
             {type === "screen" ? " Висота — вже з рамкою (+40 мм), глибина — борти екрана." : ""}
           </p>
           <div className="grid2">
@@ -2152,6 +2152,7 @@ import pricing from '../../lib/avalon-pricing.js';
             <p className="margin-calc-note">
               Колір небазовий: до замовлення додається «{pricing.AVALON_COLOR_SURCHARGE_NAME}» {money(pricing.avalonColorSurcharge(form.color))} —
               один раз на замовлення, окремою позицією (у ціну кошика не входить). Базові: сірий RAL 7016, чорний RAL 9005, білий RAL 9016.
+              Щоб не брати доплату з цього замовлення — видаліть її позицію у списку позицій.
             </p>
           )}
           {!calc ? (
