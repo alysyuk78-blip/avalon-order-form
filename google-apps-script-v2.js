@@ -34,7 +34,7 @@ var HDR_FONT = "Google Sans";
 var CAL_KEY = "AVALON";
 
 // Дії кабінету, що ПИШУТЬ у таблицю — лише вони потребують блокування скрипта.
-var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "delete_order_item", "upsert_partner",
+var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "delete_order_item", "add_order_item", "upsert_partner",
   "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment",
   "settlement_pdf", "settlement_send", "migrate_legacy_payments"];
 
@@ -153,7 +153,10 @@ function writeOrderToSheet_(data) {
     });
 
     // Номер резервуємо лише після успішної перевірки всіх позицій.
-    data.order_number = nextOrderNumber();
+    // _append — дописуємо позицію до наявного замовлення (номер уже є).
+    var append = data._append || null;
+    if (!append) data.order_number = nextOrderNumber();
+    var appendAfter = append ? Number(append.afterRow) : 0;
 
     itemsIn.forEach(function (it) {
       var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
@@ -211,7 +214,8 @@ function writeOrderToSheet_(data) {
       }
       if (!w && (it.bracket_model_from || it.bracket_model_to)) itemNotes.push("Потужність (BTU): " + (it.bracket_model_from || "") + " — " + (it.bracket_model_to || ""));
       if (it.ac_model_url) itemNotes.push("Посилання на кондиціонер: " + it.ac_model_url);
-      if (it.model_comment) itemNotes.push("Коментар до моделі: " + it.model_comment);
+      // Коментар до моделі/позиції — у власну колонку AX (нижче), а не в спільні примітки:
+      // у повідомленні підряднику він стоїть у блоці саме цієї позиції.
       if (itemNotes.length) notes = [notes].concat(itemNotes).filter(function (x) { return x; }).join("\n");
       if (patternFileInfo && patternFileInfo.name) {
         notes = [notes, "Файл візерунку: " + patternFileInfo.name + " (надіслано власнику в Telegram; підряднику переслати вручну)"].filter(function (x) { return x; }).join("\n");
@@ -239,7 +243,21 @@ function writeOrderToSheet_(data) {
         data.delivery_date || "", data.payment_method || "",                           // AC-AD
         data.how_found || (data.how_found_custom || ""), notes                         // AE-AF
       ];
-      lastRow = appendOrderRow_(sheet, row);
+      if (append) {
+        // Спільні для замовлення колонки беремо з його першого рядка — дата, статус,
+        // джерело, клієнт, доставка, оплата: нова позиція не «роздвоює» замовлення.
+        [1, 2, 3, 4, 6, 26, 27, 28, 29, 30].forEach(function (ci) { row[ci] = append.base[ci]; });
+        // Телефон — текстом з апострофом: інакше «+380…» таблиця сприйме як число.
+        var basePhone = String(append.base[5] == null ? "" : append.base[5]).replace(/^'/, "").trim();
+        row[5] = basePhone ? "'" + basePhone : "";
+        sheet.insertRowsAfter(appendAfter, 1);
+        lastRow = appendAfter + 1;
+        sheet.getRange(lastRow, 1, 1, row.length).setValues([row]);
+        applyOrderRowControls_(sheet, lastRow);
+        appendAfter = lastRow;
+      } else {
+        lastRow = appendOrderRow_(sheet, row);
+      }
       ensureContactColumns_(sheet);
       sheet.getRange(lastRow, 38, 1, 3).setValues([[
         cm,
@@ -259,6 +277,8 @@ function writeOrderToSheet_(data) {
         unit || "шт."
       ]]);
       sheet.getRange(lastRow, 45).setValue(requestId);
+      var itemComment = String(it.item_comment || it.model_comment || "").trim().slice(0, 1000);
+      if (itemComment) sheet.getRange(lastRow, ITEM_COMMENT_COL).setValue(itemComment);
       writtenRows.push(lastRow);
       var rr = sheet.getRange(lastRow, 1, 1, row.length);
       rr.setVerticalAlignment("middle").setWrap(true);
@@ -948,7 +968,9 @@ function buildOrderFromRows_(sh, orderNumber) {
     }
     String(r[31] || "").split(/\n+/).forEach(function (line) {
       line = String(line || "").trim();
-      if (line) order.noteLines[line] = true;
+      // «Коментар до моделі: …» стосується однієї позиції — він іде в її блок (comment),
+      // а не в спільну «Додаткову інформацію» наприкінці.
+      if (line && !/^Коментар до моделі:/i.test(line)) order.noteLines[line] = true;
     });
     // Кронштейни (AVL-K-01 / AVL-SK-01): відновлюємо модель (кол. AO) та довжину/
     // віброподушки з приміток САМЕ цього рядка (не з обʼєднаних по замовленню) —
@@ -976,7 +998,8 @@ function buildOrderFromRows_(sh, orderNumber) {
       // V виручка, W валовий прибуток, Y комісія — для блоку «маржа до виплати».
       revenue: cellNum_(r[21]), profit: cellNum_(r[22]), commission: cellNum_(r[24]),
       bracket_length: lenMatch ? lenMatch[1].trim() : "",
-      vibro_pads: /Віброподушки:\s*так/i.test(rowNotes)
+      vibro_pads: /Віброподушки:\s*так/i.test(rowNotes),
+      comment: itemComment_(ncol >= ITEM_COMMENT_COL ? r[ITEM_COMMENT_COL - 1] : "", rowNotes)
     });
   }
   if (order) {
@@ -1045,6 +1068,16 @@ function buildProductionMsg_(data, opts) {
   var multi = items.length > 1;
   function itemUnit(it) {
     return esc_(String(it.unit || (it.product_type === "bracket" ? "комп." : "шт.")).trim() || "шт.");
+  }
+  // Коментар до КОНКРЕТНОЇ позиції — одразу під нею, щоб підрядник не відніс його до всіх.
+  function itemCommentLines(it) {
+    var text = String((it && (it.comment || it.item_comment || it.model_comment)) || "").trim();
+    if (!text) return "";
+    var lines = text.split(/\n+/).map(function (x) { return String(x || "").trim(); }).filter(function (x) { return x; });
+    if (!lines.length) return "";
+    var out = "• ❗ Коментар: <b>" + esc_(lines[0]) + "</b>\n";
+    for (var k = 1; k < lines.length; k++) out += "   <b>" + esc_(lines[k]) + "</b>\n";
+    return out;
   }
   function itemLabel_(it, i) {
     var base = it.product_type === "bracket" ? "Кронштейни"
@@ -1115,6 +1148,7 @@ function buildProductionMsg_(data, opts) {
       if (color) m += "• Колір: <b>" + color + "</b>\n";
       if (Number(it.size_w) > 0) m += "• Розміри (мм): <b>" + it.size_w + "×" + it.size_h + "×" + it.size_d + "</b>\n";
       m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
+      m += itemCommentLines(it);
       return;
     }
     if (it.product_type === "other") {
@@ -1126,6 +1160,7 @@ function buildProductionMsg_(data, opts) {
       if (color) m += "• Колір: <b>" + color + "</b>\n";
       if (Number(it.size_w) > 0) m += "• Розміри (мм): <b>" + it.size_w + "×" + it.size_h + "×" + it.size_d + "</b>\n";
       m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
+      m += itemCommentLines(it);
       return;
     }
     if (it.product_type === "bracket") {
@@ -1135,6 +1170,7 @@ function buildProductionMsg_(data, opts) {
       m += "• Віброподушки: <b>" + (it.vibro_pads ? "Так" : "Ні") + "</b>\n";
       if (color) m += "• Колір: <b>" + color + "</b>\n";
       m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
+      m += itemCommentLines(it);
       return;
     }
     if (multi) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
@@ -1152,12 +1188,17 @@ function buildProductionMsg_(data, opts) {
     if (color) m += "• Колір: <b>" + color + "</b>\n";
     if (pattern) m += "• Візерунок: <b>" + pattern + "</b>\n";
     if (it.ac_brand || it.ac_model) m += "• Кондиціонер: <b>" + esc_([it.ac_brand, it.ac_model].filter(function (x) { return x; }).join(" ")) + "</b>\n";
+    // Характеристики кошика (матеріал, тип кришок, блок кондиціонера…) — з калькулятора або картки.
+    if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
+      if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
+    });
     if (Number(it.size_w) > 0) {
       m += "• Розміри (мм):\n   Висота — <b>" + it.size_h + "</b>\n   Ширина — <b>" + it.size_w + "</b>\n   Глибина — <b>" + it.size_d + "</b>\n";
     } else {
       m += "• Розміри: <i>розрахує менеджер</i>\n";
     }
     m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
+    m += itemCommentLines(it);
   });
 
   // Ціна клієнта йде у «Фінанси», а маржа до виплати — окремим блоком після них.
@@ -1181,9 +1222,11 @@ function buildProductionMsg_(data, opts) {
   }
   // Сума, вписана менеджером, може відрізнятися від розрахунку за площею — показуємо різницю,
   // щоб рядки завжди сходились із «Вартістю виробничою».
-  function adjustmentLine(prefix, diff) {
+  function adjustmentLine(prefix, diff, qty) {
     if (Math.abs(diff) < 1) return "";
-    return prefix + "Коригування менеджера: <b>" + (diff > 0 ? "+" : "−") + money_(Math.abs(diff)) + " ₴</b>\n";
+    // Різниця в межах копійок на штуку — це округлення ціни одиниці, а не рішення менеджера.
+    var label = Math.abs(diff) <= Math.max(1, Number(qty) || 1) ? "Округлення" : "Коригування менеджера";
+    return prefix + label + ": <b>" + (diff > 0 ? "+" : "−") + money_(Math.abs(diff)) + " ₴</b>\n";
   }
   if (multi) {
     items.forEach(function (it, i) {
@@ -1193,7 +1236,7 @@ function buildProductionMsg_(data, opts) {
         fin += areaLine("• " + label, b.basketArea, b.basketRate, it, b.basketCost, false);
         if (b.sideCost > 0) fin += areaLine("  Знімна бічна панель", b.sideArea, b.basketRate, it, b.sideCost, false);
         if (b.coverCost > 0) fin += areaLine("  Верхня кришка", b.coverArea, b.coverRate, it, b.coverCost, false);
-        fin += adjustmentLine("  ", c - b.total);
+        fin += adjustmentLine("  ", c - b.total, b.qty);
       } else if (c > 0) {
         // Позиція без розмірів (ціну веде менеджер) теж має бути видима: інакше вона мовчки
         // ховалася всередині «Разом виробнича», і підрядник не бачив, за що ці гроші.
@@ -1207,7 +1250,7 @@ function buildProductionMsg_(data, opts) {
       fin += areaLine("• Кошик", b.basketArea, b.basketRate, it, b.basketCost, true);
       if (b.sideCost > 0) fin += areaLine("• Знімна бічна панель", b.sideArea, b.basketRate, it, b.sideCost, true);
       if (b.coverCost > 0) fin += areaLine("• Верхня кришка", b.coverArea, b.coverRate, it, b.coverCost, true);
-      fin += adjustmentLine("• ", c - b.total);
+      fin += adjustmentLine("• ", c - b.total, b.qty);
     }
     if (c > 0) fin += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
   }
@@ -1592,13 +1635,14 @@ function setupOrders(sheet) {
     "Комісія з маржі, %", // AT (46): % ВІД ВАЛОВОГО ПРИБУТКУ, не від ціни продажу
     "Термін опрацювання підрядником", // AU (47): до якої дати підрядник має відповісти
     "Завдання підряднику",            // AV (48): що саме опрацювати (вартість, конструктив…)
-    "Причина скасування"              // AW (49): обовʼязкова при скасуванні з CRM
+    "Причина скасування",             // AW (49): обовʼязкова при скасуванні з CRM
+    "Коментар до позиції"             // AX (50): стосується лише цієї позиції замовлення
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
   // Ширини A..AW — рівно стільки ж, скільки заголовків (останні: опрацювання й причина скасування).
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150,150,260,260];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150,150,260,260,280];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -2638,8 +2682,9 @@ function adminMigrateLegacyPayments_(data) {
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 49; // A–AW (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT; опрацювання AU–AV; причина скасування AW)
+var ADMIN_ORDER_COLS = 50; // A–AX (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT; опрацювання AU–AV; причина скасування AW; коментар до позиції AX)
 var CANCEL_REASON_COL = 49;  // AW: чому скасовано — обовʼязково при скасуванні з CRM
+var ITEM_COMMENT_COL = 50;   // AX: коментар САМЕ до цієї позиції — підрядник бачить його в її блоці
 // Статуси замовлення. «В опрацюванні підрядником» — підрядник рахує виробничу
 // вартість / розробляє конструктив; «Виготовлення» — раніше називалось «В роботі».
 var STATUS_PROCESSING = "В опрацюванні підрядником";
@@ -2718,13 +2763,13 @@ function ensureDiscountColumns_(sheet) {
 
 function ensureDiscountColumnsOnce_() {
   var props = PropertiesService.getScriptProperties();
-  // V8: після додавання AW (причина скасування) заголовки треба проставити ще раз.
-  if (props.getProperty("ORDERS_COLS_V8_READY") === "1") return;
+  // V9: після додавання AX (коментар до позиції) заголовки треба проставити ще раз.
+  if (props.getProperty("ORDERS_COLS_V9_READY") === "1") return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) return;
   ensureDiscountColumns_(sheet);
-  props.setProperty("ORDERS_COLS_V8_READY", "1");
+  props.setProperty("ORDERS_COLS_V9_READY", "1");
 }
 
 /** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
@@ -2754,7 +2799,8 @@ function ensureContactColumns_(sheet) {
     { col: COMMISSION_PCT_COL, title: "Комісія з маржі, %", key: "Комісія з маржі", width: 150 },
     { col: PROCESSING_DUE_COL, title: "Термін опрацювання підрядником", key: "Термін опрацювання", width: 150 },
     { col: PROCESSING_TASK_COL, title: "Завдання підряднику", key: "Завдання підряднику", width: 260 },
-    { col: CANCEL_REASON_COL, title: "Причина скасування", key: "Причина скасування", width: 260 }
+    { col: CANCEL_REASON_COL, title: "Причина скасування", key: "Причина скасування", width: 260 },
+    { col: ITEM_COMMENT_COL, title: "Коментар до позиції", key: "Коментар до позиції", width: 280 }
   ];
   extra.forEach(function (e) {
     var head = String(sheet.getRange(1, e.col).getValue() || "");
@@ -2794,6 +2840,7 @@ function handleAdminRequest_(data) {
     if (action === "get_order") return jsonOut(adminGetOrder_(data));
     if (action === "update_order") return jsonOut(adminUpdateOrder_(data));
     if (action === "delete_order_item") return jsonOut(adminDeleteOrderItem_(data));
+    if (action === "add_order_item") return jsonOut(adminAddOrderItem_(data));
     if (action === "create_order") return jsonOut(adminCreateOrder_(data));
     if (action === "list_payments") return jsonOut(adminListPayments_(data));
     if (action === "settlement_data") return jsonOut(adminSettlementData_(data));
@@ -2854,6 +2901,21 @@ function cellNum_(v) {
 
 function cellBool_(v) {
   return v === true || v === "TRUE" || v === "true";
+}
+
+/**
+ * Коментар до позиції: колонка AX. Для заявок, створених до появи колонки, форма писала
+ * його в примітки рядка як «Коментар до моделі: …» — підхоплюємо й звідти.
+ */
+function itemComment_(cell, rowNotes) {
+  var direct = String(cell == null ? "" : cell).trim();
+  if (direct) return direct;
+  var out = [];
+  String(rowNotes || "").split(/\n+/).forEach(function (line) {
+    var m = String(line || "").trim().match(/^Коментар до моделі:\s*(.+)$/i);
+    if (m) out.push(m[1].trim());
+  });
+  return out.join("\n");
 }
 
 function mapOrderRow_(rowIndex, v) {
@@ -2918,7 +2980,8 @@ function mapOrderRow_(rowIndex, v) {
     commission_pct: cellNum_(v[45]),   // AT: ставка комісії партнера/ТОВ, % від маржі
     processing_due: toISODate(v[46]) || "",        // AU: термін опрацювання підрядником
     processing_task: String(v[47] || "").trim(),   // AV: що зробити підряднику
-    cancel_reason: String(v[48] || "").trim()      // AW: чому скасовано
+    cancel_reason: String(v[48] || "").trim(),     // AW: чому скасовано
+    item_comment: itemComment_(v[49], v[31])       // AX: коментар до цієї позиції
   };
 }
 
@@ -3279,6 +3342,70 @@ function assertItemIdentity_(sh, row, expect) {
 }
 
 /**
+ * Додати позицію до НАЯВНОГО замовлення (напр. розрахунок із калькулятора). Рядок стає
+ * одразу під останньою позицією замовлення; спільні дані (клієнт, статус, доставка,
+ * комісія, опрацювання) — як у решти його позицій. request_id захищає від дубля.
+ */
+function adminAddOrderItem_(data) {
+  var num = String(data.order_number || "").trim();
+  if (!orderNumberValid_(num)) throw new Error("Невірний номер замовлення");
+  var it = data.item;
+  if (!it || typeof it !== "object") throw new Error("Немає даних позиції");
+  return withRequestCache_("additem_", data.request_id, function () {
+    var sh = adminOrdersSheet_();
+    var last = sh.getLastRow();
+    if (last < 2) throw new Error("Немає замовлень");
+    var nums = sh.getRange(2, 1, last - 1, 1).getValues();
+    var rows = [];
+    for (var i = 0; i < nums.length; i++) {
+      if (String(nums[i][0] || "").trim() === num) rows.push(i + 2);
+    }
+    if (!rows.length) throw new Error("Order not found");
+    var base = sh.getRange(rows[0], 1, 1, ADMIN_ORDER_COLS).getValues()[0];
+    var item = {
+      product_type: it.product_type || "basket",
+      basket_model: it.basket_model || "", basket_model_name: it.basket_model_name || it.basket_model || "",
+      basket_type: it.basket_type || "", construction_type: it.construction_type || "",
+      color: it.color || "", pattern: it.pattern || "", has_cover: !!it.has_cover,
+      size_w: it.size_w, size_h: it.size_h, size_d: it.size_d,
+      quantity: it.quantity, unit: String(it.unit || "").trim() || "шт.",
+      specs: it.specs || "", item_comment: it.item_comment || "",
+      price_total: (it.price_total === "" || it.price_total == null) ? null : Number(it.price_total),
+      cost_total: (it.cost_total === "" || it.cost_total == null) ? null : Number(it.cost_total)
+    };
+    var written = writeOrderToSheet_({
+      order_number: num,
+      _append: { afterRow: rows[rows.length - 1], base: base },
+      contact_method: String(base[37] || "").trim() || "phone",
+      contact_telegram: String(base[38] || ""), contact_email: String(base[39] || ""),
+      commission_pct: base[COMMISSION_PCT_COL - 1],
+      notes: "",
+      items: [item]
+    });
+    var row = written.row;
+    // Опрацювання й причина скасування — спільні для замовлення: тримаємо рядки однаковими.
+    [PROCESSING_DUE_COL, PROCESSING_TASK_COL, CANCEL_REASON_COL].forEach(function (col) {
+      var v = base[col - 1];
+      if (v !== "" && v != null) sh.getRange(row, col).setValue(v);
+    });
+    // Роздрібна ціна / знижка — тим самим кодом, що й правка фінансів у кабінеті.
+    var fin = {};
+    if (it.cost_total != null && it.cost_total !== "") fin.cost_total = Number(it.cost_total);
+    if (it.list_price != null && it.list_price !== "") fin.list_price = Number(it.list_price);
+    if (it.discount_pct != null && it.discount_pct !== "") fin.discount_pct = Number(it.discount_pct);
+    if (it.discount_uah != null && it.discount_uah !== "") fin.discount_uah = Number(it.discount_uah);
+    if (fin.list_price != null || fin.discount_pct != null || fin.discount_uah != null) {
+      applyFinanceToRow_(sh, row, fin);
+    }
+    try { syncOrderPaymentState_(num); } catch (syncErr) { /* не валимо додавання */ }
+    SpreadsheetApp.flush();
+    var out = adminGetOrder_({ order_number: num });
+    out.added_row = row;
+    return out;
+  });
+}
+
+/**
  * Прибрати ОДНУ позицію замовлення (рядок таблиці). Останню позицію не видаляємо:
  * замовлення без позицій зникло б із воронки й фінансів — для відмови є статус «Скасовано».
  */
@@ -3400,10 +3527,19 @@ function adminUpdateOrder_(data) {
   var pricingItemTouched = false;
   var ITEM_TEXT = { basket_type: 8, construction: 9, color: 10, pattern: 11,
                     ac_brand: 12, ac_model: 13, basket_model: 41,
-                    product_kind: 42, specs: 43, unit: 44 };
+                    product_kind: 42, specs: 43, unit: 44, item_comment: ITEM_COMMENT_COL };
   Object.keys(ITEM_TEXT).forEach(function (key) {
     if (patch[key] == null) return;
-    sh.getRange(row, ITEM_TEXT[key]).setValue(String(patch[key]));
+    sh.getRange(row, ITEM_TEXT[key]).setValue(String(patch[key]).slice(0, 1000));
+    if (key === "item_comment") {
+      // Коментар тепер живе в AX: старий рядок «Коментар до моделі: …» із приміток прибираємо,
+      // інакше після очищення поля він підтягнувся б звідти знову.
+      var oldNotes = String(sh.getRange(row, 32).getValue() || "");
+      var cleaned = oldNotes.split(/\n/).filter(function (line) {
+        return !/^\s*Коментар до моделі:/i.test(line);
+      }).join("\n");
+      if (cleaned !== oldNotes) sh.getRange(row, 32).setValue(cleaned);
+    }
     // Не кошик (послуга, виріб не з каталогу, кронштейни) — площа кошика в колонці R не має
     // сенсу й лишилася б від попереднього виду: прибираємо.
     if (key === "product_kind" && String(patch[key]).trim() && !/кошик/i.test(String(patch[key]))) {

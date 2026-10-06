@@ -347,13 +347,14 @@ function testContractorSendFlow() {
 
 // ── Аркуш «Замовлення» в памʼяті (сценарії зі статусами й терміном) ─────────
 function makeSheet(rows) {
-  const W = 49;
+  const W = 50;
   const pad = (r) => { const a = r.slice(); while (a.length < W) a.push(""); return a; };
   const data = [new Array(W).fill("")].concat(rows.map(pad));
   return {
     data,
     getLastRow: () => data.length,
     deleteRow: (r) => { data.splice(r - 1, 1); },
+    insertRowsAfter: (r, n) => { for (let k = 0; k < n; k++) data.splice(r, 0, new Array(W).fill("")); },
     getMaxColumns: () => W,
     getMaxRows: () => 1000,
     setConditionalFormatRules: () => {},
@@ -383,7 +384,7 @@ function makeSheet(rows) {
 }
 
 function orderRow(num, status, extra) {
-  const r = new Array(49).fill("");
+  const r = new Array(50).fill("");
   r[0] = num; r[2] = status; r[4] = "Олександр Заєць"; r[5] = "'+380673406685"; r[6] = "Київ";
   r[16] = 1; r[19] = 9650; r[21] = 13790; r[22] = 4140; r[40] = "Ковш для трактора"; r[41] = "Інший виріб";
   Object.keys(extra || {}).forEach((k) => { r[Number(k)] = extra[k]; });
@@ -466,7 +467,7 @@ function testStatusesMigrationAndCanon() {
   assert.equal(mapped.processing_task, "Розробити конструктив");
 
   const widths = CODE.match(/var widths = \[([^\]]+)\]/)[1].split(",").length;
-  assert.equal(ctx.ADMIN_ORDER_COLS, 49);
+  assert.equal(ctx.ADMIN_ORDER_COLS, 50);
   assert.equal(widths, ctx.ADMIN_ORDER_COLS, "ширин колонок стільки ж, скільки колонок");
 }
 
@@ -927,6 +928,127 @@ function testMarginOwedAndCancelReason() {
   assert.equal(sheet.data[1][2], "Нове");
 }
 
+
+// ── Коментар до кожної позиції — у її блоці, а не наприкінці для всіх ──
+function testItemComments() {
+  const props = makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" });
+  const common = "Болтове зʼєднання лицьової частини з боковими";
+  const basket = (extra) => orderRow(ORD, "Нове", Object.assign({
+    7: "", 8: "Розбірний (з 3-х частин) · AVL-05", 9: "Білий (RAL 9016)", 10: "K2", 16: 1, 40: "Розбірний", 41: "Кошик",
+  }, extra));
+  const sheet = makeSheet([
+    // 1: коментар у новій колонці AX
+    basket({ 13: 750, 14: 1300, 15: 340, 31: common, 49: "Кріплення до стіни: по 3 вуха на сторону" }),
+    // 2: стара заявка — коментар лежить у примітках рядка
+    basket({ 13: 750, 14: 1200, 15: 440, 16: 3, 31: common + "\nКоментар до моделі: Без вух, на анкери" }),
+    // 3: без коментаря
+    basket({ 13: 750, 14: 700, 15: 440, 16: 14, 31: common }),
+  ]);
+  const ctx = processingContext(sheet, props, makeCalendar(), []);
+  const text = ctx.adminContractorPreview_({ order_number: ORD, options: { notes: true } }).text;
+  const block = (n) => text.split("<b>Кошик " + n + "</b>")[1].split(n < 3 ? "<b>Кошик " + (n + 1) + "</b>" : "ФІНАНСИ")[0];
+  assert.ok(block(1).includes("❗ Коментар: <b>Кріплення до стіни: по 3 вуха на сторону</b>"), "коментар позиції 1 — у її блоці");
+  assert.ok(block(2).includes("❗ Коментар: <b>Без вух, на анкери</b>"), "старий «Коментар до моделі» теж у блоці своєї позиції");
+  assert.ok(!block(3).includes("Коментар"), "позиція без коментаря — без рядка");
+  const tail = text.split("ДОСТАВКА")[1] || "";
+  assert.ok(tail.includes(common), "спільна примітка лишається наприкінці");
+  assert.ok(!tail.includes("анкери") && !tail.includes("Коментар до моделі"), "коментар позиції не дублюється наприкінці для всіх");
+
+  // CRM бачить коментар позиції і може його змінити/очистити.
+  assert.equal(ctx.mapOrderRow_(3, sheet.data[2]).item_comment, "Без вух, на анкери");
+  const uctx = load({
+    PropertiesService: { getScriptProperties: () => makeProps() },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    SpreadsheetApp: { flush() {} },
+  });
+  uctx.adminOrdersSheet_ = () => sheet;
+  uctx.recalcRow_ = () => {};
+  uctx.syncOrderPaymentState_ = () => {};
+  uctx.syncProcessingEvent_ = () => {};
+  uctx.adminGetOrder_ = () => ({ status: "ok" });
+  uctx.adminUpdateOrder_({ order_number: ORD, row: 3, patch: { item_comment: "" } });
+  assert.equal(sheet.data[2][49], "");
+  assert.equal(sheet.data[2][31], common, "старий рядок із приміток прибрано — очищений коментар не повертається");
+  assert.equal(uctx.mapOrderRow_(3, sheet.data[2]).item_comment, "");
+}
+
+// ── Додати позицію до наявного замовлення (розрахунок із калькулятора) ──
+function testAddOrderItem() {
+  const sheet = makeSheet([
+    orderRow(ORD, "Виготовлення", { 1: "05.10.2026 16:49", 3: "Телефон", 26: "Нова пошта", 28: "2026-10-16", 37: "phone", 45: 30, 46: "2026-10-10", 47: "Порахувати" }),
+    orderRow(ORD, "Виготовлення"),
+    orderRow("ORD-110926-002", "Нове"),
+  ]);
+  const cache = makeCache();
+  const applied = [];
+  const ctx = load({
+    PropertiesService: { getScriptProperties: () => makeProps() },
+    CacheService: { getScriptCache: () => cache },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    SpreadsheetApp: { flush() {}, getActiveSpreadsheet: () => ({ getSheetByName: () => sheet }) },
+    Utilities: { formatDate: () => "06.10.2026 10:00" },
+  });
+  ctx.adminOrdersSheet_ = () => sheet;
+  ctx.ensureDiscountColumns_ = () => {};
+  ctx.ensureContactColumns_ = () => {};
+  ctx.getPatternFileInfo_ = () => null;
+  ctx.setCommissionFormulas_ = () => {};
+  ctx.applyOrderRowControls_ = () => {};
+  ctx.applyFinanceToRow_ = (sh, row, fin) => { applied.push({ row, fin }); };
+  ctx.syncOrderPaymentState_ = () => {};
+  ctx.adminGetOrder_ = () => ({ status: "ok" });
+  // Оформлення клітинок у тесті не потрібне — лише значення.
+  const realRange = sheet.getRange.bind(sheet);
+  sheet.getRange = (...a) => {
+    const rng = realRange(...a);
+    const proxy = new Proxy(rng, {
+      get: (t, prop) => {
+        if (!(prop in t)) return () => proxy;                 // setFontWeight, setWrap… — ланцюжок
+        if (prop === "setValue" || prop === "setValues" || prop === "setDataValidation") {
+          return (...args) => { t[prop](...args); return proxy; };
+        }
+        return t[prop];
+      },
+    });
+    return proxy;
+  };
+
+  const item = {
+    product_type: "basket", basket_model: "AVL-05", basket_model_name: "Розбірний",
+    construction_type: "Розбірний (з 3-х частин) · AVL-05", color: "RAL 9016 білий",
+    size_w: 750, size_h: 700, size_d: 440, quantity: 14, unit: "шт.",
+    cost_total: 34664, price_total: 42122, list_price: 46802, discount_pct: 10, discount_uah: 4680,
+    item_comment: "По 3 вуха на сторону",
+  };
+  const out = ctx.adminAddOrderItem_({ order_number: ORD, item, request_id: "calc-1" });
+  assert.equal(out.added_row, 4, "нова позиція — одразу під останньою позицією замовлення");
+  assert.equal(sheet.data.length, 5);
+  const row = sheet.data[3];
+  assert.equal(row[0], ORD);
+  assert.equal(row[2], "Виготовлення", "статус — як у замовлення, а не «Нове»");
+  assert.equal(row[1], "05.10.2026 16:49", "дата замовлення, а не дата додавання");
+  assert.equal(row[4], sheet.data[1][4], "клієнт той самий");
+  assert.equal(row[5], "'+380673406685", "телефон — текстом");
+  assert.equal(row[26], "Нова пошта");
+  assert.deepEqual([row[13], row[14], row[15], row[16]], [750, 700, 440, 14]);
+  assert.equal(row[19], 34664, "собівартість із калькулятора");
+  assert.equal(row[21], 42122, "виручка з калькулятора");
+  assert.equal(row[40], "Розбірний");
+  assert.equal(row[41], "Кошик");
+  assert.equal(row[45], 30, "ставка комісії спільна для замовлення");
+  assert.equal(row[46], "2026-10-10");
+  assert.equal(row[49], "По 3 вуха на сторону");
+  assert.deepEqual(applied, [{ row: 4, fin: { cost_total: 34664, list_price: 46802, discount_pct: 10, discount_uah: 4680 } }],
+    "прайс і знижка — тим самим кодом, що й у кабінеті");
+  assert.equal(sheet.data[4][0], "ORD-110926-002", "чуже замовлення зсунулось, але не змінилось");
+
+  // Повтор із тим самим request_id (загублена відповідь) — без дубля.
+  ctx.adminAddOrderItem_({ order_number: ORD, item, request_id: "calc-1" });
+  assert.equal(sheet.data.length, 5, "повтор не створює другу позицію");
+  assert.throws(() => ctx.adminAddOrderItem_({ order_number: "ORD-999999-999", item, request_id: "calc-2" }), /not found/i);
+  assert.throws(() => ctx.adminAddOrderItem_({ order_number: ORD, request_id: "calc-3" }), /Немає даних позиції/);
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
@@ -942,4 +1064,6 @@ testServiceKind();
 testModelPhotoAndFinanceLines();
 testDeleteOrderItem();
 testMarginOwedAndCancelReason();
+testItemComments();
+testAddOrderItem();
 console.log("contractor-send tests: OK");

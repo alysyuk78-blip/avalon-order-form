@@ -104,7 +104,8 @@ import finance from '../../lib/admin-finance.js';
     const API_READ_TIMEOUT_MS = 60000;
     const API_WRITE_TIMEOUT_MS = 90000;
     // Дані, старші за цей час, оновлюються самі, коли власник повертається у вікно.
-    const STALE_AFTER_MS = 3 * 60 * 1000;
+    // 45 с: розрахунок, записаний із калькулятора, видно в CRM одразу після повернення у вікно.
+    const STALE_AFTER_MS = 45 * 1000;
     // Знімок зі сховища, молодший за це, вважаємо свіжим і таблицю у фоні не смикаємо.
     const SNAPSHOT_FRESH_MS = 20 * 1000;
     const VERSION_CHECK_MS = 5 * 60 * 1000;
@@ -2290,6 +2291,7 @@ import finance from '../../lib/admin-finance.js';
           unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
+          item_comment: item.item_comment || "",
         });
       }
 
@@ -2429,6 +2431,7 @@ import finance from '../../lib/admin-finance.js';
           unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
+          item_comment: item.item_comment || "",
         }));
       }
 
@@ -2638,6 +2641,7 @@ import finance from '../../lib/admin-finance.js';
                     <div className="item-row-main">
                       <strong>{itemTitle(it, i)}</strong>
                       <span>{(Number(it.quantity) || 1) + " " + (it.unit || "шт.") + " · " + money(it.revenue)}</span>
+                      {it.item_comment && <span className="item-row-comment" title={it.item_comment}>❗ {it.item_comment}</span>}
                     </div>
                     <IconButton icon="edit" label={"Скорегувати «" + itemTitle(it, i) + "»"}
                       disabled={busy || stale} onClick={() => askEditItem(i)} />
@@ -2736,11 +2740,20 @@ import finance from '../../lib/admin-finance.js';
                   <div className="field"><label>{isServiceItem ? "Характеристики (матеріал, товщина, розміри, деталі)" : "Характеристики (для виробів не з каталогу)"}</label>
                     <textarea value={form.specs} onChange={e => setForm({ ...form, specs: e.target.value })} rows="3"
                       placeholder="Розміри, матеріал, комплектація — по рядку на пункт" /></div>
+                  <div className="field"><label htmlFor="order-item-comment">Коментар до цієї позиції</label>
+                    <textarea id="order-item-comment" value={form.item_comment || ""} maxLength={1000} rows="2"
+                      onChange={e => setForm({ ...form, item_comment: e.target.value })}
+                      placeholder="Стосується лише цієї позиції: кріплення, зʼєднання, особливості…" />
+                    <small className="send-hint">
+                      Підрядник побачить його одразу під цією позицією{items.length > 1 ? " — а не наприкінці повідомлення для всіх" : ""}.
+                    </small>
+                  </div>
                 </>
               );
             })()}
             <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy || stale} onClick={() => save({
               basket_model: form.basket_model, product_kind: form.product_kind, specs: form.specs,
+              item_comment: (form.item_comment || "").trim(),
               construction: form.construction,
               basket_type: form.basket_type, color: form.color, pattern: form.pattern,
               quantity: Number(form.quantity) || 1,
@@ -2892,8 +2905,10 @@ import finance from '../../lib/admin-finance.js';
               <div className="field"><label>Адреса / відділення</label>
                 <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></div>
             </div>
-            <div className="field"><label>Примітки</label>
-              <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
+            <div className="field"><label>Примітки до замовлення (загальні)</label>
+              <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
+              <small className="send-hint">Для всього замовлення. Те, що стосується однієї позиції, пишіть у «Коментар до цієї позиції» в розділі «Товар».</small>
+            </div>
             <button className="btn secondary" disabled={busy || stale} onClick={() => save({
               delivery_date: form.delivery_date,
               payment_method: form.payment_method,
@@ -2932,7 +2947,7 @@ import finance from '../../lib/admin-finance.js';
         city: "", source: "Телефон",
         basket_model: "", basket_type: "", construction_type: "", color: "", pattern: "",
         has_cover: false, bracket_length: "", vibro_pads: false,
-        product_name: "", specs: "",
+        product_name: "", specs: "", model_comment: "",
         size_w: "", size_h: "", size_d: "", quantity: "1", unit: "шт.",
         cost_total: "", price_total: "", list_price: "", discount_pct: "", discount_uah: "",
         commission_pct: "",
@@ -3206,6 +3221,10 @@ import finance from '../../lib/admin-finance.js';
                 </button>
               )}
             </div>
+
+            <div className="field" style={{ marginTop: 8 }}><label>Коментар до позиції</label>
+              <textarea value={form.model_comment} maxLength={1000} rows="2" onChange={e => set("model_comment", e.target.value)}
+                placeholder="Кріплення, зʼєднання, особливості виготовлення — підрядник побачить під цією позицією" /></div>
 
             <div className="section-title">Гроші</div>
             <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
@@ -4685,9 +4704,12 @@ import finance from '../../lib/admin-finance.js';
         writeAdminCache({ payouts: next });
       }
 
-      async function refreshData() {
+      // opts.direct — дані на екрані вже є (повернення у вікно): знімок зі сховища нічого не
+      // дасть, тож ідемо одразу в таблицю й не витрачаємо місячний ліміт читань сховища.
+      async function refreshData(opts) {
         if (!token) return;
         if (dataRefreshRef.current) return dataRefreshRef.current;
+        const direct = !!(opts && opts.direct === true);
         const request = (async () => {
           const requestRevision = mutationRevisionRef.current;
           setDataLoading(true);
@@ -4727,6 +4749,13 @@ import finance from '../../lib/admin-finance.js';
             });
           }
           try {
+            if (direct) {
+              const now = await loadBootstrap("/api/admin/bootstrap?fresh=1");
+              if (requestRevision !== mutationRevisionRef.current) return now;
+              apply(now, Date.now());
+              setSnapshotFresh(true);
+              return now;
+            }
             // 1. Одразу: знімок зі сховища Vercel (частки секунди), а якщо його немає — таблиця.
             const data = await loadBootstrap("/api/admin/bootstrap");
             if (requestRevision !== mutationRevisionRef.current) return data;
@@ -4885,7 +4914,7 @@ import finance from '../../lib/admin-finance.js';
           if (document.visibilityState === "hidden") return;
           const savedAt = Number(readAdminCache().savedAt) || 0;
           if (Date.now() - savedAt < STALE_AFTER_MS) return;
-          refreshData().catch(() => {});
+          refreshData({ direct: savedAt > 0 }).catch(() => {});
         }
         document.addEventListener("visibilitychange", maybeRefresh);
         window.addEventListener("focus", maybeRefresh);
