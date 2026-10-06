@@ -517,17 +517,8 @@
       how_found_options: ["Google / пошук", "Instagram / Facebook", "Реклама / оголошення", "Рекомендація знайомих", "Голова / чат ОСББ", "Партнер або підрядник"]
     };
 
-    // ============================================================
-    // PRICE CALCULATOR LOGIC
-    // ============================================================
-    // Собівартість за м²: розбірний 2170₴, суцільний 2030₴
-    // Маржа: 25.93% → клієнтська ціна = собівартість / (1 - 0.2593)
-    const COST_PER_M2_SOLID = 2030;      // Суцільний — собівартість
-    const COST_PER_M2_DETACHABLE = 2170; // Розбірний — собівартість
-    const COVER_COST_PER_M2 = 1920;      // Верхня кришка — окрема собівартість
-    const MARGIN = 0.2593;               // 25.93% маржа
-    const MARKUP = 1 / (1 - MARGIN);     // ~1.35 multiplier
-    const COMPLEX_PATTERNS = ["K3", "K4", "K6", "K8", "K9"];
+    // Ціну форма не рахує: заявка йде на прорахунок менеджеру. Єдиний алгоритм ціни —
+    // lib/avalon-pricing.js (той самий у калькуляторі, кабінеті CRM і таблиці).
 
     // Каталог моделей. Ці дані керують картками й заявкою, а не цінами для клієнта.
     const CATALOG_MODELS = [
@@ -1410,9 +1401,6 @@
     // SUBMIT LOGIC
     // ============================================================
     // Generate order number: ORD-DDMMYY-XXX
-
-    // Calculate price for TG message (kept for local display reference)
-    const PRODUCTION_PRICE_PER_M2 = 2030;
 
     function formatDeliveryDate(dateStr) {
       if (!dateStr) return "—";

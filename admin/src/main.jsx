@@ -31,6 +31,7 @@ import {
   UsersRound,
 } from 'lucide-react';
 import finance from '../../lib/admin-finance.js';
+import pricing from '../../lib/avalon-pricing.js';
 
     const { groupPaymentMetrics, marginOwed } = finance;
     // До погодження («Нове», «В опрацюванні підрядником») маржа не «до отримання» — навіть
@@ -104,7 +105,8 @@ import finance from '../../lib/admin-finance.js';
     const API_READ_TIMEOUT_MS = 60000;
     const API_WRITE_TIMEOUT_MS = 90000;
     // Дані, старші за цей час, оновлюються самі, коли власник повертається у вікно.
-    const STALE_AFTER_MS = 3 * 60 * 1000;
+    // 45 с: розрахунок, записаний із калькулятора, видно в CRM одразу після повернення у вікно.
+    const STALE_AFTER_MS = 45 * 1000;
     // Знімок зі сховища, молодший за це, вважаємо свіжим і таблицю у фоні не смикаємо.
     const SNAPSHOT_FRESH_MS = 20 * 1000;
     const VERSION_CHECK_MS = 5 * 60 * 1000;
@@ -2047,6 +2049,207 @@ import finance from '../../lib/admin-finance.js';
       );
     }
 
+    // ── Розрахунок за формулою калькулятора ──
+    // lib/avalon-pricing.js — дослівно той самий алгоритм, що в калькуляторі й у таблиці,
+    // тож переносити числа з калькулятора не потрібно. Опції живуть у тексті позиції:
+    // «+ кришка» в конструкції та рядки характеристик («Матеріал: …», «Нижня кришка: …») —
+    // їх бачить і підрядник.
+    const PRICING_TYPE_LABELS = {
+      solid: "суцільний", screen: "екран під утеплювач", universal: "універсальний",
+      sectional_frame: "зі знімною боковиною", sectional: "розбірний", closed: "закритий на підставці",
+    };
+    const PRICING_COVER_OPTIONS = [["", "немає"], ["plain", "не перфорована"], ["perforated", "перфорована"]];
+    // Знижка позиції відсотком: з поля, а якщо вписана лише сума — її частка в прайсі.
+    function formDiscountPct(form) {
+      const pctValue = Number(form.discount_pct) || 0;
+      if (pctValue > 0) return pctValue;
+      const list = Number(form.list_price) || 0, uah = Number(form.discount_uah) || 0;
+      return list > 0 && uah > 0 ? Math.round(uah / list * 10000) / 100 : 0;
+    }
+    function calcPosition(form) {
+      if (!(Number(form.size_w) > 0 && Number(form.size_h) > 0)) return null;
+      return pricing.avalonPriceItem(
+        { construction: form.construction, model: form.basket_model, specs: form.specs,
+          width: form.size_w, height: form.size_h, depth: form.size_d, quantity: form.quantity },
+        { discountPct: formDiscountPct(form), commissionPct: form.commission_pct });
+    }
+    function PricingBlock({ form, setForm, saved, disabled, onApply }) {
+      const type = pricing.avalonModelType(form.construction, form.basket_model);
+      const opts = pricing.avalonParseOptions(form.construction, form.specs);
+      const calc = calcPosition(form);
+      // Антивандальне виконання і складний візерунок формула не рахує — ціну визначає менеджер.
+      const individual = pricing.avalonIndividualReason(form.basket_type, form.pattern);
+      const setOption = patch => {
+        const next = pricing.applyOptionsToText(form.construction, form.specs, { ...opts, ...patch }, type);
+        setForm(f => ({ ...f, construction: next.construction, specs: next.specs }));
+      };
+      const code = ((form.construction || "") + " " + (form.basket_model || "")).toUpperCase().match(/AVL-\d{2}(?:\/\d)?/);
+      const notInCalculator = !!code && ["AVL-06", "AVL-06/1", "AVL-08"].includes(code[0]);
+      // Чи вже збережені в позиції рівно ці числа й ці вхідні дані.
+      const num = v => Number(v) || 0;
+      const inputsSaved = ["construction", "basket_model", "specs"].every(k => String(form[k] || "") === String(saved[k] || ""))
+        && ["size_w", "size_h", "size_d"].every(k => num(form[k]) === num(saved[k]))
+        && (num(form.quantity) || 1) === (num(saved.quantity) || 1);
+      const moneySaved = !!calc && num(saved.cost_total) === calc.costTotal && num(saved.revenue) === calc.total
+        && (num(saved.list_price) || num(saved.revenue)) === calc.listTotal;
+      const lines = calc ? pricing.avalonCostLines(calc) : [];
+      const sizeNote = calc && (calc.width !== num(form.size_w) || calc.height !== num(form.size_h) || calc.depth !== num(form.size_d));
+      return (
+        <div className="margin-calc pricing-block">
+          <div className="margin-calc-title">Розрахунок за формулою калькулятора</div>
+          {individual && (
+            <div className="margin-net-warn" style={{ margin: "0 0 8px" }}>
+              Ця позиція рахується індивідуально: {individual}. Нижче — лише орієнтир для звичайного кошика, без надбавки;
+              сама ціна не підставиться. Впишіть свою собівартість і ціну у «Фінансах».
+            </div>
+          )}
+          <p className="margin-calc-note" style={{ marginTop: 0 }}>
+            Модель: <b>{(code ? code[0] + " · " : "") + PRICING_TYPE_LABELS[type]}</b>
+            {notInCalculator ? " — цієї моделі немає в калькуляторі, рахується як суцільний кошик; перевірте суму." : ""}
+            {type === "screen" ? " Висота — вже з рамкою (+40 мм), глибина — борти екрана." : ""}
+          </p>
+          <div className="grid2">
+            <div className="field"><label>Матеріал</label>
+              <select value={opts.material} disabled={disabled} onChange={e => setOption({ material: e.target.value })}>
+                {Object.keys(pricing.AVALON_MATERIALS).map(k => <option key={k} value={k}>{pricing.AVALON_MATERIALS[k]}</option>)}
+              </select></div>
+            {type === "universal" && (
+              <div className="field"><label>Стінки</label>
+                <select value={opts.universalSectional ? "1" : ""} disabled={disabled}
+                  onChange={e => setOption({ universalSectional: e.target.value === "1" })}>
+                  <option value="">суцільні</option><option value="1">розбірні</option>
+                </select></div>
+            )}
+            {type !== "screen" && (
+              <>
+                <div className="field"><label>Верхня кришка</label>
+                  <select value={opts.topCover} disabled={disabled} onChange={e => setOption({ topCover: e.target.value })}>
+                    {PRICING_COVER_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                  </select></div>
+                <div className="field"><label>Нижня кришка</label>
+                  <select value={opts.bottomCover} disabled={disabled} onChange={e => setOption({ bottomCover: e.target.value })}>
+                    {PRICING_COVER_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                  </select></div>
+              </>
+            )}
+          </div>
+          {type === "universal" && (
+            <label className="pricing-check">
+              <input type="checkbox" checked={opts.universalRemovableSide} disabled={disabled}
+                onChange={e => setOption({ universalRemovableSide: e.target.checked })} />
+              Знімна бокова частина
+            </label>
+          )}
+          {!pricing.avalonIsBaseColor(form.color) && (
+            <p className="margin-calc-note">
+              Колір небазовий: до замовлення додається «{pricing.AVALON_COLOR_SURCHARGE_NAME}» {money(pricing.avalonColorSurcharge(form.color))} —
+              один раз на замовлення, окремою позицією (у ціну кошика не входить). Базові: сірий RAL 7016, чорний RAL 9005, білий RAL 9016.
+            </p>
+          )}
+          {!calc ? (
+            <p className="margin-calc-note">Вкажіть ширину й висоту в розділі «Товар» — і тут зʼявиться розрахунок.</p>
+          ) : (
+            <>
+              <div className="pricing-lines">
+                {lines.map(line => (
+                  <div className="margin-net-row" key={line.key}>
+                    <span>{line.key === "walls" ? "Стінки" : line.label}{": "}
+                      {line.area != null
+                        ? String(Math.round(line.area * 1e6) / 1e6).replace(".", ",") + " м² × " + money(line.rate)
+                        : money2(Math.round(line.unit * 100) / 100)}
+                      {calc.quantity > 1 ? " × " + calc.quantity : ""}</span>
+                    <b>{money(line.cost)}</b>
+                  </div>
+                ))}
+                {sizeNote && (
+                  <div className="margin-calc-note" style={{ margin: "2px 0 4px" }}>
+                    Площа — за розмірами, округленими до 10 мм: {calc.height}×{calc.width}×{calc.depth} мм (В×Ш×Г).
+                  </div>
+                )}
+                <div className="margin-net-row"><span>Собівартість (разом)</span><b>{money(calc.costTotal)}</b></div>
+                <div className="margin-net-row">
+                  <span>Ціна за од. — націнка {String(calc.effectiveMarkup).replace(".", ",")}%
+                    {calc.commissionPct > 0 ? " (щоб після комісії " + pct(calc.commissionPct) + " лишились планові " + calc.planMarkup + "%)" : ""}</span>
+                  <b>{money(calc.unitPrice)}</b>
+                </div>
+                <div className="margin-net-row"><span>Роздрібна ціна (разом)</span><b>{money(calc.listTotal)}</b></div>
+                {calc.discountAmount > 0 && (
+                  <div className="margin-net-row"><span>Знижка {pct(calc.discountPct)}</span><b>− {money(calc.discountAmount)}</b></div>
+                )}
+                <div className="margin-net-row margin-net-main"><span>Ціна продажу</span><b>{money(calc.total)}</b></div>
+                <div className="margin-net-row"><span>Маржа{calc.commission > 0 ? " брутто" : ""}</span><b>{money(calc.profit)}</b></div>
+                {calc.commission > 0 && (
+                  <div className="margin-net-row"><span>Чистими після комісії {pct(calc.commissionPct)}</span><b>{money2(calc.netProfit)}</b></div>
+                )}
+              </div>
+              {!individual && (
+                <p className="margin-calc-note">
+                  Складні візерунки ({pricing.AVALON_COMPLEX_PATTERNS.join(", ")}) та антивандальне виконання дорожчі — їх формула не рахує, ціну вписуєте самі.
+                </p>
+              )}
+              {individual ? null : inputsSaved && moneySaved ? (
+                <p className="send-hint ok" style={{ marginTop: 8 }}>Фінанси позиції збігаються з розрахунком.</p>
+              ) : (
+                <>
+                  <button className="btn" type="button" style={{ marginTop: 8 }} disabled={disabled} onClick={() => onApply(calc)}>
+                    Застосувати розрахунок і зберегти
+                  </button>
+                  <p className="margin-calc-note">
+                    Збереже товар і підставить у фінанси: собівартість {money(calc.costTotal)}, ціну продажу {money(calc.total)}.
+                    Свою знижку впишіть у «Знижка %» нижче — розрахунок одразу її врахує.
+                  </p>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // Ціна за плановою націнкою для позиції, яку формула не рахує (виріб не з каталогу,
+    // послуга, кошик без розмірів): собівартість може бути будь-якою, правило те саме.
+    // З комісією з маржі (ТОВ/партнер) націнка збільшується так, щоб ПІСЛЯ комісії
+    // лишалась планова: 1 000 000 → 1 500 000, комісія 150 000, чистими 350 000.
+    function PlannedPriceBlock({ form, setForm, disabled }) {
+      const cost = Number(form.cost_total) || 0;
+      if (!(cost > 0)) return null;
+      const rateRaw = Number(form.commission_pct);
+      const rate = rateRaw > 0 && rateRaw < 100 ? rateRaw : 0;
+      const plan = pricing.AVALON_PRICING_DEFAULTS.markupPct;
+      const price = Math.round(cost * pricing.avalonMarkupFactor(rate));
+      const margin = price - cost;
+      const commission = Math.round(margin * rate) / 100;
+      const applied = (Number(form.revenue) || 0) === price;
+      return (
+        <div className="margin-calc pricing-block">
+          <div className="margin-calc-title">Ціна за плановою націнкою {plan}%</div>
+          <div className="margin-net-row"><span>Собівартість</span><b>{money(cost)}</b></div>
+          {rate > 0 ? (
+            <>
+              <div className="margin-net-row">
+                <span>Маржа — націнка {String(Math.round((pricing.avalonMarkupFactor(rate) - 1) * 10000) / 100).replace(".", ",")}%,
+                  щоб після комісії {pct(rate)} лишились планові {plan}%</span>
+                <b>{money(margin)}</b>
+              </div>
+              <div className="margin-net-row"><span>Комісія {pct(rate)} від маржі</span><b>− {money2(commission)}</b></div>
+              <div className="margin-net-row"><span>Чистими</span><b>{money2(margin - commission)}</b></div>
+            </>
+          ) : (
+            <div className="margin-net-row"><span>Маржа — націнка {plan}%</span><b>{money(margin)}</b></div>
+          )}
+          <div className="margin-net-row margin-net-main"><span>Ціна продажу</span><b>{money(price)}</b></div>
+          {applied ? (
+            <p className="send-hint ok" style={{ marginTop: 8 }}>Ціна позиції відповідає плановій націнці.</p>
+          ) : (
+            <button className="btn secondary" type="button" style={{ marginTop: 8 }} disabled={disabled}
+              onClick={() => setForm(f => ({ ...f, revenue: String(price), list_price: String(price), discount_pct: "", discount_uah: "" }))}>
+              Підставити ціну {money(price)}
+            </button>
+          )}
+        </div>
+      );
+    }
+
     function OrderDrawer({ token, orderNumber, initialData, snapshotLoading, snapshotFresh, onClose, onChanged, focusSend, onFilesCount }) {
       const [data, setData] = useState(initialData || null);
       // Картка з кешу минулого сеансу: показуємо одразу, але зміни дозволяємо лише після
@@ -2056,6 +2259,9 @@ import finance from '../../lib/admin-finance.js';
       const [error, setError] = useState("");
       const [form, setForm] = useState(null);
       const [itemIdx, setItemIdx] = useState(0);
+      const itemIdxRef = useRef(0);
+      itemIdxRef.current = itemIdx;
+      const shownOrderRef = useRef("");
 
       // ── Файли замовлення (Google Диск) і блок «Надіслати підряднику» ──
       const [files, setFiles] = useState(null);
@@ -2290,6 +2496,7 @@ import finance from '../../lib/admin-finance.js';
           unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
+          item_comment: item.item_comment || "",
         });
       }
 
@@ -2303,9 +2510,14 @@ import finance from '../../lib/admin-finance.js';
 
       useEffect(() => {
         if (initialData) {
+          // Те саме замовлення оновилось (напр. після збереження) — лишаємось на позиції,
+          // яку менеджер правив, а не стрибаємо на першу.
+          const sameOrder = shownOrderRef.current === orderNumber;
+          shownOrderRef.current = orderNumber;
+          const keepIdx = sameOrder && itemIdxRef.current < (initialData.items || []).length ? itemIdxRef.current : 0;
           setData(initialData);
-          applyItemToForm(initialData, 0);
-          setItemIdx(0);
+          applyItemToForm(initialData, keepIdx);
+          setItemIdx(keepIdx);
           setError("");
           setStale(!snapshotFresh);
           if (!snapshotFresh && !snapshotLoading) {
@@ -2429,11 +2641,36 @@ import finance from '../../lib/admin-finance.js';
           unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
+          item_comment: item.item_comment || "",
         }));
       }
 
       const profit = (Number(form.revenue) || 0) - (Number(form.cost_total) || 0);
       const marginPct = Number(form.revenue) ? Math.round((profit / Number(form.revenue)) * 1000) / 10 : 0;
+
+      // Поля розділу «Товар» — одним набором для «Зберегти товар» і «Застосувати розрахунок».
+      function itemPatch() {
+        return {
+          basket_model: form.basket_model, product_kind: form.product_kind, specs: form.specs,
+          item_comment: (form.item_comment || "").trim(),
+          construction: form.construction,
+          basket_type: form.basket_type, color: form.color, pattern: form.pattern,
+          quantity: Number(form.quantity) || 1,
+          unit: form.unit.trim() || "шт.",
+          size_w: form.size_w === "" ? 0 : Number(form.size_w),
+          size_h: form.size_h === "" ? 0 : Number(form.size_h),
+          size_d: form.size_d === "" ? 0 : Number(form.size_d),
+        };
+      }
+      // Розрахунок за формулою калькулятора → товар і фінанси позиції одним збереженням.
+      function applyCalculation(calc) {
+        return save({
+          ...itemPatch(),
+          cost_total: calc.costTotal, list_price: calc.listTotal,
+          discount_pct: calc.discountPct, discount_uah: calc.discountAmount, revenue: calc.total,
+          commission_pct: form.commission_pct === "" ? null : Number(form.commission_pct),
+        });
+      }
 
       // Комісія партнера/ТОВ береться з МАРЖІ, а не з ціни: 30% — це 30% від
       // валового прибутку. Тому й ціну під потрібну чисту маржу рахуємо через
@@ -2638,6 +2875,7 @@ import finance from '../../lib/admin-finance.js';
                     <div className="item-row-main">
                       <strong>{itemTitle(it, i)}</strong>
                       <span>{(Number(it.quantity) || 1) + " " + (it.unit || "шт.") + " · " + money(it.revenue)}</span>
+                      {it.item_comment && <span className="item-row-comment" title={it.item_comment}>❗ {it.item_comment}</span>}
                     </div>
                     <IconButton icon="edit" label={"Скорегувати «" + itemTitle(it, i) + "»"}
                       disabled={busy || stale} onClick={() => askEditItem(i)} />
@@ -2650,7 +2888,8 @@ import finance from '../../lib/admin-finance.js';
             {/* Стандартна формула (₴/м²) — лише для кошиків; вироби не з каталогу й послуги не перераховуються. */}
             {(!form.product_kind || form.product_kind === "Кошик") && (
               <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
-                Зміна розмірів, типу або візерунка перерахує гроші за стандартною формулою.
+                Зміна розмірів, кількості, моделі чи опцій (матеріал, кришки) перерахує гроші за формулою калькулятора;
+                колір і коментар суми не чіпають. Антивандальний кошик і складні візерунки рахуються індивідуально — їхні суми формула не змінює.
                 Щоб залишити свою ціну — впишіть її нижче в «Фінансах» після збереження.
               </p>
             )}
@@ -2736,19 +2975,18 @@ import finance from '../../lib/admin-finance.js';
                   <div className="field"><label>{isServiceItem ? "Характеристики (матеріал, товщина, розміри, деталі)" : "Характеристики (для виробів не з каталогу)"}</label>
                     <textarea value={form.specs} onChange={e => setForm({ ...form, specs: e.target.value })} rows="3"
                       placeholder="Розміри, матеріал, комплектація — по рядку на пункт" /></div>
+                  <div className="field"><label htmlFor="order-item-comment">Коментар до цієї позиції</label>
+                    <textarea id="order-item-comment" value={form.item_comment || ""} maxLength={1000} rows="2"
+                      onChange={e => setForm({ ...form, item_comment: e.target.value })}
+                      placeholder="Стосується лише цієї позиції: кріплення, зʼєднання, особливості…" />
+                    <small className="send-hint">
+                      Підрядник побачить його одразу під цією позицією{items.length > 1 ? " — а не наприкінці повідомлення для всіх" : ""}.
+                    </small>
+                  </div>
                 </>
               );
             })()}
-            <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy || stale} onClick={() => save({
-              basket_model: form.basket_model, product_kind: form.product_kind, specs: form.specs,
-              construction: form.construction,
-              basket_type: form.basket_type, color: form.color, pattern: form.pattern,
-              quantity: Number(form.quantity) || 1,
-              unit: form.unit.trim() || "шт.",
-              size_w: form.size_w === "" ? 0 : Number(form.size_w),
-              size_h: form.size_h === "" ? 0 : Number(form.size_h),
-              size_d: form.size_d === "" ? 0 : Number(form.size_d),
-            })}>Зберегти товар</button>
+            <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy || stale} onClick={() => save(itemPatch())}>Зберегти товар</button>
 
             <div className="section-title">Фінанси{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</div>
             {items.length > 1 && (
@@ -2768,6 +3006,15 @@ import finance from '../../lib/admin-finance.js';
                   {Number(order.commission) ? <> · чистими {money2((Number(order.profit) || 0) - Number(order.commission))}</> : null}.
                 </p>
               </>
+            )}
+            {(!form.product_kind || form.product_kind === "Кошик") && (
+              <PricingBlock form={form} setForm={setForm} saved={currentItem} disabled={busy || stale} onApply={applyCalculation} />
+            )}
+            {/* Усе, що формула не рахує, — за тією ж плановою націнкою від вписаної собівартості.
+                Доплата за колір — пропускна сума (маржа 0), їй націнка не потрібна. */}
+            {(pricing.avalonIsIndividualPricing(form.basket_type, form.pattern) || !((!form.product_kind || form.product_kind === "Кошик") && calcPosition(form)))
+              && !String(form.basket_model || "").startsWith(pricing.AVALON_COLOR_SURCHARGE_NAME) && (
+              <PlannedPriceBlock form={form} setForm={setForm} disabled={busy || stale} />
             )}
             <div className="grid2">
               <div className="field"><label>Собівартість (разом)</label>
@@ -2892,8 +3139,10 @@ import finance from '../../lib/admin-finance.js';
               <div className="field"><label>Адреса / відділення</label>
                 <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></div>
             </div>
-            <div className="field"><label>Примітки</label>
-              <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
+            <div className="field"><label>Примітки до замовлення (загальні)</label>
+              <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
+              <small className="send-hint">Для всього замовлення. Те, що стосується однієї позиції, пишіть у «Коментар до цієї позиції» в розділі «Товар».</small>
+            </div>
             <button className="btn secondary" disabled={busy || stale} onClick={() => save({
               delivery_date: form.delivery_date,
               payment_method: form.payment_method,
@@ -2932,7 +3181,7 @@ import finance from '../../lib/admin-finance.js';
         city: "", source: "Телефон",
         basket_model: "", basket_type: "", construction_type: "", color: "", pattern: "",
         has_cover: false, bracket_length: "", vibro_pads: false,
-        product_name: "", specs: "",
+        product_name: "", specs: "", model_comment: "",
         size_w: "", size_h: "", size_d: "", quantity: "1", unit: "шт.",
         cost_total: "", price_total: "", list_price: "", discount_pct: "", discount_uah: "",
         commission_pct: "",
@@ -2976,8 +3225,19 @@ import finance from '../../lib/admin-finance.js';
       const priceUnitOverride = Number(form.price_total) || 0;
       const costTotalCalc = Math.round(costUnit * qtyNum);
       const listTotal = Math.round(listUnit * qtyNum);
+      // Знижка відсотком — як у калькуляторі: спершу ціна зі знижкою до гривні, знижка — доповнення.
       const discountTotal = Number(form.discount_uah) || (listTotal && Number(form.discount_pct)
-        ? Math.round(listTotal * Number(form.discount_pct) / 100) : 0);
+        ? listTotal - Math.round(listTotal * (1 - Number(form.discount_pct) / 100)) : 0);
+      // Ціна за формулою калькулятора — якщо гроші лишити порожніми, сервер запише саме її.
+      const individualPrice = kind === "basket" && !isBracket ? pricing.avalonIndividualReason(form.basket_type, form.pattern) : "";
+      const autoCalc = kind === "basket" && !isBracket && !individualPrice && !costUnit && !listUnit && !priceUnitOverride
+        ? calcPosition({
+            construction: (form.construction_type || "") + (form.has_cover ? " + кришка" : ""),
+            basket_model: model ? model.name + " " + model.id : form.basket_model, specs: form.specs,
+            size_w: form.size_w, size_h: form.size_h, size_d: form.size_d, quantity: form.quantity,
+            discount_pct: form.discount_pct, commission_pct: form.commission_pct,
+          })
+        : null;
       const revenueTotal = priceUnitOverride
         ? Math.round(priceUnitOverride * qtyNum)
         : (listTotal ? listTotal - discountTotal : 0);
@@ -3207,11 +3467,15 @@ import finance from '../../lib/admin-finance.js';
               )}
             </div>
 
+            <div className="field" style={{ marginTop: 8 }}><label>Коментар до позиції</label>
+              <textarea value={form.model_comment} maxLength={1000} rows="2" onChange={e => set("model_comment", e.target.value)}
+                placeholder="Кріплення, зʼєднання, особливості виготовлення — підрядник побачить під цією позицією" /></div>
+
             <div className="section-title">Гроші</div>
             <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
               {isOther || isBracket
                 ? "Ціни вказуються ЗА ОДИНИЦЮ — підсумок з урахуванням кількості порахується нижче."
-                : "Ціни вказуються за одиницю. Для кошика можна залишити гроші порожніми — ціна порахується за розмірами тією ж формулою, що для онлайн-заявок."}
+                : "Ціни вказуються за одиницю. Для кошика можна залишити гроші порожніми — ціна порахується за розмірами формулою калькулятора."}
             </p>
             <div className="grid2">
               <div className="field"><label>Собівартість за од., ₴</label>
@@ -3233,6 +3497,24 @@ import finance from '../../lib/admin-finance.js';
             </div>
             {newBreakdown.rateValid === false && (
               <div className="error">Ставка комісії має бути від 0% до 99,99%.</div>
+            )}
+            {individualPrice && (
+              <div className="margin-net-warn">Позиція рахується індивідуально ({individualPrice}) — впишіть собівартість і ціну самі: формула їх не підставить.</div>
+            )}
+            {autoCalc && (
+              <div className="margin-calc">
+                <div className="margin-calc-title">За формулою калькулятора</div>
+                <div className="margin-net-row"><span>Собівартість (разом)</span><b>{money(autoCalc.costTotal)}</b></div>
+                <div className="margin-net-row"><span>Ціна за од. — націнка {String(autoCalc.effectiveMarkup).replace(".", ",")}%</span><b>{money(autoCalc.unitPrice)}</b></div>
+                {autoCalc.discountAmount > 0 && (
+                  <div className="margin-net-row"><span>Знижка {pct(autoCalc.discountPct)}</span><b>− {money(autoCalc.discountAmount)}</b></div>
+                )}
+                <div className="margin-net-row margin-net-main"><span>Ціна продажу ({autoCalc.quantity} шт.)</span><b>{money(autoCalc.total)}</b></div>
+                {pricing.avalonColorSurcharge(form.color) > 0 && (
+                  <div className="margin-net-row"><span>Доплата за небазовий колір — на замовлення, окремою позицією</span><b>+ {money(pricing.avalonColorSurcharge(form.color))}</b></div>
+                )}
+                <p className="margin-calc-note">Гроші порожні — у замовлення запишуться ці суми. Матеріал і кришки можна уточнити в картці після створення.</p>
+              </div>
             )}
             {(revenueTotal > 0 || costTotalCalc > 0) && (
               <div className="panel" style={{ boxShadow: "none", padding: 12, marginTop: 10 }}>
@@ -4685,9 +4967,12 @@ import finance from '../../lib/admin-finance.js';
         writeAdminCache({ payouts: next });
       }
 
-      async function refreshData() {
+      // opts.direct — дані на екрані вже є (повернення у вікно): знімок зі сховища нічого не
+      // дасть, тож ідемо одразу в таблицю й не витрачаємо місячний ліміт читань сховища.
+      async function refreshData(opts) {
         if (!token) return;
         if (dataRefreshRef.current) return dataRefreshRef.current;
+        const direct = !!(opts && opts.direct === true);
         const request = (async () => {
           const requestRevision = mutationRevisionRef.current;
           setDataLoading(true);
@@ -4727,6 +5012,13 @@ import finance from '../../lib/admin-finance.js';
             });
           }
           try {
+            if (direct) {
+              const now = await loadBootstrap("/api/admin/bootstrap?fresh=1");
+              if (requestRevision !== mutationRevisionRef.current) return now;
+              apply(now, Date.now());
+              setSnapshotFresh(true);
+              return now;
+            }
             // 1. Одразу: знімок зі сховища Vercel (частки секунди), а якщо його немає — таблиця.
             const data = await loadBootstrap("/api/admin/bootstrap");
             if (requestRevision !== mutationRevisionRef.current) return data;
@@ -4885,7 +5177,7 @@ import finance from '../../lib/admin-finance.js';
           if (document.visibilityState === "hidden") return;
           const savedAt = Number(readAdminCache().savedAt) || 0;
           if (Date.now() - savedAt < STALE_AFTER_MS) return;
-          refreshData().catch(() => {});
+          refreshData({ direct: savedAt > 0 }).catch(() => {});
         }
         document.addEventListener("visibilitychange", maybeRefresh);
         window.addEventListener("focus", maybeRefresh);

@@ -164,55 +164,127 @@ function testProductionMessageSkipsBasketRateForOtherProducts() {
   assert.ok(!/Знімна бічна панель/.test(basket), "AVL-01 — без знімної панелі");
 }
 
-function testStandardRecalculationClearsStaleDiscount() {
-  const context = loadAppsScript();
+// Рядок аркуша «Замовлення» для recalcRow_: { номер колонки: значення }.
+function recalcSheet(cells) {
+  const row = new Array(46).fill("");
+  Object.keys(cells).forEach((col) => { row[Number(col) - 1] = cells[col]; });
   const writes = {};
-  const row = new Array(17).fill("");
-  row[7] = "Стандарт";
-  row[8] = "Суцільний";
-  row[10] = "K1";
-  row[13] = 1000;
-  row[14] = 1000;
-  row[15] = 500;
-  row[16] = 2;
+  return {
+    writes,
+    sheet: {
+      getMaxColumns: () => 50,
+      getRange(_row, column, _rows, columns) {
+        if (column === 1 && columns >= 43) return { getValues: () => [row.slice(0, columns)] };
+        return { setValues(values) { writes[column] = Array.from(values[0]); return this; } };
+      },
+    },
+  };
+}
 
+// Перерахунок рядка = калькулятор: ті самі числа, що в «Перевірці розрахунків» (ORD-051026-001).
+function testRecalculationMatchesCalculator() {
+  const context = loadAppsScript();
+  const run = (cells) => { const s = recalcSheet(cells); context.recalcRow_(s.sheet, 2); return s.writes; };
+  const avl05 = { 9: "Розбірний (з 3-х частин) · AVL-05", 14: 750, 15: 700, 16: 440, 17: 14, 41: "Розбірний", 42: "Кошик" };
+
+  // 14 шт. зі знижкою 10 %: знижка НЕ губиться під час перерахунку.
+  const w = run(Object.assign({}, avl05, { 36: 10 }));
+  assert.deepEqual(w[18], [1.14, 2476, 34664, 3009, 42122, 7458, 17.7]);
+  assert.deepEqual(w[35], [46802, 10, 4680], "прайс 3 343 × 14, знижка 10 % = 4 680 ₴");
+  // Знижка, записана лише сумою (так було до єдиного алгоритму), теж лишається.
+  assert.deepEqual(run(Object.assign({}, avl05, { 35: 46802, 37: 4680 }))[35], [46802, 10, 4680]);
+  assert.deepEqual(run(avl05)[35], [46802, 0, 0]);
+
+  // ТОВ / партнер: комісія 30 % з маржі → націнка 50 %, щоб чистими лишилось планові 35 %.
+  const tov = run(Object.assign({}, avl05, { 46: 30 }));
+  assert.equal(tov[18][3], 3714, "2 475,97 × 1,5 = 3 713,96 → 3 714 ₴ за од.");
+  assert.equal(tov[18][4], 51996);
+  const margin = tov[18][4] - tov[18][2];
+  assert.ok(Math.abs(margin * 0.7 - 34664 * 0.35) < 14, "після комісії лишається ≈ 35 % собівартості");
+
+  // Звичайний візерунок ціну не змінює.
+  const plain = run({ 9: "Суцільний · AVL-01", 14: 1000, 15: 1000, 16: 500, 17: 2, 42: "Кошик" });
+  const fancy = run({ 8: "Декоративний", 9: "Суцільний · AVL-01", 11: "K1", 14: 1000, 15: 1000, 16: 500, 17: 2, 42: "Кошик" });
+  assert.deepEqual(fancy[18], plain[18]);
+  // Складний візерунок дорожчий, а на скільки — рахується індивідуально: формула суми не чіпає.
+  ["K3", "K4", "K6", "K8", "K9", "К3"].forEach((pattern) =>
+    assert.deepEqual(run({ 9: "Суцільний · AVL-01", 11: pattern, 14: 1000, 15: 1000, 16: 500, 17: 2, 42: "Кошик" }), {}, pattern));
+  // Антивандальний кошик теж рахується індивідуально.
+  assert.deepEqual(run({ 8: "Антивандальний (більша товщина металу+ каркас)", 9: "Суцільний · AVL-01", 14: 1000, 15: 1000, 16: 500, 17: 2, 42: "Кошик" }), {});
+  assert.equal(plain[18][2], 8120, "2 м² × 2 030 × 2");
+  assert.equal(plain[18][4], 10962, "5 481 × 2 — націнка рівно 35 %");
+
+  // Розміри округлюються вгору до 10 мм до площі: 805 рахується як 810.
+  assert.deepEqual(run({ 9: "Суцільний · AVL-01", 14: 805, 15: 550, 16: 500, 17: 2, 42: "Кошик" })[18],
+    run({ 9: "Суцільний · AVL-01", 14: 810, 15: 550, 16: 500, 17: 2, 42: "Кошик" })[18]);
+
+  // Моделі за правилами калькулятора.
+  const cost = (cells) => run(Object.assign({ 14: 800, 15: 500, 16: 500, 17: 1, 42: "Кошик" }, cells))[18][2];
+  assert.equal(cost({ 9: "Суцільний · AVL-07" }), 2821, "закритий: 4 стінки × 2 170");
+  assert.equal(cost({ 9: "Суцільний · AVL-03" }), 2497, "універсальний: 0,9 × 2 030 + кронштейни 800 × 1800/2150");
+  assert.equal(cost({ 9: "Суцільний · AVL-03", 43: "Стінки: розбірні\nЗнімна бокова частина" }), 3130, "+ розбірні стінки й знімна боковина");
+  assert.equal(cost({ 9: "Розбірна · AVL-02", 14: 800, 15: 540, 16: 100 }), 2796, "екран: 0,54 × 2 030 + кріплення 1 700");
+  assert.equal(cost({ 9: "Суцільний · AVL-01 + кришка" }), 2595, "верхня кришка не перфорована: + 0,4 × 1 920");
+  assert.equal(cost({ 9: "Суцільний · AVL-01", 43: "Верхня кришка: перфорована\nНижня кришка: не перфорована" }), 3407);
+  assert.equal(cost({ 9: "Суцільний · AVL-01", 43: "Матеріал: Оцинкований метал" }), 3227, "+ 1 400 ₴");
+  assert.equal(cost({ 9: "Суцільний · AVL-01", 43: "Матеріал: Алюміній" }), 3654, "× 2");
+
+  // Не кошик і рядок без розмірів — не чіпаємо.
+  assert.deepEqual(run({ 9: "Ковш", 14: 800, 15: 500, 17: 1, 42: "Інший виріб" }), {});
+  assert.deepEqual(run({ 9: "Суцільний · AVL-01", 17: 1, 42: "Кошик" }), {});
+}
+
+// Гроші перераховуються лише коли змінилось те, від чого залежить ціна.
+function testPricingSignature() {
+  const context = loadAppsScript();
+  const base = { construction: "Суцільний · AVL-01", model: "Суцільний", kind: "Кошик", specs: "Блок кондиціонера: 500×700×300", width: 800, height: 550, depth: 500, quantity: 2 };
+  const sig = (extra) => context.pricingSignature_(Object.assign({}, base, extra));
+  assert.equal(sig({}), sig({ specs: "Кронштейн: K2" }), "текст характеристик без опцій ціну не змінює");
+  assert.equal(sig({}), sig({ width: 795 }), "795 і 800 — той самий розмір після округлення до 10 мм");
+  ["width", "height", "depth", "quantity"].forEach((key) => assert.notEqual(sig({}), sig({ [key]: 990 }), key));
+  assert.notEqual(sig({}), sig({ construction: "Суцільний · AVL-01 + кришка" }));
+  assert.notEqual(sig({}), sig({ construction: "Суцільний · AVL-04" }));
+  assert.notEqual(sig({}), sig({ specs: "Матеріал: Алюміній" }));
+  assert.notEqual(sig({}), sig({ specs: "Нижня кришка: перфорована" }));
+  // Тип і візерунок важать лише як перехід «за формулою» ⇄ «індивідуально».
+  assert.equal(sig({ pattern: "K1" }), sig({ pattern: "K10" }));
+  assert.equal(sig({ basketType: "Декоративний" }), sig({ basketType: "Стандарт" }));
+  assert.notEqual(sig({ pattern: "K1" }), sig({ pattern: "K3" }));
+  assert.notEqual(sig({}), sig({ basketType: "Антивандальний" }));
+  assert.equal(sig({ kind: "Послуга" }), "not-basket");
+}
+
+// Знижка у фінансах картки округлюється як у калькуляторі: спершу ціна, знижка — доповнення.
+function testDiscountRoundingMatchesCalculator() {
+  const context = loadAppsScript();
+  const cells = { 17: 1, 20: 3, 22: 0 };
+  const writes = {};
   const sheet = {
-    getMaxColumns: () => 48,
-    getRange(_row, column, _rows, columns) {
-      if (column === 42) return { getValue: () => "Кошик" };
-      if (column === 41) return { getValue: () => "" };
-      if (column === 1 && columns === 17) return { getValues: () => [row] };
+    getRange(_row, column) {
       return {
-        setValues(values) {
-          writes[column] = values[0];
-          return this;
-        },
+        getValue: () => (cells[column] == null ? "" : cells[column]),
+        setValues(values) { writes[column] = Array.from(values[0]); return this; },
+        setNumberFormat() { return this; },
+        setFormula() { return this; },
       };
     },
   };
-
-  context.recalcRow_(sheet, 2);
-  assert.equal(writes[18].length, 7);
-  assert.deepEqual(Array.from(writes[35]), [writes[18][4], 0, 0], "прайс і знижка мають відповідати новій виручці");
+  context.applyFinanceToRow_(sheet, 2, { list_price: 5, discount_pct: 10 });
+  assert.deepEqual(writes[35], [5, 10, 0], "5 × 0,9 = 4,5 → 5 ₴, знижка 0 (раніше виходило 4 і 1)");
+  context.applyFinanceToRow_(sheet, 2, { list_price: 46802, discount_pct: 10 });
+  assert.deepEqual(writes[35], [46802, 10, 4680]);
+  assert.equal(writes[19][3], 42122);
+  context.applyFinanceToRow_(sheet, 2, { list_price: 4000, discount_pct: 0, discount_uah: 290 });
+  assert.deepEqual(writes[35], [4000, 7.25, 290], "відсоток із суми — до сотих");
 }
 
 // AVL-04 «Зі знімною боковиною»: + бічна панель (висота × глибина), як у калькуляторі.
 function testRemovableSidePanelPricing() {
   const context = loadAppsScript();
   const recalc = (construction, model) => {
-    const writes = {};
-    const row = new Array(17).fill("");
-    row[8] = construction; row[10] = "K1"; row[13] = 800; row[14] = 550; row[15] = 500; row[16] = 2;
-    context.recalcRow_({
-      getMaxColumns: () => 49,
-      getRange(_r, column, _rows, columns) {
-        if (column === 42) return { getValue: () => "Кошик" };
-        if (column === 41) return { getValue: () => model };
-        if (column === 1 && columns === 17) return { getValues: () => [row] };
-        return { setValues(values) { writes[column] = values[0]; return this; } };
-      },
-    }, 2);
-    return writes[18];
+    const s = recalcSheet({ 9: construction, 11: "K1", 14: 800, 15: 550, 16: 500, 17: 2, 41: model, 42: "Кошик" });
+    context.recalcRow_(s.sheet, 2);
+    return s.writes[18];
   };
   const avl04 = recalc("Суцільний · AVL-04", "Зі знімною боковиною");
   assert.equal(avl04[0], 1.27, "площа: 0,99 (лицева + 2 боковини) + 0,275 (знімна панель), до сотих");
@@ -247,6 +319,51 @@ function testRemovableSidePanelPricing() {
     items: [{ product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 810, size_h: 550, size_d: 500, quantity: 2, unit: "шт." }],
   }, { finance: true });
   assert.ok(precise.includes("• Кошик: 0.9955 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>4 042 ₴</b>"), "0,9955 × 2 030 × 2 = 4 041,73 → 4 042");
+  assert.ok(!precise.includes("округленими"), "розміри вже кратні 10 мм — примітки немає");
+
+  // Розмір не кратний 10 мм: площа — за округленим угору, і це видно в повідомленні.
+  const rounded = ctx.buildProductionMsg_({
+    order_number: "X",
+    items: [{ product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 805, size_h: 550, size_d: 500, quantity: 2, unit: "шт." }],
+  }, { finance: true });
+  assert.ok(rounded.includes("• Кошик: 0.9955 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>4 042 ₴</b>"));
+  assert.ok(rounded.includes("• Площа — за розмірами, округленими до 10 мм: 550×810×500 мм"));
+
+  // Антивандальний: розкладки за площею немає — лише собівартість, яку вписав менеджер.
+  const antivandal = ctx.buildProductionMsg_({
+    order_number: "X",
+    items: [{ product_type: "basket", basket_type: "Антивандальний", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 2, unit: "шт.", cost_total: 7300 }],
+  }, { finance: true });
+  assert.ok(!antivandal.includes("₴/м²") && !antivandal.includes("Коригування"), "антивандальний — без формули за площею");
+  assert.ok(antivandal.includes("• Вартість виробнича: <b>7 300 ₴</b>"));
+  const complex = ctx.buildProductionMsg_({
+    order_number: "X",
+    items: [{ product_type: "basket", pattern: "K6", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 1, unit: "шт.", cost_total: 2600 }],
+  }, { finance: true });
+  assert.ok(!complex.includes("₴/м²") && complex.includes("• Вартість виробнича: <b>2 600 ₴</b>"), "складний візерунок — теж без формули");
+
+  // Усі складники собівартості — окремими рядками, і вони сходяться з підсумком.
+  const full = ctx.buildProductionMsg_({
+    order_number: "X",
+    items: [
+      { product_type: "basket", construction_type: "Суцільний · AVL-03", basket_model_name: "Універсальний",
+        specs: "Матеріал: Оцинкований метал\nСтінки: суцільні\nЗнімна бокова частина\nВерхня кришка: перфорована\nНижня кришка: не перфорована",
+        size_w: 800, size_h: 500, size_d: 500, quantity: 2, unit: "шт." },
+      { product_type: "basket", construction_type: "Розбірна · AVL-02", size_w: 800, size_h: 540, size_d: 100, quantity: 1, unit: "шт." },
+    ],
+  }, { finance: true }).replace(/<[^>]+>/g, "");
+  [
+    "• Кошик 1: 0.9 м² × 2 030 ₴/м² × 2 шт. = 3 654 ₴",
+    "  Знімна бічна панель: 0.25 м² × 2 030 ₴/м² × 2 шт. = 1 015 ₴",
+    "  Верхня кришка (перфорована): 0.4 м² × 2 030 ₴/м² × 2 шт. = 1 624 ₴",
+    "  Нижня кришка: 0.4 м² × 1 920 ₴/м² × 2 шт. = 1 536 ₴",
+    "  Кронштейни: 669,77 ₴ × 2 шт. = 1 340 ₴",
+    "  Оцинкований метал: 1 400 ₴ × 2 шт. = 2 800 ₴",
+    "• Кошик 2: 0.54 м² × 2 030 ₴/м² = 1 096 ₴",
+    "  Система кріплення: 1 700 ₴",
+    "• Разом виробнича: 14 765 ₴",
+  ].forEach((line) => assert.ok(full.includes(line), line + "\n---\n" + full));
+  assert.ok(!full.includes("Коригування"), "різниця в гривню — це округлення, а не правка менеджера");
 }
 
 function testPaymentDeletionChecksStableIdentity() {
@@ -301,7 +418,7 @@ function testBootstrapReadsPaymentsOnce() {
 
 function testOrderDetailReadsOnlyMatchedRows() {
   const context = loadAppsScript();
-  const row = new Array(49).fill("");
+  const row = new Array(50).fill("");
   row[0] = "ORD-010126-001";
   row[2] = "В роботі";
   row[4] = "Тест";
@@ -326,7 +443,7 @@ function testOrderDetailReadsOnlyMatchedRows() {
           }),
         };
       }
-      if (r === 7 && c === 1 && rows === 1 && cols === 49) {
+      if (r === 7 && c === 1 && rows === 1 && cols === 50) {
         fullReads.push(r);
         return { getValues: () => [row] };
       }
@@ -477,11 +594,11 @@ function testSheetCommissionFormula() {
   assert.equal(formulas[26], '=IF($W7="";"";$W7-$Y7)', "чистий прибуток = валовий − комісія");
 
   // Схема таблиці розширена до AT (46) — інакше читання картки впаде.
-  assert.equal(context.ADMIN_ORDER_COLS, 49);  // …AW — причина скасування
+  assert.equal(context.ADMIN_ORDER_COLS, 50);  // …AW — причина скасування
   assert.equal(context.COMMISSION_PCT_COL, 46);
 
   // mapOrderRow_ має віддавати ставку в CRM.
-  const row = new Array(49).fill("");
+  const row = new Array(50).fill("");
   row[0] = "ORD-010126-001";
   row[45] = 30;
   assert.equal(context.mapOrderRow_(7, row).commission_pct, 30);
@@ -494,7 +611,9 @@ testSheetCommissionFormula();
 testSheetMarginDue();
 testProductionMessageSkipsBasketRateForOtherProducts();
 testContractorMessageShowsMarginToPay();
-testStandardRecalculationClearsStaleDiscount();
+testRecalculationMatchesCalculator();
+testPricingSignature();
+testDiscountRoundingMatchesCalculator();
 testRemovableSidePanelPricing();
 testPaymentDeletionChecksStableIdentity();
 testBootstrapReadsPaymentsOnce();

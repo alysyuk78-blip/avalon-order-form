@@ -79,6 +79,23 @@ async function run() {
   o = await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { color: "Чорний" }, expect: { product_kind: "Кошик" } } });
   assert.deepEqual(calls.pop(), { action: "update_order", payload: { order_number: ORD, row: 4, patch: { color: "Чорний" }, expect: { product_kind: "Кошик" } } });
 
+  // Додати позицію з калькулятора: лише відомі поля, числа невідʼємні, request_id проти дубля.
+  o = await call(order, { method: "POST", body: {
+    action: "add_item", order_number: ORD, request_id: "calc-1",
+    item: { product_type: "basket", basket_model: "AVL-05", size_w: 750, size_h: "700", size_d: 440, quantity: 14,
+      cost_total: 34664, price_total: 42122, list_price: 46802, discount_pct: 10, discount_uah: 4680,
+      item_comment: "По 3 вуха", admin_secret: "x", row: 2, cost_unit: -5, has_cover: true },
+  } });
+  assert.equal(o.statusCode, 200);
+  assert.deepEqual(calls.pop(), { action: "add_order_item", payload: {
+    order_number: ORD, request_id: "calc-1",
+    item: { product_type: "basket", basket_model: "AVL-05", item_comment: "По 3 вуха", size_w: 750, size_h: 700, size_d: 440, quantity: 14,
+      cost_total: 34664, price_total: 42122, list_price: 46802, discount_pct: 10, discount_uah: 4680, has_cover: true },
+  } });
+  o = await call(order, { method: "POST", body: { action: "add_item", order_number: ORD } });
+  assert.equal(o.statusCode, 400, "без позиції нічого не додаємо");
+  assert.equal(calls.length, 0);
+
   o = await call(order, { method: "DELETE", query: { order_number: ORD } });
   assert.equal(o.statusCode, 400, "без рядка позиції нічого не видаляємо");
   o = await call(order, { method: "DELETE", query: { row: "3" } });

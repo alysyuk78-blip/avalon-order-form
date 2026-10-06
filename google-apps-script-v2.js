@@ -34,7 +34,7 @@ var HDR_FONT = "Google Sans";
 var CAL_KEY = "AVALON";
 
 // Дії кабінету, що ПИШУТЬ у таблицю — лише вони потребують блокування скрипта.
-var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "delete_order_item", "upsert_partner",
+var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "delete_order_item", "add_order_item", "upsert_partner",
   "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment",
   "settlement_pdf", "settlement_send", "migrate_legacy_payments"];
 
@@ -81,6 +81,383 @@ function doPost(e) {
   }
 }
 
+// >>> AVALON-PRICING-CORE
+// ЄДИНИЙ алгоритм ціни кошика Avalon. Той самий текст (між маркерами) лежить у трьох місцях:
+//   • avalon-calculator  → src/lib/avalonPricing.mjs  (калькулятор)
+//   • avalon-order-form  → lib/avalon-pricing.js      (кабінет CRM і серверні повідомлення)
+//   • avalon-order-form  → google-apps-script-v2.js   (автоціна в таблиці)
+// Тести в обох репозиторіях звіряють контрольну суму цього блоку: змінив формулу тут —
+// онови всі три копії (npm run sync:pricing) і контрольну суму, інакше тести впадуть.
+// Синтаксис ES5 — щоб блок без змін працював і в Apps Script.
+var AVALON_PRICING_DEFAULTS = {
+  solidRate: 2030,          // стінки: AVL-01 / 02 / 04 і суцільний AVL-03, ₴/м²
+  sectionalRate: 2170,      // стінки: AVL-05 / 07 і розбірний AVL-03, ₴/м²
+  coverRate: 1920,          // кришка НЕ перфорована, ₴/м²
+  coverPerfRate: 2030,      // кришка перфорована, ₴/м²
+  screenKitPrice: 1700,     // AVL-02: система кріплення (2 кронштейни + 2 перемички), за комплект
+  universalBracketPrice: 800, // AVL-03: кронштейни для еталона Ш1000×Г550×В600 (∝ Ш+Г+В)
+  markupPct: 35,            // планова націнка, %
+  colorSurcharge: 200       // небазовий колір: доплата на ЗАМОВЛЕННЯ (не на виріб), ₴
+};
+// Базові кольори (без доплати): сірий RAL 7016, чорний RAL 9005, білий RAL 9016.
+var AVALON_BASE_RAL = ["7016", "9005", "9016"];
+var AVALON_COLOR_SURCHARGE_NAME = "Доплата за колір";
+var AVALON_UNIVERSAL_REF_SUM = 2150; // 1000 + 550 + 600 мм
+var AVALON_MATERIALS = {
+  black_steel: "Чорний метал",
+  galvanized: "Оцинкований метал",
+  aluminium: "Алюміній"
+};
+// Код моделі каталогу → тип конструкції в розрахунку. Моделей AVL-06, 06/1, 08 в окремому
+// калькуляторі немає: вони рахуються як суцільний кошик (кришка — якщо є в конструкції).
+var AVALON_MODEL_TYPES = {
+  "AVL-01": "solid", "AVL-02": "screen", "AVL-03": "universal", "AVL-04": "sectional_frame",
+  "AVL-05": "sectional", "AVL-06": "solid", "AVL-06/1": "solid", "AVL-07": "closed", "AVL-08": "solid"
+};
+var AVALON_MODEL_NAMES = {
+  "суцільний": "solid", "екран під утеплювач": "screen", "універсальний": "universal",
+  "зі знімною боковиною": "sectional_frame", "розбірний": "sectional", "закритий на підставці": "closed",
+  "ламель з кришкою": "solid", "ламельний": "solid", "горизонтальний монтаж": "solid"
+};
+
+// Прибирає шум плаваючої коми (1829.9999999998 → 1830), не змінюючи суму.
+function avalonSnap(value) { return Math.round(value * 1e6) / 1e6; }
+function avalonNum(value, fallback) {
+  var n = Number(value);
+  return isFinite(n) ? n : (fallback === undefined ? 0 : fallback);
+}
+
+/** Тип конструкції за текстом конструкції та назвою/кодом моделі (як вони лежать у замовленні). */
+function avalonModelType(construction, model) {
+  var hay = String(construction == null ? "" : construction) + " " + String(model == null ? "" : model);
+  var code = hay.toUpperCase().match(/AVL-\d{2}(?:\/\d)?/);
+  if (code && AVALON_MODEL_TYPES[code[0]]) return AVALON_MODEL_TYPES[code[0]];
+  var name = String(model == null ? "" : model).replace(/^\s+|\s+$/g, "").toLowerCase();
+  if (AVALON_MODEL_NAMES[name]) return AVALON_MODEL_NAMES[name];
+  if (/знімн\S*\s+бокови/i.test(hay)) return "sectional_frame";
+  return String(construction == null ? "" : construction).toLowerCase().indexOf("розбір") >= 0 ? "sectional" : "solid";
+}
+
+/**
+ * Опції, що впливають на ціну, з тексту позиції: кришка в конструкції («… + кришка») і рядки
+ * характеристик («Матеріал: …», «Верхня кришка: перфорована», «Нижня кришка: …»,
+ * «Стінки: розбірні», «Знімна бокова частина»).
+ */
+function avalonParseOptions(construction, specs) {
+  var c = String(construction == null ? "" : construction);
+  var s = String(specs == null ? "" : specs);
+  function line(re) { var m = s.match(re); return m ? String(m[1]).replace(/^\s+|\s+$/g, "") : ""; }
+  function coverType(text) { return /(^|\s)не\s+перфорована/i.test(text) ? "plain" : (/перфорована/i.test(text) ? "perforated" : "plain"); }
+  var materialLabel = line(/Матеріал:\s*([^\n]+)/i).toLowerCase();
+  var material = "black_steel";
+  for (var key in AVALON_MATERIALS) {
+    if (AVALON_MATERIALS[key].toLowerCase() === materialLabel) material = key;
+  }
+  var top = line(/Верхня кришка:\s*([^\n]+)/i);
+  var bottom = line(/Нижня кришка:\s*([^\n]+)/i);
+  var walls = line(/Стінки:\s*([^\n]+)/i);
+  return {
+    material: material,
+    topCover: top ? coverType(top) : (c.toLowerCase().indexOf("кришка") >= 0 ? "plain" : ""),
+    bottomCover: bottom ? coverType(bottom) : "",
+    universalSectional: /розбірн/i.test(walls) || c.toLowerCase().indexOf("розбір") >= 0,
+    universalRemovableSide: /Знімна бокова частина/i.test(s)
+  };
+}
+
+/**
+ * Розрахунок позиції. Розміри — ГОТОВОГО кошика в мм (для екрана: висота вже з рамкою,
+ * глибина = борти). Гроші: собівартість за од. → націнка → ціна за од. до гривні →
+ * × кількість → знижка.
+ *   type: solid | sectional | sectional_frame | universal | closed | screen
+ *   topCover / bottomCover: "" | "plain" | "perforated"
+ *   commissionPct: комісія з маржі (ТОВ/партнер), яку утримують з нашої маржі. Націнка
+ *     збільшується так, щоб ПІСЛЯ комісії лишалась планова: націнка / (1 − комісія).
+ */
+function avalonPrice(input, rates) {
+  var r = rates || {};
+  function rate(key) { return avalonNum(r[key], AVALON_PRICING_DEFAULTS[key]); }
+  var type = input.type || "solid";
+  var isScreen = type === "screen";
+  var isUniversal = type === "universal";
+  var qty = Math.max(1, avalonNum(input.quantity, 1) || 1);
+  // Розміри округлюються вгору до 10 мм ДО площі — ціна рахується на тих розмірах, що виготовляються.
+  var H = Math.ceil(Math.max(0, avalonNum(input.height)) / 10) * 10;
+  var W = Math.ceil(Math.max(0, avalonNum(input.width)) / 10) * 10;
+  var D = Math.ceil(Math.max(0, avalonNum(input.depth)) / 10) * 10;
+
+  // Площі, м². Стінки: 2 бокові (В×Г) + лицева (В×Ш); «закритий» — ще й задня (В×Ш).
+  var backArea = type === "closed" ? H * W : 0;
+  var wallArea = (2 * H * D + H * W + backArea) / 1000000;
+  var oneCoverArea = (W * D) / 1000000;
+  var topCoverArea = input.topCover && !isScreen ? oneCoverArea : 0;
+  var bottomCoverArea = input.bottomCover && !isScreen ? oneCoverArea : 0;
+  var sideWallArea = (H * D) / 1000000;
+
+  // Собівартість за одиницю («чорна» база).
+  var universalSectional = isUniversal && !!input.universalSectional;
+  var usesSolidRate = type === "solid" || isScreen || type === "sectional_frame";
+  var wallRate = isUniversal
+    ? (universalSectional ? rate("sectionalRate") : rate("solidRate"))
+    : (usesSolidRate ? rate("solidRate") : rate("sectionalRate"));
+  // Знімна бічна панель: AVL-04 завжди, AVL-03 — як опція. Завжди за суцільною ставкою.
+  var hasRemovableSide = type === "sectional_frame" || (isUniversal && !!input.universalRemovableSide);
+  var removableSideArea = hasRemovableSide ? sideWallArea : 0;
+  var wallsCost = wallArea * wallRate;
+  var removableSideCost = removableSideArea * rate("solidRate");
+  var topCoverRate = input.topCover === "perforated" ? rate("coverPerfRate") : rate("coverRate");
+  var bottomCoverRate = input.bottomCover === "perforated" ? rate("coverPerfRate") : rate("coverRate");
+  var topCoverCost = topCoverArea * topCoverRate;
+  var bottomCoverCost = bottomCoverArea * bottomCoverRate;
+  // Кронштейни AVL-03 ∝ сумі габаритів (Ш+Г+В); екран AVL-02 — один комплект кріплення.
+  var bracketsCost = (isScreen ? rate("screenKitPrice") : 0)
+    + (isUniversal ? rate("universalBracketPrice") * (W + D + H) / AVALON_UNIVERSAL_REF_SUM : 0);
+  var blackBase = avalonSnap(wallsCost + removableSideCost + (topCoverCost + bottomCoverCost) + bracketsCost);
+
+  // Матеріал: оцинкований +1400 ₴, алюміній ×2 — до повної «чорної» бази.
+  var material = input.material || "black_steel";
+  var materialAdjustment = material === "galvanized" ? 1400 : (material === "aluminium" ? blackBase : 0);
+  var baseUnit = blackBase + materialAdjustment;
+
+  // Націнка. З комісією з маржі — така, щоб після комісії лишалась планова націнка.
+  var planMarkup = avalonNum(input.markupPct, rate("markupPct"));
+  var commissionPct = Math.min(99, Math.max(0, avalonNum(input.commissionPct)));
+  var effectiveMarkup = commissionPct > 0 ? avalonSnap(planMarkup / (1 - commissionPct / 100)) : planMarkup;
+  var unitPrice = Math.round(baseUnit * (1 + effectiveMarkup / 100));
+
+  // Підсумки: ціна за одиницю × кількість → знижка (сума знижки — точне доповнення).
+  var discountPct = Math.min(100, Math.max(0, avalonNum(input.discountPct)));
+  var listTotal = unitPrice * qty;
+  var total = Math.round(unitPrice * qty * (1 - discountPct / 100));
+  var costTotal = Math.round(baseUnit * qty);
+  var profit = total - costTotal;
+  var commission = commissionPct > 0 && profit > 0 ? Math.round(profit * commissionPct) / 100 : 0;
+
+  return {
+    type: type, quantity: qty, height: H, width: W, depth: D, material: material,
+    topCover: topCoverArea ? input.topCover : "", bottomCover: bottomCoverArea ? input.bottomCover : "",
+    wallArea: wallArea, removableSideArea: removableSideArea,
+    topCoverArea: topCoverArea, bottomCoverArea: bottomCoverArea,
+    coverArea: topCoverArea + bottomCoverArea,
+    area: wallArea + topCoverArea + bottomCoverArea,
+    sideWallArea: sideWallArea,
+    wallRate: wallRate, solidRate: rate("solidRate"), topCoverRate: topCoverRate, bottomCoverRate: bottomCoverRate,
+    wallsCost: wallsCost, removableSideCost: removableSideCost,
+    topCoverCost: topCoverCost, bottomCoverCost: bottomCoverCost, coversCost: topCoverCost + bottomCoverCost,
+    bracketsCost: bracketsCost, blackBase: blackBase, materialAdjustment: materialAdjustment,
+    baseUnit: baseUnit, planMarkup: planMarkup, effectiveMarkup: effectiveMarkup, commissionPct: commissionPct,
+    unitPrice: unitPrice, listTotal: listTotal, discountPct: discountPct,
+    discountAmount: listTotal - total, total: total,
+    costTotal: costTotal, profit: profit, commission: commission, netProfit: profit - commission
+  };
+}
+
+// Складні візерунки: дорожчі за звичайні, а на скільки — менеджер рахує індивідуально.
+var AVALON_COMPLEX_PATTERNS = ["K3", "K4", "K6", "K8", "K9"];
+
+/**
+ * Чому позицію формула НЕ рахує (ціну визначає менеджер індивідуально) — або "" якщо рахує.
+ * Причини: антивандальне виконання (більша товщина металу + каркас) і складний візерунок.
+ */
+function avalonIndividualReason(basketType, pattern) {
+  var reasons = [];
+  if (String(basketType == null ? "" : basketType).toLowerCase().indexOf("антивандал") >= 0) reasons.push("антивандальне виконання");
+  // Код візерунка: латинська «K» або кирилична «К», далі номер (K3, к3, «K3 (свій)»).
+  var code = String(pattern == null ? "" : pattern).replace(/^\s+/, "").toUpperCase().replace(/^\u041A/, "K").match(/^K\d+/);
+  if (code && AVALON_COMPLEX_PATTERNS.indexOf(code[0]) >= 0) reasons.push("складний візерунок " + code[0]);
+  return reasons.join(" і ");
+}
+function avalonIsIndividualPricing(basketType, pattern) {
+  return avalonIndividualReason(basketType, pattern) !== "";
+}
+
+/**
+ * Чи колір базовий. Із кодом RAL — лише 7016 / 9005 / 9016; без коду — рівно «сірий»,
+ * «чорний» або «білий». Порожній (колір ще не вказано) доплати не дає.
+ */
+function avalonIsBaseColor(color) {
+  var text = String(color == null ? "" : color).replace(/^\s+|\s+$/g, "").toLowerCase();
+  if (!text) return true;
+  var codes = text.match(/\d{4}/g);
+  if (codes) {
+    for (var i = 0; i < codes.length; i++) {
+      if (AVALON_BASE_RAL.indexOf(codes[i]) < 0) return false;
+    }
+    return true;
+  }
+  return text === "сірий" || text === "чорний" || text === "білий";
+}
+
+/**
+ * Доплата за небазовий колір: ОДНА на замовлення, хоч скільки в ньому виробів і позицій.
+ * colors — колір позиції або масив кольорів усіх позицій замовлення.
+ */
+function avalonColorSurcharge(colors, rates) {
+  var list = Object.prototype.toString.call(colors) === "[object Array]" ? colors : [colors];
+  var amount = avalonNum((rates || {}).colorSurcharge, AVALON_PRICING_DEFAULTS.colorSurcharge);
+  for (var i = 0; i < list.length; i++) {
+    if (!avalonIsBaseColor(list[i])) return amount;
+  }
+  return 0;
+}
+
+/** Множник «собівартість → ціна»: 1,35 за планової націнки; з комісією 30 % — 1,5. */
+function avalonMarkupFactor(commissionPct, markupPct) {
+  var plan = avalonNum(markupPct, AVALON_PRICING_DEFAULTS.markupPct);
+  var c = Math.min(99, Math.max(0, avalonNum(commissionPct)));
+  return 1 + (c > 0 ? avalonSnap(plan / (1 - c / 100)) : plan) / 100;
+}
+
+/**
+ * Розкладка виробничої собівартості рядками — для повідомлень і картки CRM.
+ * Рядок площі: { key, label, area, rate, cost }; рядок суми за одиницю: { key, label, unit, cost }.
+ * cost — на всю кількість. Сума рядків може відрізнятись від costTotal на копійки округлення.
+ */
+function avalonCostLines(p) {
+  var q = p.quantity, lines = [];
+  function areaLine(key, label, area, rate) {
+    if (area > 0) lines.push({ key: key, label: label, area: area, rate: rate, cost: Math.round(area * rate * q) });
+  }
+  function unitLine(key, label, unit) {
+    if (unit > 0) lines.push({ key: key, label: label, unit: unit, cost: Math.round(unit * q) });
+  }
+  areaLine("walls", "Стінки", p.wallArea, p.wallRate);
+  areaLine("side", "Знімна бічна панель", p.removableSideArea, p.solidRate);
+  areaLine("top", "Верхня кришка" + (p.topCover === "perforated" ? " (перфорована)" : ""), p.topCoverArea, p.topCoverRate);
+  areaLine("bottom", "Нижня кришка" + (p.bottomCover === "perforated" ? " (перфорована)" : ""), p.bottomCoverArea, p.bottomCoverRate);
+  unitLine("brackets", p.type === "screen" ? "Система кріплення" : "Кронштейни", p.bracketsCost);
+  unitLine("material", p.material === "aluminium" ? "Алюміній (×2)" : "Оцинкований метал", p.materialAdjustment);
+  return lines;
+}
+
+/** Розрахунок позиції замовлення, як вона лежить у таблиці/кабінеті (текстові поля). */
+function avalonPriceItem(item, extra) {
+  var e = extra || {};
+  var opts = avalonParseOptions(item.construction, item.specs);
+  return avalonPrice({
+    type: avalonModelType(item.construction, item.model),
+    width: item.width, height: item.height, depth: item.depth, quantity: item.quantity,
+    material: opts.material, topCover: opts.topCover, bottomCover: opts.bottomCover,
+    universalSectional: opts.universalSectional, universalRemovableSide: opts.universalRemovableSide,
+    discountPct: e.discountPct, commissionPct: e.commissionPct, markupPct: e.markupPct
+  }, e.rates);
+}
+// <<< AVALON-PRICING-CORE
+
+/** Позиція з форми/кабінету → вхід єдиного алгоритму (текстові поля, як вони лежать у таблиці). */
+function pricingInput_(it) {
+  var construction = String(it.construction_type || it.construction || "");
+  if (it.has_cover && construction.toLowerCase().indexOf("кришка") < 0) construction += " + кришка";
+  var name = String(it.basket_model_name || "").trim(), code = String(it.basket_model || "").trim();
+  return {
+    construction: construction,
+    model: name && code && name !== code ? name + " " + code : (name || code),
+    specs: it.specs,
+    width: it.size_w, height: it.size_h, depth: it.size_d, quantity: it.quantity
+  };
+}
+
+/**
+ * «Відбиток» усього, від чого залежить ціна позиції за формулою: модель, опції, розміри,
+ * кількість, вид. Гроші перераховуємо лише коли він змінився — правка кольору чи коментаря
+ * не має затирати суми, які менеджер вписав сам або переніс із калькулятора.
+ */
+function pricingSignature_(o) {
+  var kind = String(o.kind || "");
+  if (kind && kind.toLowerCase().indexOf("кошик") < 0) return "not-basket";
+  var opts = avalonParseOptions(o.construction, o.specs);
+  function mm(x) { return Math.ceil(Math.max(0, Number(x) || 0) / 10) * 10; }
+  return [avalonIsIndividualPricing(o.basketType, o.pattern) ? "individual" : "formula",
+    avalonModelType(o.construction, o.model), opts.material, opts.topCover, opts.bottomCover,
+    opts.universalSectional ? 1 : 0, opts.universalRemovableSide ? 1 : 0,
+    mm(o.width), mm(o.height), mm(o.depth), Number(o.quantity) || 1].join("|");
+}
+function pricingSignatureOfRow_(sh, row) {
+  var v = sh.getRange(row, 1, 1, Math.min(sh.getMaxColumns(), 43)).getValues()[0];
+  return pricingSignature_({ basketType: v[7], pattern: v[10], construction: v[8], model: v[40], kind: v[41], specs: v[42],
+    width: v[13], height: v[14], depth: v[15], quantity: v[16] });
+}
+
+/** Чи це позиція «Доплата за колір» (рядок таблиці: вид у AP, назва в AO). */
+function isColorSurchargeRow_(v) {
+  return /послуг/i.test(String(v[41] || ""))
+    && String(v[40] || "").replace(/^\s+/, "").toLowerCase().indexOf(AVALON_COLOR_SURCHARGE_NAME.toLowerCase()) === 0;
+}
+/** Те саме для позиції з форми/калькулятора/повідомлення. */
+function isColorSurchargeItem_(it) {
+  return !!it && it.product_type === "service"
+    && String(it.basket_model_name || it.basket_model || "").replace(/^\s+/, "").toLowerCase().indexOf(AVALON_COLOR_SURCHARGE_NAME.toLowerCase()) === 0;
+}
+
+/**
+ * Доплата за небазовий колір — ОДНА на замовлення (не на виріб): окрема позиція-послуга
+ * «Доплата за колір» (собівартість = ціна, маржа 0). Додається, коли в замовленні є кошик
+ * небазового кольору з уже порахованою ціною; прибирається, коли небазових не лишилось.
+ * Працює лише до запуску у виробництво («Нове», «В опрацюванні підрядником»): далі ціна
+ * погоджена з клієнтом і сама собою мінятись не повинна.
+ * keepRow — рядок, який менеджер саме править: його не видаляємо.
+ * Повертає true, якщо позиції замовлення змінились.
+ */
+function syncColorSurcharge_(sh, orderNumber, keepRow) {
+  var last = sh.getLastRow();
+  if (last < 2) return false;
+  var nums = sh.getRange(2, 1, last - 1, 1).getValues();
+  var rows = [];
+  for (var i = 0; i < nums.length; i++) {
+    if (String(nums[i][0] || "").trim() === orderNumber) rows.push(i + 2);
+  }
+  if (!rows.length) return false;
+  var base = null, pricedColors = [], allColors = [], surcharges = [];
+  rows.forEach(function (r) {
+    var v = sh.getRange(r, 1, 1, ADMIN_ORDER_COLS).getValues()[0];
+    if (!base) base = v;
+    if (isColorSurchargeRow_(v)) {
+      surcharges.push({ row: r, cost: cellNum_(v[19]) || 0, revenue: cellNum_(v[21]) || 0 });
+      return;
+    }
+    var kind = String(v[41] || "");
+    if (kind && kind.toLowerCase().indexOf("кошик") < 0) return;
+    allColors.push(v[9]);
+    if ((cellNum_(v[21]) || 0) > 0) pricedColors.push(v[9]);
+  });
+  var status = canonStatus_(base[2]);
+  if (status !== "Нове" && status !== STATUS_PROCESSING) return false;
+
+  var amount = avalonColorSurcharge(pricedColors);
+  if (amount > 0 && !surcharges.length) {
+    var written = writeOrderToSheet_({
+      order_number: orderNumber, request_id: "",
+      _append: { afterRow: rows[rows.length - 1], base: base },
+      contact_method: String(base[37] || "").trim() || "phone",
+      contact_telegram: String(base[38] || ""), contact_email: String(base[39] || ""),
+      commission_pct: base[COMMISSION_PCT_COL - 1],
+      notes: "",
+      items: [{
+        product_type: "service", basket_model_name: AVALON_COLOR_SURCHARGE_NAME,
+        construction_type: AVALON_COLOR_SURCHARGE_NAME, basket_type: AVALON_COLOR_SURCHARGE_NAME,
+        quantity: 1, unit: "шт.", cost_total: amount, price_total: amount
+      }]
+    });
+    [PROCESSING_DUE_COL, PROCESSING_TASK_COL, CANCEL_REASON_COL].forEach(function (col) {
+      var val = base[col - 1];
+      if (val !== "" && val != null) sh.getRange(written.row, col).setValue(val);
+    });
+    return true;
+  }
+  // Небазових кольорів не лишилось — прибираємо доплату. Лише «чисту» (собівартість = ціна):
+  // змінену вручну, а також єдиний рядок замовлення не чіпаємо.
+  if (surcharges.length && avalonColorSurcharge(allColors) === 0 && rows.length > surcharges.length) {
+    var removed = false;
+    for (var k = surcharges.length - 1; k >= 0; k--) {
+      if (surcharges[k].row === keepRow || surcharges[k].cost !== surcharges[k].revenue) continue;
+      sh.deleteRow(surcharges[k].row);
+      removed = true;
+    }
+    return removed;
+  }
+  return false;
+}
+
 /**
  * ЄДИНЕ місце, де замовлення перетворюється в рядки аркуша «Замовлення».
  * Викликають: doPost (заявка з форми) і adminCreateOrder_ (ручне внесення в CRM) —
@@ -115,7 +492,8 @@ function writeOrderToSheet_(data) {
     // Ставка комісії партнера/ТОВ (% від маржі) — спільна для всіх позицій замовлення.
     var commissionPct = normalizeCommissionPct_(data.commission_pct);
 
-    var MARKUP = 1 / (1 - 0.2593);
+    // Множник «собівартість → ціна» за плановою націнкою (з комісією з маржі — більший).
+    var MARKUP = avalonMarkupFactor(commissionPct);
     var itemsIn = (Array.isArray(data.items) && data.items.length) ? data.items : [{
       basket_model: data.basket_model, basket_model_name: data.basket_model_name,
       unit: data.unit,
@@ -153,7 +531,10 @@ function writeOrderToSheet_(data) {
     });
 
     // Номер резервуємо лише після успішної перевірки всіх позицій.
-    data.order_number = nextOrderNumber();
+    // _append — дописуємо позицію до наявного замовлення (номер уже є).
+    var append = data._append || null;
+    if (!append) data.order_number = nextOrderNumber();
+    var appendAfter = append ? Number(append.afterRow) : 0;
 
     itemsIn.forEach(function (it) {
       var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
@@ -161,19 +542,22 @@ function writeOrderToSheet_(data) {
       // Собівартість, вписана вручну в CRM, має пріоритет і НЕ перетирається авто-розрахунком.
       var manualCost = (it.cost_total != null && it.cost_total !== "") ? Math.round(Number(it.cost_total)) : null;
       var areaM2 = 0, total = 0, costTotal = 0, hasMoney = false;
-      // Площа: кошик + верхня кришка (кришка — окрема площа w×d). Для кронштейнів і
-      // довільних виробів цю формулу не застосовуємо — «площа ковша» за розкроєм
-      // кошика нічого не означає і лише збиває з пантелику в таблиці та звітах.
+      // Розрахунок за єдиним алгоритмом (той самий, що в калькуляторі) — лише для кошиків.
+      // Для кронштейнів і довільних виробів формулу не застосовуємо — «площа ковша» за
+      // розкроєм кошика нічого не означає і лише збиває з пантелику в таблиці та звітах.
       var areaApplies = it.product_type !== "bracket" && it.product_type !== "other" && it.product_type !== "service";
-      var sideArea = areaApplies ? removableSideArea_(it, h, d) : 0;   // AVL-04: знімна боковина
-      if (areaApplies && w && h) areaM2 = ((w * h + 2 * d * h) + (it.has_cover ? w * d : 0)) / 1000000 + sideArea;
+      var calc = (areaApplies && w && h)
+        ? avalonPriceItem(pricingInput_(it), { commissionPct: commissionPct, discountPct: it.discount_pct })
+        : null;
+      var formulaPriced = false;
+      if (calc) areaM2 = calc.area + calc.removableSideArea;
       if (it.price_total != null && it.price_total !== "") {
         total = Math.round(Number(it.price_total));
         if (it.area_m2 != null) areaM2 = Number(it.area_m2);
         costTotal = manualCost != null ? manualCost : Math.round(total / MARKUP);
         hasMoney = total > 0;
       } else if (manualCost != null) {
-        // Вписана собівартість без ціни → ціна за стандартною націнкою (маржа 25.9%).
+        // Вписана собівартість без ціни → ціна за плановою націнкою (35 %).
         // Так собівартість менеджера не перетирається, а маржа не виходить відʼємною.
         // Для послуги ціну не вигадуємо: лишається порожньою, доки менеджер її не впише.
         costTotal = manualCost;
@@ -181,21 +565,14 @@ function writeOrderToSheet_(data) {
           total = Math.round(manualCost * MARKUP);
           hasMoney = total > 0;
         }
-      } else if (w && h && areaApplies) {
-        // Площинна формула — лише для кошиків. Кронштейни й довільні вироби
-        // (пергола, стенд…) отримують ціну від менеджера, не з ₴/м².
-        var constrLower = String(it.construction_type || "").toLowerCase();
-        var basketArea = (w * h + 2 * d * h) / 1000000 + sideArea;
-        var coverArea = it.has_cover ? (w * d) / 1000000 : 0;
-        // «розбір» (не «розбірний»), щоб ловити й «Розбірна» (AVL-02), і «Розбірний (з 3-х частин)».
-        var ppm2 = constrLower.indexOf("розбір") >= 0 ? 2170 : 2030;
-        ppm2 = Math.round(ppm2 * MARKUP);
-        if ((it.basket_type || "").toLowerCase().indexOf("антивандал") >= 0) ppm2 = Math.round(ppm2 * 1.35);
-        if (it.pattern && ["K3","K4","K6","K8","K9"].indexOf(it.pattern) >= 0) ppm2 = Math.round(ppm2 * 1.15);
-        total = Math.round(basketArea * ppm2) * qty;
-        if (coverArea) total += Math.round(coverArea * Math.round(1920 * MARKUP)) * qty; // 1920 ₴/м² — собівартість кришки
-        costTotal = Math.round(total / MARKUP);
+      } else if (calc && !avalonIsIndividualPricing(it.basket_type, it.pattern)) {
+        // Формула — лише для кошиків. Кронштейни й довільні вироби (пергола, стенд…)
+        // отримують ціну від менеджера, не з ₴/м². Антивандальний кошик і складний візерунок
+        // теж рахуються індивідуально: ціна лишається порожньою, доки менеджер її не впише.
+        total = calc.total;
+        costTotal = calc.costTotal;
         hasMoney = total > 0;
+        formulaPriced = hasMoney;
       }
       var profit    = hasMoney ? total - costTotal : "";
       var costUnit  = costTotal ? Math.round(costTotal / qty) : "";
@@ -211,7 +588,8 @@ function writeOrderToSheet_(data) {
       }
       if (!w && (it.bracket_model_from || it.bracket_model_to)) itemNotes.push("Потужність (BTU): " + (it.bracket_model_from || "") + " — " + (it.bracket_model_to || ""));
       if (it.ac_model_url) itemNotes.push("Посилання на кондиціонер: " + it.ac_model_url);
-      if (it.model_comment) itemNotes.push("Коментар до моделі: " + it.model_comment);
+      // Коментар до моделі/позиції — у власну колонку AX (нижче), а не в спільні примітки:
+      // у повідомленні підряднику він стоїть у блоці саме цієї позиції.
       if (itemNotes.length) notes = [notes].concat(itemNotes).filter(function (x) { return x; }).join("\n");
       if (patternFileInfo && patternFileInfo.name) {
         notes = [notes, "Файл візерунку: " + patternFileInfo.name + " (надіслано власнику в Telegram; підряднику переслати вручну)"].filter(function (x) { return x; }).join("\n");
@@ -239,7 +617,21 @@ function writeOrderToSheet_(data) {
         data.delivery_date || "", data.payment_method || "",                           // AC-AD
         data.how_found || (data.how_found_custom || ""), notes                         // AE-AF
       ];
-      lastRow = appendOrderRow_(sheet, row);
+      if (append) {
+        // Спільні для замовлення колонки беремо з його першого рядка — дата, статус,
+        // джерело, клієнт, доставка, оплата: нова позиція не «роздвоює» замовлення.
+        [1, 2, 3, 4, 6, 26, 27, 28, 29, 30].forEach(function (ci) { row[ci] = append.base[ci]; });
+        // Телефон — текстом з апострофом: інакше «+380…» таблиця сприйме як число.
+        var basePhone = String(append.base[5] == null ? "" : append.base[5]).replace(/^'/, "").trim();
+        row[5] = basePhone ? "'" + basePhone : "";
+        sheet.insertRowsAfter(appendAfter, 1);
+        lastRow = appendAfter + 1;
+        sheet.getRange(lastRow, 1, 1, row.length).setValues([row]);
+        applyOrderRowControls_(sheet, lastRow);
+        appendAfter = lastRow;
+      } else {
+        lastRow = appendOrderRow_(sheet, row);
+      }
       ensureContactColumns_(sheet);
       sheet.getRange(lastRow, 38, 1, 3).setValues([[
         cm,
@@ -259,6 +651,10 @@ function writeOrderToSheet_(data) {
         unit || "шт."
       ]]);
       sheet.getRange(lastRow, 45).setValue(requestId);
+      // Ціна за формулою: фіксуємо й прайс зі знижкою (AI–AK), щоб картка показувала ті самі числа.
+      if (formulaPriced) sheet.getRange(lastRow, 35, 1, 3).setValues([[calc.listTotal, calc.discountPct, calc.discountAmount]]);
+      var itemComment = String(it.item_comment || it.model_comment || "").trim().slice(0, 1000);
+      if (itemComment) sheet.getRange(lastRow, ITEM_COMMENT_COL).setValue(itemComment);
       writtenRows.push(lastRow);
       var rr = sheet.getRange(lastRow, 1, 1, row.length);
       rr.setVerticalAlignment("middle").setWrap(true);
@@ -398,10 +794,27 @@ function onEditDelivery(e) {
     if (range.getRow() < 2) return;
     var col = range.getColumn();
 
-    // Перерахунок фінансів при зміні розмірів/кількості/типу/конструкції/візерунка.
-    // H=8, I=9, K=11, N=14, O=15, P=16, Q=17.
-    // 41 (AO, модель): від неї залежить знімна бічна панель AVL-04.
-    if ([8, 9, 11, 14, 15, 16, 17, 41].indexOf(col) >= 0) {
+    // Перерахунок фінансів, коли змінилось те, від чого залежить ціна за формулою:
+    // I=9 конструкція, N=14, O=15, P=16 розміри, Q=17 кількість, AO=41 модель,
+    // AQ=43 характеристики (матеріал, кришки, опції AVL-03).
+    // H=8 тип і K=11 візерунок: лише коли позиція перестала бути «індивідуальною»
+    // (антивандальний / складний візерунок) і тепер рахується формулою.
+    if ([8, 9, 11, 14, 15, 16, 17, 41, 43].indexOf(col) >= 0) {
+      var single = range.getNumRows() === 1 && range.getNumColumns() === 1;
+      if (col === 8 || col === 11) {
+        if (!single) return;
+        var oldCell = e.oldValue == null ? "" : e.oldValue;
+        var rowNow = sh.getRange(range.getRow(), 1, 1, 11).getValues()[0];
+        var wasIndividual = col === 8 ? avalonIsIndividualPricing(oldCell, rowNow[10]) : avalonIsIndividualPricing(rowNow[7], oldCell);
+        if (!wasIndividual || avalonIsIndividualPricing(rowNow[7], rowNow[10])) return;
+      }
+      // Характеристики — вільний текст: перераховуємо лише коли змінилась опція, що впливає
+      // на ціну (а не, скажімо, дописали модель кондиціонера).
+      if (col === 43) {
+        if (!single) return;
+        var before = JSON.stringify(avalonParseOptions("", e.oldValue == null ? "" : e.oldValue));
+        if (before === JSON.stringify(avalonParseOptions("", range.getValue()))) return;
+      }
       for (var ri = 0; ri < range.getNumRows(); ri++) recalcRow_(sh, range.getRow() + ri);
       return;
     }
@@ -507,50 +920,40 @@ function setCommissionFormulas_(sheet, row) {
 }
 
 /**
- * Перераховує площу/собівартість/ціну/прибуток/маржу для одного рядка
- * за тією ж формулою, що й при створенні замовлення (doPost). Викликається
- * автоматично при зміні розмірів/кількості/типу/конструкції/візерунка.
+ * Перераховує площу/собівартість/ціну/прибуток/маржу для одного рядка за ЄДИНИМ алгоритмом
+ * (avalonPrice — той самий, що в калькуляторі). Викликається, коли змінилось те, від чого
+ * залежить ціна: розміри, кількість, модель/конструкція, опції в характеристиках.
  * Колонки: R(18) Площа, S(19) Собів.1шт, T(20) Собів.заг, U(21) Ціна1шт,
  *          V(22) Виручка, W(23) Валовий, X(24) Маржа. Y/Z — формули, оновляться самі.
  */
 function recalcRow_(sh, row) {
   if (row < 2) return;
-  // Площинна формула (₴/м² кошика) чинна ЛИШЕ для кошиків. Кронштейни й довільні
-  // вироби (пергола, стенд…) мають власну ціну від менеджера — не перетираємо її.
-  if (sh.getMaxColumns() >= 42) {
-    var kind = String(sh.getRange(row, 42).getValue() || "");
-    if (kind && kind.toLowerCase().indexOf("кошик") < 0) return;
-  }
-  var v = sh.getRange(row, 1, 1, 17).getValues()[0]; // A..Q
-  var basket_type = v[7], construction = v[8], pattern = v[10];
-  var w = Number(v[13]) || 0, h = Number(v[14]) || 0, d = Number(v[15]) || 0;
-  var qty = Number(v[16]) || 1;
+  var v = sh.getRange(row, 1, 1, Math.min(sh.getMaxColumns(), COMMISSION_PCT_COL)).getValues()[0];
+  // Формула чинна ЛИШЕ для кошиків. Кронштейни й довільні вироби (пергола, стенд…)
+  // мають власну ціну від менеджера — не перетираємо її.
+  var kind = String(v[41] || "");
+  if (kind && kind.toLowerCase().indexOf("кошик") < 0) return;
+  var w = Number(v[13]) || 0, h = Number(v[14]) || 0;
   if (!(w && h)) return; // без розмірів не перераховуємо (напр. «розрахує менеджер»)
-  var MARKUP = 1 / (1 - 0.2593);
-  var modelName = sh.getMaxColumns() >= 41 ? String(sh.getRange(row, 41).getValue() || "") : "";
-  // AVL-04: + знімна бічна панель (висота × глибина) — за тією ж ставкою, що й стінки.
-  var basketAreaM2 = (w * h + 2 * d * h) / 1000000
-    + removableSideArea_({ construction_type: construction, basket_model: modelName }, h, d);
-  var hasCover = String(construction || "").toLowerCase().indexOf("кришка") >= 0;
-  var coverAreaM2 = hasCover ? (w * d) / 1000000 : 0;
-  var areaM2 = basketAreaM2 + coverAreaM2;
-  // «розбір» (не «розбірний») — щоб ловити й «Розбірна» (AVL-02), і «Розбірний (з 3-х частин)».
-  var basketCostRate = String(construction || "").toLowerCase().indexOf("розбір") >= 0 ? 2170 : 2030;
-  if (String(basket_type || "").toLowerCase().indexOf("антивандал") >= 0) basketCostRate = Math.round(basketCostRate * 1.35);
-  if (pattern && ["K3", "K4", "K6", "K8", "K9"].indexOf(pattern) >= 0) basketCostRate = Math.round(basketCostRate * 1.15);
-  var basketPriceRate = Math.round(basketCostRate * MARKUP);
-  var coverCostRate = 1920;
-  var coverPriceRate = Math.round(coverCostRate * MARKUP);
-  var total = Math.round((basketAreaM2 * basketPriceRate + coverAreaM2 * coverPriceRate) * qty);
-  var costTotal = Math.round(basketAreaM2 * basketCostRate * qty) + Math.round(coverAreaM2 * coverCostRate * qty);
-  var costUnit = Math.round(costTotal / qty);
-  var priceUnit = Math.round(total / qty);
-  var margin = total ? Math.round((total - costTotal) / total * 1000) / 10 : "";
+  // Антивандальний кошик і складний візерунок рахуються індивідуально — вписані менеджером
+  // суми не чіпаємо.
+  if (avalonIsIndividualPricing(v[7], v[10])) return;
+  // Знижка клієнта лишається: відсоток із таблиці, а якщо записана лише сума — її частка в прайсі.
+  var oldList = cellNum_(v[34]) || 0, oldPct = cellNum_(v[35]) || 0, oldUah = cellNum_(v[36]) || 0;
+  var discountPct = oldPct > 0 ? oldPct : (oldList > 0 && oldUah > 0 ? Math.round(oldUah / oldList * 10000) / 100 : 0);
+  var p = avalonPriceItem(
+    { construction: v[8], model: v[40], specs: v[42], width: w, height: h, depth: v[15], quantity: v[16] },
+    { discountPct: discountPct, commissionPct: cellNum_(v[COMMISSION_PCT_COL - 1]) }
+  );
+  var margin = p.total ? Math.round((p.total - p.costTotal) / p.total * 1000) / 10 : "";
   // Один setValues на діапазон R..X — щоб не плодити зайвих спрацювань тригера.
-  sh.getRange(row, 18, 1, 7).setValues([[Number(areaM2.toFixed(2)), costUnit, costTotal, priceUnit, total, total - costTotal, margin]]);
-  // Після стандартного перерахунку старий ручний прайс/знижка вже не відповідає
-  // новій виручці. Фіксуємо нову роздрібну ціну та обнуляємо стару знижку.
-  sh.getRange(row, 35, 1, 3).setValues([[total, 0, 0]]);
+  sh.getRange(row, 18, 1, 7).setValues([[
+    Number((p.area + p.removableSideArea).toFixed(2)),
+    Math.round(p.costTotal / p.quantity), p.costTotal,
+    Math.round(p.total / p.quantity), p.total, p.total - p.costTotal, margin
+  ]]);
+  // Прайс до знижки, відсоток і сума знижки — ті самі, що покаже калькулятор.
+  sh.getRange(row, 35, 1, 3).setValues([[p.listTotal, p.discountPct, p.discountAmount]]);
 }
 
 function toISODate(v) {
@@ -767,20 +1170,6 @@ var MODEL_CATALOG = {
   "AVL-K-01":  { name: "Кронштейни декоративні",   photo: "avl-k-01-brackets.jpg" },
   "AVL-SK-01": { name: "Кронштейна система",       photo: "avl-sk-01-system.jpg" }
 };
-/**
- * AVL-04 «Зі знімною боковиною»: окрім лицевої й двох бічних стінок має ще одну бічну —
- * знімну панель (висота × глибина). Так рахує і калькулятор (sectional_frame:
- * «3 бічні стінки + лицева» за 2030 ₴/м²). Без неї собівартість і повідомлення
- * підряднику занижували кошик на площу однієї боковини.
- */
-function hasRemovableSide_(it) {
-  var hay = [it && it.construction_type, it && it.construction, it && it.basket_model, it && it.basket_model_name].join(" ");
-  return /AVL-04(?!\d)/i.test(hay) || /знімн\S*\s+бокови/i.test(hay);
-}
-/** Площа знімної бічної панелі AVL-04 (м² на один кошик) або 0. */
-function removableSideArea_(it, h, d) {
-  return (h && d && hasRemovableSide_(it)) ? (h * d) / 1000000 : 0;
-}
 
 function siteUrl_() {
   var custom = "";
@@ -948,7 +1337,9 @@ function buildOrderFromRows_(sh, orderNumber) {
     }
     String(r[31] || "").split(/\n+/).forEach(function (line) {
       line = String(line || "").trim();
-      if (line) order.noteLines[line] = true;
+      // «Коментар до моделі: …» стосується однієї позиції — він іде в її блок (comment),
+      // а не в спільну «Додаткову інформацію» наприкінці.
+      if (line && !/^Коментар до моделі:/i.test(line)) order.noteLines[line] = true;
     });
     // Кронштейни (AVL-K-01 / AVL-SK-01): відновлюємо модель (кол. AO) та довжину/
     // віброподушки з приміток САМЕ цього рядка (не з обʼєднаних по замовленню) —
@@ -976,7 +1367,8 @@ function buildOrderFromRows_(sh, orderNumber) {
       // V виручка, W валовий прибуток, Y комісія — для блоку «маржа до виплати».
       revenue: cellNum_(r[21]), profit: cellNum_(r[22]), commission: cellNum_(r[24]),
       bracket_length: lenMatch ? lenMatch[1].trim() : "",
-      vibro_pads: /Віброподушки:\s*так/i.test(rowNotes)
+      vibro_pads: /Віброподушки:\s*так/i.test(rowNotes),
+      comment: itemComment_(ncol >= ITEM_COMMENT_COL ? r[ITEM_COMMENT_COL - 1] : "", rowNotes)
     });
   }
   if (order) {
@@ -1043,40 +1435,50 @@ function buildProductionMsg_(data, opts) {
     ac_brand: data.ac_brand, ac_model: data.ac_model, area_m2: data.area_m2, cost_total: data.cost_total
   }];
   var multi = items.length > 1;
+  // Доплата за колір — рядок грошей, а не виріб: у «Виробництві» її не показуємо,
+  // і одиничний кошик через неї не стає «Кошик 1».
+  var blocks = items.filter(function (it) { return !isColorSurchargeItem_(it); }).length;
+  var multiBlocks = blocks > 1;
   function itemUnit(it) {
     return esc_(String(it.unit || (it.product_type === "bracket" ? "комп." : "шт.")).trim() || "шт.");
   }
+  // Коментар до КОНКРЕТНОЇ позиції — одразу під нею, щоб підрядник не відніс його до всіх.
+  function itemCommentLines(it) {
+    var text = String((it && (it.comment || it.item_comment || it.model_comment)) || "").trim();
+    if (!text) return "";
+    var lines = text.split(/\n+/).map(function (x) { return String(x || "").trim(); }).filter(function (x) { return x; });
+    if (!lines.length) return "";
+    var out = "• ❗ Коментар: <b>" + esc_(lines[0]) + "</b>\n";
+    for (var k = 1; k < lines.length; k++) out += "   <b>" + esc_(lines[k]) + "</b>\n";
+    return out;
+  }
   function itemLabel_(it, i) {
+    if (isColorSurchargeItem_(it)) return AVALON_COLOR_SURCHARGE_NAME + " (небазовий, на замовлення)";
     var base = it.product_type === "bracket" ? "Кронштейни"
              : it.product_type === "other" ? "Виріб"
              : it.product_type === "service" ? "Послуга" : "Кошик";
-    return base + " " + (i + 1);
+    return multiBlocks ? base + " " + (i + 1) : base;
   }
+  // Розкладка собівартості — тим самим алгоритмом, що рахує ціну (avalonPrice).
   function breakdown(it) {
-    var zero = { qty: 1, basketArea: 0, coverArea: 0, sideArea: 0, basketRate: 0, coverRate: 0, basketCost: 0, coverCost: 0, sideCost: 0, total: 0 };
+    var zero = { qty: 1, lines: [], sum: 0, total: 0, dims: "" };
     // Розкладка «м² × ₴/м²» чинна ЛИШЕ для кошиків. Кронштейни й довільні вироби
     // (ковш, пергола, стенд…) мають ціну від менеджера, тож рахувати їх за площею
     // кошика — вигадувати цифри, яких підрядник не бачив.
     if (it.product_type === "other" || it.product_type === "bracket" || it.product_type === "service") return zero;
-    var qty = Number(it.quantity) || 1;
+    // Антивандальний кошик і складний візерунок рахуються індивідуально — розкладка за площею
+    // була б чужими цифрами.
+    if (avalonIsIndividualPricing(it.basket_type, it.pattern)) return zero;
     var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
-    var hasCover = !!it.has_cover || String(it.construction_type || "").toLowerCase().indexOf("кришка") >= 0;
-    var basketArea = Number(it.basket_area_m2) || ((w && h) ? (w * h + 2 * d * h) / 1000000 : 0);
-    var coverArea = hasCover ? (Number(it.cover_area_m2) || ((w && d) ? w * d / 1000000 : 0)) : 0;
-    var basketRate = Number(it.basket_cost_per_m2) || (String(it.construction_type || "").toLowerCase().indexOf("розбірний") >= 0 ? 2170 : 2030);
-    if (!Number(it.basket_cost_per_m2) && String(it.basket_type || "").toLowerCase().indexOf("антивандал") >= 0) basketRate = Math.round(basketRate * 1.35);
-    if (!Number(it.basket_cost_per_m2) && it.pattern && ["K3", "K4", "K6", "K8", "K9"].indexOf(it.pattern) >= 0) basketRate = Math.round(basketRate * 1.15);
-    var coverRate = Number(it.cover_cost_per_m2) || 1920;
-    var basketCost = Number(it.basket_cost_total) || Math.round(basketArea * basketRate * qty);
-    var coverCost = hasCover ? (Number(it.cover_cost_total) || Math.round(coverArea * coverRate * qty)) : 0;
-    // AVL-04: знімна бічна панель — окремим рядком, щоб підрядник бачив, з чого сума.
-    var sideArea = Number(it.basket_area_m2) ? 0 : removableSideArea_(it, h, d);
-    var sideCost = sideArea ? Math.round(sideArea * basketRate * qty) : 0;
+    if (!(w && h)) return zero;
+    var p = avalonPriceItem(pricingInput_(it));
+    var lines = avalonCostLines(p), sum = 0;
+    lines.forEach(function (l) { sum += l.cost; });
+    // Ціна рахується на розмірах, округлених угору до 10 мм, — показуємо їх, коли вони інші.
+    var rounded = p.width !== w || p.height !== h || p.depth !== d;
     return {
-      qty: qty, basketArea: basketArea, coverArea: coverArea, sideArea: sideArea,
-      basketRate: basketRate, coverRate: coverRate,
-      basketCost: basketCost, coverCost: coverCost, sideCost: sideCost,
-      total: basketCost + coverCost + sideCost
+      qty: p.quantity, lines: lines, sum: sum, total: p.costTotal,
+      dims: rounded ? p.height + "×" + p.width + "×" + p.depth : ""
     };
   }
 
@@ -1097,13 +1499,14 @@ function buildProductionMsg_(data, opts) {
 
   // Лише послуги (різання, фарбування, гнуття…) — інший заголовок, щоб підрядник одразу
   // бачив, що це робота з матеріалом, а не виготовлення виробу.
-  var onlyServices = items.every(function (it) { return it.product_type === "service"; });
+  var onlyServices = items.every(function (it) { return it.product_type === "service"; }) && blocks > 0;
   m += onlyServices ? "\n🛠 <b>ПОСЛУГИ</b>\n" : "\n🏭 <b>ВИРОБНИЦТВО</b>\n";
   items.forEach(function (it, i) {
     var color = it.color ? esc_(it.color) + (it.color_custom ? " (" + esc_(it.color_custom) + ")" : "") : "";
     var pattern = it.pattern ? esc_(it.pattern) + (it.pattern_custom ? " (" + esc_(it.pattern_custom) + ")" : "") : "";
+    if (isColorSurchargeItem_(it)) return;
     if (it.product_type === "service") {
-      if (multi) m += "\n🛠 <b>Послуга " + (i + 1) + "</b>\n";
+      if (multiBlocks) m += "\n🛠 <b>Послуга " + (i + 1) + "</b>\n";
       // Види робіт кабінет зберігає в колонці «Тип» через «; » — підряднику списком через кому.
       var ops = String(it.basket_type || "").split(/\s*[;\n]\s*/).filter(function (x) { return x; });
       var title = String(it.basket_model_name || it.basket_model || "").trim();
@@ -1115,10 +1518,11 @@ function buildProductionMsg_(data, opts) {
       if (color) m += "• Колір: <b>" + color + "</b>\n";
       if (Number(it.size_w) > 0) m += "• Розміри (мм): <b>" + it.size_w + "×" + it.size_h + "×" + it.size_d + "</b>\n";
       m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
+      m += itemCommentLines(it);
       return;
     }
     if (it.product_type === "other") {
-      if (multi) m += "\n🧱 <b>Виріб " + (i + 1) + "</b>\n";
+      if (multiBlocks) m += "\n🧱 <b>Виріб " + (i + 1) + "</b>\n";
       if (it.basket_model_name || it.basket_model) m += "• Виріб: <b>" + esc_(it.basket_model_name || it.basket_model) + "</b>\n";
       if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
         if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
@@ -1126,18 +1530,20 @@ function buildProductionMsg_(data, opts) {
       if (color) m += "• Колір: <b>" + color + "</b>\n";
       if (Number(it.size_w) > 0) m += "• Розміри (мм): <b>" + it.size_w + "×" + it.size_h + "×" + it.size_d + "</b>\n";
       m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
+      m += itemCommentLines(it);
       return;
     }
     if (it.product_type === "bracket") {
-      if (multi) m += "\n🔩 <b>Кронштейни " + (i + 1) + "</b>\n";
+      if (multiBlocks) m += "\n🔩 <b>Кронштейни " + (i + 1) + "</b>\n";
       if (it.basket_model_name || it.basket_model) m += "• Модель: <b>" + esc_(it.basket_model_name || it.basket_model) + "</b>\n";
       if (it.bracket_length) m += "• Довжина: <b>" + esc_(it.bracket_length) + "</b>\n";
       m += "• Віброподушки: <b>" + (it.vibro_pads ? "Так" : "Ні") + "</b>\n";
       if (color) m += "• Колір: <b>" + color + "</b>\n";
       m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
+      m += itemCommentLines(it);
       return;
     }
-    if (multi) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
+    if (multiBlocks) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
     // Порожні «Тип:» і «Конструкція:» не друкуємо — у повідомленні вони виглядали як загублені дані.
     if (String(it.basket_type || "").trim()) m += "• Тип: <b>" + esc_(it.basket_type) + "</b>\n";
     // Конструкція + модель: «Суцільний · AVL-04 · Зі знімною боковиною» — підрядник одразу
@@ -1152,12 +1558,17 @@ function buildProductionMsg_(data, opts) {
     if (color) m += "• Колір: <b>" + color + "</b>\n";
     if (pattern) m += "• Візерунок: <b>" + pattern + "</b>\n";
     if (it.ac_brand || it.ac_model) m += "• Кондиціонер: <b>" + esc_([it.ac_brand, it.ac_model].filter(function (x) { return x; }).join(" ")) + "</b>\n";
+    // Характеристики кошика (матеріал, тип кришок, блок кондиціонера…) — з калькулятора або картки.
+    if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
+      if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
+    });
     if (Number(it.size_w) > 0) {
       m += "• Розміри (мм):\n   Висота — <b>" + it.size_h + "</b>\n   Ширина — <b>" + it.size_w + "</b>\n   Глибина — <b>" + it.size_d + "</b>\n";
     } else {
       m += "• Розміри: <i>розрахує менеджер</i>\n";
     }
     m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
+    m += itemCommentLines(it);
   });
 
   // Ціна клієнта йде у «Фінанси», а маржа до виплати — окремим блоком після них.
@@ -1172,28 +1583,42 @@ function buildProductionMsg_(data, opts) {
   // «0.99 м² × 2 030 ₴/м² × 2 шт. = 4 019 ₴» — кількість у формулі обовʼязково: без неї
   // 0,99 × 2 030 ≠ 4 019, і підрядник не розумів, звідки сума. Площу — з повною точністю
   // (розміри в мм → до 6 знаків: 0.9955, 0.275), щоб показані множники давали показану суму.
-  function areaLine(label, area, rate, it, cost, perM2Bold) {
+  function costLine(label, line, it, perM2Bold) {
     var qty = Number(it.quantity) || 1;
-    var a = String(Math.round(area * 1000000) / 1000000);
-    return label + ": " + a + " м² × " + (perM2Bold ? "<b>" + money_(rate) + " ₴/м²</b>" : money_(rate) + " ₴/м²")
-      + (qty > 1 ? " × " + qty + " " + itemUnit(it) : "")
-      + " = <b>" + money_(cost) + " ₴</b>\n";
+    var times = qty > 1 ? " × " + qty + " " + itemUnit(it) : "";
+    if (line.area == null) {
+      // Сума за одиницю (кронштейни, система кріплення, доплата за матеріал).
+      return label + ": " + (qty > 1 ? money2_(Math.round(line.unit * 100) / 100) + " ₴" + times + " = " : "")
+        + "<b>" + money_(line.cost) + " ₴</b>\n";
+    }
+    var a = String(Math.round(line.area * 1000000) / 1000000);
+    return label + ": " + a + " м² × " + (perM2Bold ? "<b>" + money_(line.rate) + " ₴/м²</b>" : money_(line.rate) + " ₴/м²")
+      + times + " = <b>" + money_(line.cost) + " ₴</b>\n";
+  }
+  // Рядки розкладки позиції: перший (стінки) — під назвою позиції, решта — своїми назвами.
+  function costLines(b, it, firstLabel, restPrefix, perM2Bold) {
+    var out = "";
+    b.lines.forEach(function (line, k) {
+      out += costLine(k === 0 && line.key === "walls" ? firstLabel : restPrefix + line.label, line, it, perM2Bold);
+    });
+    if (b.dims) out += restPrefix + "Площа — за розмірами, округленими до 10 мм: " + b.dims + " мм\n";
+    return out;
   }
   // Сума, вписана менеджером, може відрізнятися від розрахунку за площею — показуємо різницю,
   // щоб рядки завжди сходились із «Вартістю виробничою».
-  function adjustmentLine(prefix, diff) {
+  function adjustmentLine(prefix, diff, b) {
     if (Math.abs(diff) < 1) return "";
-    return prefix + "Коригування менеджера: <b>" + (diff > 0 ? "+" : "−") + money_(Math.abs(diff)) + " ₴</b>\n";
+    // Різниця в межах копійок на рядок/штуку — це округлення, а не рішення менеджера.
+    var label = Math.abs(diff) <= Math.max(1, b.qty, b.lines.length) ? "Округлення" : "Коригування менеджера";
+    return prefix + label + ": <b>" + (diff > 0 ? "+" : "−") + money_(Math.abs(diff)) + " ₴</b>\n";
   }
   if (multi) {
     items.forEach(function (it, i) {
       var b = breakdown(it), c = Number(it.cost_total) || b.total; grand += c;
       var label = itemLabel_(it, i);
-      if (b.total > 0) {
-        fin += areaLine("• " + label, b.basketArea, b.basketRate, it, b.basketCost, false);
-        if (b.sideCost > 0) fin += areaLine("  Знімна бічна панель", b.sideArea, b.basketRate, it, b.sideCost, false);
-        if (b.coverCost > 0) fin += areaLine("  Верхня кришка", b.coverArea, b.coverRate, it, b.coverCost, false);
-        fin += adjustmentLine("  ", c - b.total);
+      if (b.sum > 0) {
+        fin += costLines(b, it, "• " + label, "  ", false);
+        fin += adjustmentLine("  ", c - b.sum, b);
       } else if (c > 0) {
         // Позиція без розмірів (ціну веде менеджер) теж має бути видима: інакше вона мовчки
         // ховалася всередині «Разом виробнича», і підрядник не бачив, за що ці гроші.
@@ -1203,11 +1628,9 @@ function buildProductionMsg_(data, opts) {
     if (grand > 0) fin += "• <b>Разом виробнича: " + money_(grand) + " ₴</b>\n";
   } else {
     var it = items[0], b = breakdown(it), c = Number(it.cost_total) || b.total;
-    if (b.total > 0) {
-      fin += areaLine("• Кошик", b.basketArea, b.basketRate, it, b.basketCost, true);
-      if (b.sideCost > 0) fin += areaLine("• Знімна бічна панель", b.sideArea, b.basketRate, it, b.sideCost, true);
-      if (b.coverCost > 0) fin += areaLine("• Верхня кришка", b.coverArea, b.coverRate, it, b.coverCost, true);
-      fin += adjustmentLine("• ", c - b.total);
+    if (b.sum > 0) {
+      fin += costLines(b, it, "• Кошик", "• ", true);
+      fin += adjustmentLine("• ", c - b.sum, b);
     }
     if (c > 0) fin += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
   }
@@ -1592,13 +2015,14 @@ function setupOrders(sheet) {
     "Комісія з маржі, %", // AT (46): % ВІД ВАЛОВОГО ПРИБУТКУ, не від ціни продажу
     "Термін опрацювання підрядником", // AU (47): до якої дати підрядник має відповісти
     "Завдання підряднику",            // AV (48): що саме опрацювати (вартість, конструктив…)
-    "Причина скасування"              // AW (49): обовʼязкова при скасуванні з CRM
+    "Причина скасування",             // AW (49): обовʼязкова при скасуванні з CRM
+    "Коментар до позиції"             // AX (50): стосується лише цієї позиції замовлення
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
   // Ширини A..AW — рівно стільки ж, скільки заголовків (останні: опрацювання й причина скасування).
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150,150,260,260];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150,150,260,260,280];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -2638,8 +3062,9 @@ function adminMigrateLegacyPayments_(data) {
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 49; // A–AW (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT; опрацювання AU–AV; причина скасування AW)
+var ADMIN_ORDER_COLS = 50; // A–AX (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT; опрацювання AU–AV; причина скасування AW; коментар до позиції AX)
 var CANCEL_REASON_COL = 49;  // AW: чому скасовано — обовʼязково при скасуванні з CRM
+var ITEM_COMMENT_COL = 50;   // AX: коментар САМЕ до цієї позиції — підрядник бачить його в її блоці
 // Статуси замовлення. «В опрацюванні підрядником» — підрядник рахує виробничу
 // вартість / розробляє конструктив; «Виготовлення» — раніше називалось «В роботі».
 var STATUS_PROCESSING = "В опрацюванні підрядником";
@@ -2718,13 +3143,13 @@ function ensureDiscountColumns_(sheet) {
 
 function ensureDiscountColumnsOnce_() {
   var props = PropertiesService.getScriptProperties();
-  // V8: після додавання AW (причина скасування) заголовки треба проставити ще раз.
-  if (props.getProperty("ORDERS_COLS_V8_READY") === "1") return;
+  // V9: після додавання AX (коментар до позиції) заголовки треба проставити ще раз.
+  if (props.getProperty("ORDERS_COLS_V9_READY") === "1") return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) return;
   ensureDiscountColumns_(sheet);
-  props.setProperty("ORDERS_COLS_V8_READY", "1");
+  props.setProperty("ORDERS_COLS_V9_READY", "1");
 }
 
 /** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
@@ -2754,7 +3179,8 @@ function ensureContactColumns_(sheet) {
     { col: COMMISSION_PCT_COL, title: "Комісія з маржі, %", key: "Комісія з маржі", width: 150 },
     { col: PROCESSING_DUE_COL, title: "Термін опрацювання підрядником", key: "Термін опрацювання", width: 150 },
     { col: PROCESSING_TASK_COL, title: "Завдання підряднику", key: "Завдання підряднику", width: 260 },
-    { col: CANCEL_REASON_COL, title: "Причина скасування", key: "Причина скасування", width: 260 }
+    { col: CANCEL_REASON_COL, title: "Причина скасування", key: "Причина скасування", width: 260 },
+    { col: ITEM_COMMENT_COL, title: "Коментар до позиції", key: "Коментар до позиції", width: 280 }
   ];
   extra.forEach(function (e) {
     var head = String(sheet.getRange(1, e.col).getValue() || "");
@@ -2794,6 +3220,7 @@ function handleAdminRequest_(data) {
     if (action === "get_order") return jsonOut(adminGetOrder_(data));
     if (action === "update_order") return jsonOut(adminUpdateOrder_(data));
     if (action === "delete_order_item") return jsonOut(adminDeleteOrderItem_(data));
+    if (action === "add_order_item") return jsonOut(adminAddOrderItem_(data));
     if (action === "create_order") return jsonOut(adminCreateOrder_(data));
     if (action === "list_payments") return jsonOut(adminListPayments_(data));
     if (action === "settlement_data") return jsonOut(adminSettlementData_(data));
@@ -2854,6 +3281,26 @@ function cellNum_(v) {
 
 function cellBool_(v) {
   return v === true || v === "TRUE" || v === "true";
+}
+
+/** Рядок приміток, що стосується ОДНІЄЇ позиції (його пише форма/запис замовлення), а не всього замовлення. */
+function isItemNoteLine_(line) {
+  return /^\s*(Довжина кронштейнів|Віброподушки|Потужність \(BTU\)|Посилання на кондиціонер|Коментар до моделі|Файл візерунку)\s*:/i.test(String(line || ""));
+}
+
+/**
+ * Коментар до позиції: колонка AX. Для заявок, створених до появи колонки, форма писала
+ * його в примітки рядка як «Коментар до моделі: …» — підхоплюємо й звідти.
+ */
+function itemComment_(cell, rowNotes) {
+  var direct = String(cell == null ? "" : cell).trim();
+  if (direct) return direct;
+  var out = [];
+  String(rowNotes || "").split(/\n+/).forEach(function (line) {
+    var m = String(line || "").trim().match(/^Коментар до моделі:\s*(.+)$/i);
+    if (m) out.push(m[1].trim());
+  });
+  return out.join("\n");
 }
 
 function mapOrderRow_(rowIndex, v) {
@@ -2918,7 +3365,8 @@ function mapOrderRow_(rowIndex, v) {
     commission_pct: cellNum_(v[45]),   // AT: ставка комісії партнера/ТОВ, % від маржі
     processing_due: toISODate(v[46]) || "",        // AU: термін опрацювання підрядником
     processing_task: String(v[47] || "").trim(),   // AV: що зробити підряднику
-    cancel_reason: String(v[48] || "").trim()      // AW: чому скасовано
+    cancel_reason: String(v[48] || "").trim(),     // AW: чому скасовано
+    item_comment: itemComment_(v[49], v[31])       // AX: коментар до цієї позиції
   };
 }
 
@@ -3128,10 +3576,11 @@ function applyFinanceToRow_(sh, row, patch) {
 
   if (listPrice != null && listPrice >= 0) {
     if (discountPct != null && discountPct > 0) {
-      discountUah = Math.round(listPrice * (discountPct / 100));
-      revenue = Math.round(listPrice - discountUah);
+      // Як у калькуляторі: спершу ціна зі знижкою до гривні, сума знижки — точне доповнення.
+      revenue = Math.round(listPrice * (1 - discountPct / 100));
+      discountUah = listPrice - revenue;
     } else if (discountUah != null && discountUah > 0) {
-      discountPct = listPrice ? Math.round((discountUah / listPrice) * 1000) / 10 : 0;
+      discountPct = listPrice ? Math.round((discountUah / listPrice) * 10000) / 100 : 0;
       revenue = Math.round(listPrice - discountUah);
     } else if (patch.revenue == null && (patch.list_price != null || patch.discount_pct != null || patch.discount_uah != null)) {
       revenue = listPrice;
@@ -3152,7 +3601,7 @@ function applyFinanceToRow_(sh, row, patch) {
   sh.getRange(row, 19, 1, 5).setNumberFormat("#,##0 ₴");
   sh.getRange(row, 24).setNumberFormat('0.0"%"');
   sh.getRange(row, 35).setNumberFormat("#,##0 ₴");
-  sh.getRange(row, 36).setNumberFormat("0.0");
+  sh.getRange(row, 36).setNumberFormat("0.##");
   sh.getRange(row, 37).setNumberFormat("#,##0 ₴");
   // Комісія/чистий — завжди формули від свіжого валового прибутку. Заразом це
   // переводить старі рядки на нову формулу при першій же правці фінансів.
@@ -3246,6 +3695,9 @@ function adminCreateOrder_(data) {
     }
   });
 
+  // Небазовий колір → одна доплата на замовлення окремою позицією.
+  try { syncColorSurcharge_(sheetForFin, written.order_number); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
+
   addDeliveryEvent(order); // подія в календарі + нагадування (як для онлайн-заявок)
 
   SpreadsheetApp.flush();
@@ -3279,6 +3731,100 @@ function assertItemIdentity_(sh, row, expect) {
 }
 
 /**
+ * Додати позицію до НАЯВНОГО замовлення (напр. розрахунок із калькулятора). Рядок стає
+ * одразу під останньою позицією замовлення; спільні дані (клієнт, статус, доставка,
+ * комісія, опрацювання) — як у решти його позицій. request_id захищає від дубля.
+ */
+function adminAddOrderItem_(data) {
+  var num = String(data.order_number || "").trim();
+  if (!orderNumberValid_(num)) throw new Error("Невірний номер замовлення");
+  var it = data.item;
+  if (!it || typeof it !== "object") throw new Error("Немає даних позиції");
+  return withRequestCache_("additem_", data.request_id, function () {
+    var sh = adminOrdersSheet_();
+    var last = sh.getLastRow();
+    if (last < 2) throw new Error("Немає замовлень");
+    var nums = sh.getRange(2, 1, last - 1, 1).getValues();
+    var rows = [];
+    for (var i = 0; i < nums.length; i++) {
+      if (String(nums[i][0] || "").trim() === num) rows.push(i + 2);
+    }
+    if (!rows.length) throw new Error("Order not found");
+    var base = sh.getRange(rows[0], 1, 1, ADMIN_ORDER_COLS).getValues()[0];
+    // Доплата за колір — одна на замовлення: якщо вона вже є (додана автоматично чи
+    // попереднім переносом із калькулятора), другу не створюємо, а оновлюємо суму наявної.
+    if (isColorSurchargeItem_(it)) {
+      for (var ci = 0; ci < rows.length; ci++) {
+        if (!isColorSurchargeRow_(sh.getRange(rows[ci], 1, 1, ADMIN_ORDER_COLS).getValues()[0])) continue;
+        var amount = Number(it.price_total);
+        if (isFinite(amount) && amount > 0) {
+          applyFinanceToRow_(sh, rows[ci], { cost_total: Number(it.cost_total) || 0, list_price: amount, discount_pct: 0, discount_uah: 0, revenue: amount });
+          try { syncOrderPaymentState_(num); } catch (payErr) { /* не валимо додавання */ }
+        }
+        var merged = adminGetOrder_({ order_number: num });
+        merged.added_row = rows[ci];
+        merged.duplicate = true;
+        return merged;
+      }
+    }
+    var item = {
+      product_type: it.product_type || "basket",
+      basket_model: it.basket_model || "", basket_model_name: it.basket_model_name || it.basket_model || "",
+      basket_type: it.basket_type || "", construction_type: it.construction_type || "",
+      color: it.color || "", pattern: it.pattern || "", has_cover: !!it.has_cover,
+      size_w: it.size_w, size_h: it.size_h, size_d: it.size_d,
+      quantity: it.quantity, unit: String(it.unit || "").trim() || "шт.",
+      specs: it.specs || "", item_comment: it.item_comment || "",
+      price_total: (it.price_total === "" || it.price_total == null) ? null : Number(it.price_total),
+      cost_total: (it.cost_total === "" || it.cost_total == null) ? null : Number(it.cost_total),
+      // Прайс і знижка — для перевірки ДО запису: інакше хибна знижка лишила б у таблиці
+      // напівзаписану позицію (рядок вставлено, а фінанси відхилено).
+      list_price: it.list_price, discount_pct: it.discount_pct, discount_uah: it.discount_uah
+    };
+    var written = writeOrderToSheet_({
+      order_number: num,
+      // ID запиту лягає в колонку AS нового рядка: повтор упізнається й після того, як
+      // кеш скрипта очиститься (за годину чи при витісненні).
+      request_id: String(data.request_id || "").trim(),
+      _append: { afterRow: rows[rows.length - 1], base: base },
+      contact_method: String(base[37] || "").trim() || "phone",
+      contact_telegram: String(base[38] || ""), contact_email: String(base[39] || ""),
+      commission_pct: base[COMMISSION_PCT_COL - 1],
+      notes: "",
+      items: [item]
+    });
+    var row = written.row;
+    if (written.duplicate) {
+      // Цю позицію вже додано раніше тим самим запитом — нічого не дублюємо.
+      var same = adminGetOrder_({ order_number: num });
+      same.added_row = row;
+      same.duplicate = true;
+      return same;
+    }
+    // Опрацювання й причина скасування — спільні для замовлення: тримаємо рядки однаковими.
+    [PROCESSING_DUE_COL, PROCESSING_TASK_COL, CANCEL_REASON_COL].forEach(function (col) {
+      var v = base[col - 1];
+      if (v !== "" && v != null) sh.getRange(row, col).setValue(v);
+    });
+    // Роздрібна ціна / знижка — тим самим кодом, що й правка фінансів у кабінеті.
+    var fin = {};
+    if (it.cost_total != null && it.cost_total !== "") fin.cost_total = Number(it.cost_total);
+    if (it.list_price != null && it.list_price !== "") fin.list_price = Number(it.list_price);
+    if (it.discount_pct != null && it.discount_pct !== "") fin.discount_pct = Number(it.discount_pct);
+    if (it.discount_uah != null && it.discount_uah !== "") fin.discount_uah = Number(it.discount_uah);
+    if (fin.list_price != null || fin.discount_pct != null || fin.discount_uah != null) {
+      applyFinanceToRow_(sh, row, fin);
+    }
+    try { syncColorSurcharge_(sh, num, row); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
+    try { syncOrderPaymentState_(num); } catch (syncErr) { /* не валимо додавання */ }
+    SpreadsheetApp.flush();
+    var out = adminGetOrder_({ order_number: num });
+    out.added_row = row;
+    return out;
+  });
+}
+
+/**
  * Прибрати ОДНУ позицію замовлення (рядок таблиці). Останню позицію не видаляємо:
  * замовлення без позицій зникло б із воронки й фінансів — для відмови є статус «Скасовано».
  */
@@ -3303,6 +3849,8 @@ function adminDeleteOrderItem_(data) {
   // Дія в ADMIN_WRITE_ACTIONS: doPost уже тримає замок скрипта, другий waitLock завис би.
   assertItemIdentity_(sh, row, data.expect);
   sh.deleteRow(row);
+  // Прибрали останній кошик небазового кольору — доплата за колір більше не потрібна.
+  try { syncColorSurcharge_(sh, num); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
   // Виручка замовлення змінилась — перераховуємо галочки оплат.
   try { syncOrderPaymentState_(num); } catch (syncErr) { /* не валимо видалення */ }
   return adminGetOrder_({ order_number: num });
@@ -3398,19 +3946,29 @@ function adminUpdateOrder_(data) {
 
   // ── Характеристики позиції: лише цей рядок ──
   var pricingItemTouched = false;
+  var PRICING_KEYS = ["basket_type", "pattern", "construction", "basket_model", "product_kind", "specs", "size_w", "size_h", "size_d", "quantity"];
+  var pricingKeyInPatch = PRICING_KEYS.some(function (k) { return patch[k] != null; });
+  var signatureBefore = pricingKeyInPatch ? pricingSignatureOfRow_(sh, row) : "";
   var ITEM_TEXT = { basket_type: 8, construction: 9, color: 10, pattern: 11,
                     ac_brand: 12, ac_model: 13, basket_model: 41,
-                    product_kind: 42, specs: 43, unit: 44 };
+                    product_kind: 42, specs: 43, unit: 44, item_comment: ITEM_COMMENT_COL };
   Object.keys(ITEM_TEXT).forEach(function (key) {
     if (patch[key] == null) return;
-    sh.getRange(row, ITEM_TEXT[key]).setValue(String(patch[key]));
+    sh.getRange(row, ITEM_TEXT[key]).setValue(String(patch[key]).slice(0, 1000));
+    if (key === "item_comment") {
+      // Коментар тепер живе в AX: старий рядок «Коментар до моделі: …» із приміток прибираємо,
+      // інакше після очищення поля він підтягнувся б звідти знову.
+      var oldNotes = String(sh.getRange(row, 32).getValue() || "");
+      var cleaned = oldNotes.split(/\n/).filter(function (line) {
+        return !/^\s*Коментар до моделі:/i.test(line);
+      }).join("\n");
+      if (cleaned !== oldNotes) sh.getRange(row, 32).setValue(cleaned);
+    }
     // Не кошик (послуга, виріб не з каталогу, кронштейни) — площа кошика в колонці R не має
     // сенсу й лишилася б від попереднього виду: прибираємо.
     if (key === "product_kind" && String(patch[key]).trim() && !/кошик/i.test(String(patch[key]))) {
       sh.getRange(row, 18).setValue("");
     }
-    // Назва, колір, характеристики та одиниця не змінюють формулу ціни.
-    if (["basket_type", "construction", "pattern", "product_kind"].indexOf(key) >= 0) pricingItemTouched = true;
   });
   var ITEM_NUM = { size_w: 14, size_h: 15, size_d: 16, quantity: 17 };
   Object.keys(ITEM_NUM).forEach(function (key) {
@@ -3425,10 +3983,13 @@ function adminUpdateOrder_(data) {
     }
     else if (!(num > 0)) num = "";
     sh.getRange(row, ITEM_NUM[key]).setValue(num);
-    pricingItemTouched = true;
   });
-  // Зміна розмірів/типу/візерунка перераховує гроші тією ж логікою, що й правка руками
-  // в таблиці. Якщо в цьому ж запиті задана ціна — applyFinanceToRow_ нижче переважить.
+  // Гроші перераховуємо лише коли справді змінилось те, від чого залежить ціна (модель,
+  // опції, розміри, кількість) — тією ж формулою, що й калькулятор. Правка кольору чи
+  // коментаря суми не чіпає; тип і візерунок — лише коли позиція переходить між «за формулою»
+  // та «індивідуально» (антивандальний, складний візерунок). Якщо в цьому ж запиті задана
+  // ціна — applyFinanceToRow_ нижче переважить.
+  if (pricingKeyInPatch && pricingSignatureOfRow_(sh, row) !== signatureBefore) pricingItemTouched = true;
   if (pricingItemTouched) recalcRow_(sh, row);
 
   // ── Ставка комісії партнера/ТОВ: спільна для всього замовлення ──
@@ -3472,13 +4033,35 @@ function adminUpdateOrder_(data) {
     targetRows.forEach(function (r) { sh.getRange(r, 34).setValue(mp); });
     notifyOwnerPaymentChange_(sh, row, 34, mp);
   }
-  if (patch.notes != null) sh.getRange(row, 32).setValue(String(patch.notes));
+  if (patch.notes != null) {
+    // Примітки в картці — загальні для замовлення: оновлюємо їх у ВСІХ позиціях, інакше
+    // в інших рядках лишався б старий текст і підрядник бачив би обидва варіанти.
+    // Технічні рядки конкретної позиції (довжина кронштейнів, віброподушки, BTU, посилання,
+    // файл візерунку, старий «Коментар до моделі») кожен рядок зберігає свої.
+    var newNotes = String(patch.notes);
+    var generalLines = newNotes.split(/\n/).filter(function (line) { return !isItemNoteLine_(line); });
+    targetRows.forEach(function (r) {
+      if (r === row) { sh.getRange(r, 32).setValue(newNotes); return; }
+      var own = String(sh.getRange(r, 32).getValue() || "").split(/\n/).filter(function (line) {
+        return String(line || "").trim() && isItemNoteLine_(line);
+      });
+      sh.getRange(r, 32).setValue(generalLines.concat(own).filter(function (line) { return String(line || "").trim(); }).join("\n"));
+    });
+  }
   if (patch.delivery_date != null) {
     var iso = toISODate(patch.delivery_date) || String(patch.delivery_date || "");
     targetRows.forEach(function (r) { sh.getRange(r, 29).setValue(iso); });
   }
   if (patch.payment_method != null) {
     targetRows.forEach(function (r) { sh.getRange(r, 30).setValue(String(patch.payment_method)); });
+  }
+
+  // Доплата за небазовий колір (одна на замовлення) — наприкінці, коли всі спільні колонки
+  // вже оновлені: нова позиція успадкує їх, а номери рядків вище не зсунуться.
+  if (patch.color != null || patch.product_kind != null || financeTouched || pricingItemTouched) {
+    try {
+      if (syncColorSurcharge_(sh, orderNumber, row)) syncOrderPaymentState_(orderNumber);
+    } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
   }
 
   SpreadsheetApp.flush();
