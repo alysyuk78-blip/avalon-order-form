@@ -2329,6 +2329,13 @@ function ensureCommissionFormulaV2Once_(sheet) {
           var f = String(cell.getFormula() || "");
           if (f.indexOf("ARRAYFORMULA(") >= 0 && f.indexOf("SUMIFS(") >= 0 && f.indexOf(spec[1]) >= 0 && f.indexOf("BYROW(") < 0) {
             cell.setFormula(spec[2]);
+            // Запобіжник: якщо таблиця нову формулу не прийняла (помилка в клітинці) —
+            // повертаємо стару, щоб аркуш партнерів не лишився з «#ERROR!».
+            SpreadsheetApp.flush();
+            if (/^#/.test(String(cell.getDisplayValue() || ""))) {
+              cell.setFormula(f);
+              console.error("Формула " + spec[0] + " «Дропшиперів» не оновлена: таблиця повернула помилку");
+            }
           }
         });
     }

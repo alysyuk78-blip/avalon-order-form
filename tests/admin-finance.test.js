@@ -623,7 +623,7 @@ function testCommissionFormulaMigration() {
     H2: '=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(Замовлення!Y:Y;Замовлення!D:D;A2:A;Замовлення!C:C;"<>Скасовано")))',
     I2: '=ARRAYFORMULA(IF(A2:A="";"";SUMIF(Виплати!B:B;A2:A;Виплати!D:D)))',
   };
-  const run = (dropFormulas) => {
+  const run = (dropFormulas, shown) => {
     const props = {};
     const set = {};
     const dropSet = {};
@@ -636,10 +636,11 @@ function testCommissionFormulaMigration() {
         setNumberFormat() { return this; },
       }),
     };
-    const drop = { getRange: (a1) => ({ getFormula: () => dropFormulas[a1] || "", setFormula(f) { dropSet[a1] = f; return this; } }) };
+    const drop = { getRange: (a1) => ({ getFormula: () => dropFormulas[a1] || "", setFormula(f) { dropSet[a1] = f; return this; },
+      getDisplayValue: () => (shown && shown[a1]) || "12" }) };
     const context = loadAppsScript({
       PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] || null, setProperty: (k, v) => { props[k] = v; } }) },
-      SpreadsheetApp: { getActiveSpreadsheet: () => ({ getSheetByName: (name) => (name === "Дропшипери" ? drop : null) }) },
+      SpreadsheetApp: { flush() {}, getActiveSpreadsheet: () => ({ getSheetByName: (name) => (name === "Дропшипери" ? drop : null) }) },
     });
     context.ensureCommissionFormulaV2Once_(orders);
     const first = { rows: Object.keys(set).map(Number), dropSet: Object.assign({}, dropSet), flag: props.COMMISSION_FORMULA_V2_READY };
@@ -654,6 +655,14 @@ function testCommissionFormulaMigration() {
   assert.ok(a.dropSet.G2.includes("Замовлення!V:V") && a.dropSet.H2.includes("Замовлення!Y:Y"));
   assert.equal(a.flag, "1");
   assert.deepEqual([a.secondRows, a.secondDrop], [0, 0], "удруге нічого не чіпаємо");
+  // Таблиця нову формулу не прийняла (помилка в клітинці) — повертаємо стару.
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const failed = run(OLD, { G2: "#ERROR!" });
+    assert.equal(failed.dropSet.G2, OLD.G2, "G2 повернуто до старої формули");
+    assert.ok(failed.dropSet.F2.startsWith("=BYROW(") && failed.dropSet.H2.startsWith("=BYROW("));
+  } finally { console.error = originalError; }
   // Власні формули власника лишаються як є.
   assert.deepEqual(run({ F2: "=SUM(Z:Z)", G2: "", H2: "=BYROW(A2:A;LAMBDA(c;SUMIFS(Замовлення!Y:Y;Замовлення!D:D;c)))" }).dropSet, {});
 }
