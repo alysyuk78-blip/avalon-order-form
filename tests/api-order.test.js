@@ -49,6 +49,19 @@ function testRemovableSidePanelMessage() {
   });
   assert.ok(!plain.includes("Знімна бічна панель"), "інші моделі — без панелі");
   assert.ok(!plain.includes(" × 1 шт."), "одиниця — без «× 1 шт.»");
+
+  // Антивандальний — індивідуальний прорахунок: формули за площею в повідомленні власнику немає.
+  const antivandal = handler.formatTelegramMessage({
+    order_number: "ORD-2", items: [{ product_type: "basket", basket_type: "Антивандальний (більша товщина металу+ каркас)",
+      construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 1 }],
+  });
+  assert.ok(!antivandal.includes("₴/м²"), "без розкладки за площею");
+  assert.ok(antivandal.includes("Потрібен індивідуальний прорахунок менеджера"));
+  const complex = handler.formatTelegramMessage({
+    order_number: "ORD-3", items: [{ product_type: "basket", basket_type: "Декоративний", pattern: "K9",
+      construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 1 }],
+  });
+  assert.ok(!complex.includes("₴/м²") && complex.includes("Потрібен індивідуальний прорахунок менеджера"), "складний візерунок — теж індивідуально");
 }
 
 async function run() {

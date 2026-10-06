@@ -202,10 +202,15 @@ function testRecalculationMatchesCalculator() {
   const margin = tov[18][4] - tov[18][2];
   assert.ok(Math.abs(margin * 0.7 - 34664 * 0.35) < 14, "після комісії лишається ≈ 35 % собівартості");
 
-  // «Антивандальний» і візерунок K3 ціну більше не змінюють — як у калькуляторі.
+  // Звичайний візерунок ціну не змінює.
   const plain = run({ 9: "Суцільний · AVL-01", 14: 1000, 15: 1000, 16: 500, 17: 2, 42: "Кошик" });
-  const fancy = run({ 8: "Антивандальний", 9: "Суцільний · AVL-01", 11: "K3", 14: 1000, 15: 1000, 16: 500, 17: 2, 42: "Кошик" });
+  const fancy = run({ 8: "Декоративний", 9: "Суцільний · AVL-01", 11: "K1", 14: 1000, 15: 1000, 16: 500, 17: 2, 42: "Кошик" });
   assert.deepEqual(fancy[18], plain[18]);
+  // Складний візерунок дорожчий, а на скільки — рахується індивідуально: формула суми не чіпає.
+  ["K3", "K4", "K6", "K8", "K9", "К3"].forEach((pattern) =>
+    assert.deepEqual(run({ 9: "Суцільний · AVL-01", 11: pattern, 14: 1000, 15: 1000, 16: 500, 17: 2, 42: "Кошик" }), {}, pattern));
+  // Антивандальний кошик теж рахується індивідуально.
+  assert.deepEqual(run({ 8: "Антивандальний (більша товщина металу+ каркас)", 9: "Суцільний · AVL-01", 14: 1000, 15: 1000, 16: 500, 17: 2, 42: "Кошик" }), {});
   assert.equal(plain[18][2], 8120, "2 м² × 2 030 × 2");
   assert.equal(plain[18][4], 10962, "5 481 × 2 — націнка рівно 35 %");
 
@@ -241,6 +246,11 @@ function testPricingSignature() {
   assert.notEqual(sig({}), sig({ construction: "Суцільний · AVL-04" }));
   assert.notEqual(sig({}), sig({ specs: "Матеріал: Алюміній" }));
   assert.notEqual(sig({}), sig({ specs: "Нижня кришка: перфорована" }));
+  // Тип і візерунок важать лише як перехід «за формулою» ⇄ «індивідуально».
+  assert.equal(sig({ pattern: "K1" }), sig({ pattern: "K10" }));
+  assert.equal(sig({ basketType: "Декоративний" }), sig({ basketType: "Стандарт" }));
+  assert.notEqual(sig({ pattern: "K1" }), sig({ pattern: "K3" }));
+  assert.notEqual(sig({}), sig({ basketType: "Антивандальний" }));
   assert.equal(sig({ kind: "Послуга" }), "not-basket");
 }
 
@@ -318,6 +328,19 @@ function testRemovableSidePanelPricing() {
   }, { finance: true });
   assert.ok(rounded.includes("• Кошик: 0.9955 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>4 042 ₴</b>"));
   assert.ok(rounded.includes("• Площа — за розмірами, округленими до 10 мм: 550×810×500 мм"));
+
+  // Антивандальний: розкладки за площею немає — лише собівартість, яку вписав менеджер.
+  const antivandal = ctx.buildProductionMsg_({
+    order_number: "X",
+    items: [{ product_type: "basket", basket_type: "Антивандальний", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 2, unit: "шт.", cost_total: 7300 }],
+  }, { finance: true });
+  assert.ok(!antivandal.includes("₴/м²") && !antivandal.includes("Коригування"), "антивандальний — без формули за площею");
+  assert.ok(antivandal.includes("• Вартість виробнича: <b>7 300 ₴</b>"));
+  const complex = ctx.buildProductionMsg_({
+    order_number: "X",
+    items: [{ product_type: "basket", pattern: "K6", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 1, unit: "шт.", cost_total: 2600 }],
+  }, { finance: true });
+  assert.ok(!complex.includes("₴/м²") && complex.includes("• Вартість виробнича: <b>2 600 ₴</b>"), "складний візерунок — теж без формули");
 
   // Усі складники собівартості — окремими рядками, і вони сходяться з підсумком.
   const full = ctx.buildProductionMsg_({

@@ -16,7 +16,7 @@ function coreOf(file) {
 
 // Змінив формулу — онови всі копії (npm run sync:pricing) і цю суму. Та сама сума стоїть у
 // тесті калькулятора (test/avalonPricing.test.mjs): розбіжність = алгоритми розʼїхались.
-const CORE_SHA256 = "b936ddbac860acd827af85cc8d9642ae80273938dc5535c8612b53e8107cd42c";
+const CORE_SHA256 = "8abb9c3139395fba4faceb21e309d6331c93b635c48044a80eaa5f83609568bb";
 
 function testCopiesAreIdentical() {
   const root = path.join(__dirname, "..");
@@ -151,7 +151,20 @@ function testColorSurcharge() {
   assert.equal(P.avalonColorSurcharge(["RAL 6005"], { colorSurcharge: 300 }), 300, "сума — з налаштувань");
 }
 
+// Антивандальне виконання і складний візерунок дорожчі, а на скільки — рахується індивідуально:
+// формула такі позиції не оцінює.
+function testIndividualPricing() {
+  assert.equal(P.avalonIsIndividualPricing("Антивандальний (більша товщина металу+ каркас)"), true);
+  assert.equal(P.avalonIsIndividualPricing("антивандальний", ""), true);
+  ["Декоративний", "Стандарт", "", null, undefined].forEach((t) => assert.equal(P.avalonIsIndividualPricing(t), false));
+  ["K3", "K4", "K6", "K8", "K9", "k3", " К4", "K8 (дзеркально)"].forEach((p) => assert.equal(P.avalonIsIndividualPricing("Декоративний", p), true, p));
+  ["K1", "K2", "K5", "K7", "K10", "Інший", "", null, "K30"].forEach((p) => assert.equal(P.avalonIsIndividualPricing("Декоративний", p), false, String(p)));
+  assert.equal(P.avalonIndividualReason("Антивандальний", "K6"), "антивандальне виконання і складний візерунок K6");
+  assert.equal(P.avalonIndividualReason("Декоративний", "K1"), "");
+}
+
 testCopiesAreIdentical();
+testIndividualPricing();
 testOwnerTovExample();
 testColorSurcharge();
 testGoldenValues();

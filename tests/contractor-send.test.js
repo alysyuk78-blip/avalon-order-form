@@ -1126,7 +1126,7 @@ function testUnifiedPricingInSheet() {
   ctx.adminGetOrder_ = () => ({ status: "ok" });
   const same = { construction: "Розбірний (з 3-х частин) · AVL-05", basket_model: "Розбірний", product_kind: "Кошик",
     specs: "", size_w: 750, size_h: 700, size_d: 440, quantity: 14 };
-  ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { color: "Білий", basket_type: "Антивандальний", pattern: "K3", specs: "Кронштейн: K2" }) });
+  ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { color: "Білий", basket_type: "Декоративний", pattern: "K1", specs: "Кронштейн: K2" }) });
   assert.deepEqual([us.data[1][19], us.data[1][21]], [30000, 40000], "вписані вручну суми лишились");
   assert.equal(us.data[1][9], "Білий");
   ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 3 }) });
@@ -1135,6 +1135,25 @@ function testUnifiedPricingInSheet() {
   // Опція в характеристиках, що впливає на ціну, — теж перераховує.
   ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 3, specs: "Матеріал: Оцинкований метал" }) });
   assert.equal(us.data[1][19], 11628, "(2 475,97 + 1 400) × 3");
+  // Антивандальний рахується індивідуально: нове замовлення — без автоціни, правка кількості
+  // вписаних сум не чіпає.
+  ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", items: [Object.assign({}, item, { basket_type: "Антивандальний (більша товщина металу+ каркас)", discount_pct: "" })] });
+  assert.deepEqual([appended[19], appended[21]], ["", ""], "ціну антивандального вписує менеджер");
+  assert.equal(appended[17], 1.14, "площа при цьому порахована");
+  const av = makeSheet([orderRow(ORD, "Нове", { 7: "Антивандальний", 8: "Суцільний · AVL-01", 13: 800, 14: 500, 15: 500, 16: 1, 19: 5000, 21: 7000, 22: 2000, 40: "Суцільний", 41: "Кошик" })]);
+  ctx.adminOrdersSheet_ = () => styled(av);
+  ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: { construction: "Суцільний · AVL-01", basket_model: "Суцільний", product_kind: "Кошик", specs: "", size_w: 800, size_h: 500, size_d: 500, quantity: 4 } });
+  assert.deepEqual([av.data[1][16], av.data[1][19], av.data[1][21]], [4, 5000, 7000], "кількість змінено, суми менеджера на місці");
+  // Складний візерунок: ціну теж не підставляємо. Змінили його на звичайний — формула повертається.
+  ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", items: [Object.assign({}, item, { pattern: "K8", discount_pct: "" })] });
+  assert.deepEqual([appended[19], appended[21]], ["", ""], "складний візерунок рахує менеджер");
+  av.data[1][7] = "Декоративний"; av.data[1][10] = "K4";
+  ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: { pattern: "K4", quantity: 2 } });
+  assert.deepEqual([av.data[1][19], av.data[1][21]], [5000, 7000], "K4 — індивідуально, суми на місці");
+  ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: { pattern: "K2" } });
+  assert.deepEqual([av.data[1][19], av.data[1][21]], [3654, 4932], "звичайний візерунок — знову за формулою: 0,9 × 2 030 × 2");
+  ctx.adminOrdersSheet_ = () => styled(us);
+
   // У тому ж запиті задана ціна — вона переважає формулу.
   ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 5, cost_total: 12000, list_price: 20000, discount_pct: 0, discount_uah: 0, revenue: 20000 }) });
   assert.deepEqual([us.data[1][19], us.data[1][21]], [12000, 20000]);

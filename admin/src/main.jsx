@@ -2077,6 +2077,8 @@ import pricing from '../../lib/avalon-pricing.js';
       const type = pricing.avalonModelType(form.construction, form.basket_model);
       const opts = pricing.avalonParseOptions(form.construction, form.specs);
       const calc = calcPosition(form);
+      // Антивандальне виконання і складний візерунок формула не рахує — ціну визначає менеджер.
+      const individual = pricing.avalonIndividualReason(form.basket_type, form.pattern);
       const setOption = patch => {
         const next = pricing.applyOptionsToText(form.construction, form.specs, { ...opts, ...patch }, type);
         setForm(f => ({ ...f, construction: next.construction, specs: next.specs }));
@@ -2095,6 +2097,12 @@ import pricing from '../../lib/avalon-pricing.js';
       return (
         <div className="margin-calc pricing-block">
           <div className="margin-calc-title">Розрахунок за формулою калькулятора</div>
+          {individual && (
+            <div className="margin-net-warn" style={{ margin: "0 0 8px" }}>
+              Ця позиція рахується індивідуально: {individual}. Нижче — лише орієнтир для звичайного кошика, без надбавки;
+              сама ціна не підставиться. Впишіть свою собівартість і ціну у «Фінансах».
+            </div>
+          )}
           <p className="margin-calc-note" style={{ marginTop: 0 }}>
             Модель: <b>{(code ? code[0] + " · " : "") + PRICING_TYPE_LABELS[type]}</b>
             {notInCalculator ? " — цієї моделі немає в калькуляторі, рахується як суцільний кошик; перевірте суму." : ""}
@@ -2174,7 +2182,12 @@ import pricing from '../../lib/avalon-pricing.js';
                   <div className="margin-net-row"><span>Чистими після комісії {pct(calc.commissionPct)}</span><b>{money2(calc.netProfit)}</b></div>
                 )}
               </div>
-              {inputsSaved && moneySaved ? (
+              {!individual && (
+                <p className="margin-calc-note">
+                  Складні візерунки ({pricing.AVALON_COMPLEX_PATTERNS.join(", ")}) та антивандальне виконання дорожчі — їх формула не рахує, ціну вписуєте самі.
+                </p>
+              )}
+              {individual ? null : inputsSaved && moneySaved ? (
                 <p className="send-hint ok" style={{ marginTop: 8 }}>Фінанси позиції збігаються з розрахунком.</p>
               ) : (
                 <>
@@ -2876,7 +2889,7 @@ import pricing from '../../lib/avalon-pricing.js';
             {(!form.product_kind || form.product_kind === "Кошик") && (
               <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
                 Зміна розмірів, кількості, моделі чи опцій (матеріал, кришки) перерахує гроші за формулою калькулятора;
-                колір, тип, візерунок і коментар суми не чіпають.
+                колір і коментар суми не чіпають. Антивандальний кошик і складні візерунки рахуються індивідуально — їхні суми формула не змінює.
                 Щоб залишити свою ціну — впишіть її нижче в «Фінансах» після збереження.
               </p>
             )}
@@ -2999,7 +3012,7 @@ import pricing from '../../lib/avalon-pricing.js';
             )}
             {/* Усе, що формула не рахує, — за тією ж плановою націнкою від вписаної собівартості.
                 Доплата за колір — пропускна сума (маржа 0), їй націнка не потрібна. */}
-            {!((!form.product_kind || form.product_kind === "Кошик") && calcPosition(form))
+            {(pricing.avalonIsIndividualPricing(form.basket_type, form.pattern) || !((!form.product_kind || form.product_kind === "Кошик") && calcPosition(form)))
               && !String(form.basket_model || "").startsWith(pricing.AVALON_COLOR_SURCHARGE_NAME) && (
               <PlannedPriceBlock form={form} setForm={setForm} disabled={busy || stale} />
             )}
@@ -3216,7 +3229,8 @@ import pricing from '../../lib/avalon-pricing.js';
       const discountTotal = Number(form.discount_uah) || (listTotal && Number(form.discount_pct)
         ? listTotal - Math.round(listTotal * (1 - Number(form.discount_pct) / 100)) : 0);
       // Ціна за формулою калькулятора — якщо гроші лишити порожніми, сервер запише саме її.
-      const autoCalc = kind === "basket" && !isBracket && !costUnit && !listUnit && !priceUnitOverride
+      const individualPrice = kind === "basket" && !isBracket ? pricing.avalonIndividualReason(form.basket_type, form.pattern) : "";
+      const autoCalc = kind === "basket" && !isBracket && !individualPrice && !costUnit && !listUnit && !priceUnitOverride
         ? calcPosition({
             construction: (form.construction_type || "") + (form.has_cover ? " + кришка" : ""),
             basket_model: model ? model.name + " " + model.id : form.basket_model, specs: form.specs,
@@ -3483,6 +3497,9 @@ import pricing from '../../lib/avalon-pricing.js';
             </div>
             {newBreakdown.rateValid === false && (
               <div className="error">Ставка комісії має бути від 0% до 99,99%.</div>
+            )}
+            {individualPrice && (
+              <div className="margin-net-warn">Позиція рахується індивідуально ({individualPrice}) — впишіть собівартість і ціну самі: формула їх не підставить.</div>
             )}
             {autoCalc && (
               <div className="margin-calc">

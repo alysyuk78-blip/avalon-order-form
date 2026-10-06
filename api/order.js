@@ -18,7 +18,7 @@ module.exports.config = config;
 // ВИРОБНИЧА ВАРТІСТЬ (для повідомлення власнику)
 // ============================================================
 // Рахує ТОЙ САМИЙ алгоритм, що й калькулятор, кабінет CRM і таблиця: lib/avalon-pricing.js.
-const { avalonPriceItem, avalonCostLines } = require("../lib/avalon-pricing");
+const { avalonPriceItem, avalonCostLines, avalonIsIndividualPricing } = require("../lib/avalon-pricing");
 
 function productionBreakdown(it) {
   const zero = { qty: 1, lines: [], sum: 0, total: 0, dims: "" };
@@ -26,6 +26,9 @@ function productionBreakdown(it) {
   // мають ціну від менеджера — рахувати їх за площею кошика означало б показати
   // вигадану суму.
   if (it.product_type === "bracket" || it.product_type === "other" || it.product_type === "service") return zero;
+  // Антивандальний кошик і складний візерунок рахуються індивідуально — формула за площею
+  // до них не застосовується.
+  if (avalonIsIndividualPricing(it.basket_type, it.pattern)) return zero;
   const w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
   if (!w || !h) return zero;
   let construction = String(it.construction_type || "");

@@ -252,6 +252,25 @@ function avalonPrice(input, rates) {
   };
 }
 
+// Складні візерунки: дорожчі за звичайні, а на скільки — менеджер рахує індивідуально.
+var AVALON_COMPLEX_PATTERNS = ["K3", "K4", "K6", "K8", "K9"];
+
+/**
+ * Чому позицію формула НЕ рахує (ціну визначає менеджер індивідуально) — або "" якщо рахує.
+ * Причини: антивандальне виконання (більша товщина металу + каркас) і складний візерунок.
+ */
+function avalonIndividualReason(basketType, pattern) {
+  var reasons = [];
+  if (String(basketType == null ? "" : basketType).toLowerCase().indexOf("антивандал") >= 0) reasons.push("антивандальне виконання");
+  // Код візерунка: латинська «K» або кирилична «К», далі номер (K3, к3, «K3 (свій)»).
+  var code = String(pattern == null ? "" : pattern).replace(/^\s+/, "").toUpperCase().replace(/^\u041A/, "K").match(/^K\d+/);
+  if (code && AVALON_COMPLEX_PATTERNS.indexOf(code[0]) >= 0) reasons.push("складний візерунок " + code[0]);
+  return reasons.join(" і ");
+}
+function avalonIsIndividualPricing(basketType, pattern) {
+  return avalonIndividualReason(basketType, pattern) !== "";
+}
+
 /**
  * Чи колір базовий. Із кодом RAL — лише 7016 / 9005 / 9016; без коду — рівно «сірий»,
  * «чорний» або «білий». Порожній (колір ще не вказано) доплати не дає.
@@ -348,13 +367,14 @@ function pricingSignature_(o) {
   if (kind && kind.toLowerCase().indexOf("кошик") < 0) return "not-basket";
   var opts = avalonParseOptions(o.construction, o.specs);
   function mm(x) { return Math.ceil(Math.max(0, Number(x) || 0) / 10) * 10; }
-  return [avalonModelType(o.construction, o.model), opts.material, opts.topCover, opts.bottomCover,
+  return [avalonIsIndividualPricing(o.basketType, o.pattern) ? "individual" : "formula",
+    avalonModelType(o.construction, o.model), opts.material, opts.topCover, opts.bottomCover,
     opts.universalSectional ? 1 : 0, opts.universalRemovableSide ? 1 : 0,
     mm(o.width), mm(o.height), mm(o.depth), Number(o.quantity) || 1].join("|");
 }
 function pricingSignatureOfRow_(sh, row) {
   var v = sh.getRange(row, 1, 1, Math.min(sh.getMaxColumns(), 43)).getValues()[0];
-  return pricingSignature_({ construction: v[8], model: v[40], kind: v[41], specs: v[42],
+  return pricingSignature_({ basketType: v[7], pattern: v[10], construction: v[8], model: v[40], kind: v[41], specs: v[42],
     width: v[13], height: v[14], depth: v[15], quantity: v[16] });
 }
 
@@ -545,9 +565,10 @@ function writeOrderToSheet_(data) {
           total = Math.round(manualCost * MARKUP);
           hasMoney = total > 0;
         }
-      } else if (calc) {
+      } else if (calc && !avalonIsIndividualPricing(it.basket_type, it.pattern)) {
         // Формула — лише для кошиків. Кронштейни й довільні вироби (пергола, стенд…)
-        // отримують ціну від менеджера, не з ₴/м².
+        // отримують ціну від менеджера, не з ₴/м². Антивандальний кошик і складний візерунок
+        // теж рахуються індивідуально: ціна лишається порожньою, доки менеджер її не впише.
         total = calc.total;
         costTotal = calc.costTotal;
         hasMoney = total > 0;
@@ -776,8 +797,17 @@ function onEditDelivery(e) {
     // Перерахунок фінансів, коли змінилось те, від чого залежить ціна за формулою:
     // I=9 конструкція, N=14, O=15, P=16 розміри, Q=17 кількість, AO=41 модель,
     // AQ=43 характеристики (матеріал, кришки, опції AVL-03).
-    if ([9, 14, 15, 16, 17, 41, 43].indexOf(col) >= 0) {
+    // H=8 тип і K=11 візерунок: лише коли позиція перестала бути «індивідуальною»
+    // (антивандальний / складний візерунок) і тепер рахується формулою.
+    if ([8, 9, 11, 14, 15, 16, 17, 41, 43].indexOf(col) >= 0) {
       var single = range.getNumRows() === 1 && range.getNumColumns() === 1;
+      if (col === 8 || col === 11) {
+        if (!single) return;
+        var oldCell = e.oldValue == null ? "" : e.oldValue;
+        var rowNow = sh.getRange(range.getRow(), 1, 1, 11).getValues()[0];
+        var wasIndividual = col === 8 ? avalonIsIndividualPricing(oldCell, rowNow[10]) : avalonIsIndividualPricing(rowNow[7], oldCell);
+        if (!wasIndividual || avalonIsIndividualPricing(rowNow[7], rowNow[10])) return;
+      }
       // Характеристики — вільний текст: перераховуємо лише коли змінилась опція, що впливає
       // на ціну (а не, скажімо, дописали модель кондиціонера).
       if (col === 43) {
@@ -905,6 +935,9 @@ function recalcRow_(sh, row) {
   if (kind && kind.toLowerCase().indexOf("кошик") < 0) return;
   var w = Number(v[13]) || 0, h = Number(v[14]) || 0;
   if (!(w && h)) return; // без розмірів не перераховуємо (напр. «розрахує менеджер»)
+  // Антивандальний кошик і складний візерунок рахуються індивідуально — вписані менеджером
+  // суми не чіпаємо.
+  if (avalonIsIndividualPricing(v[7], v[10])) return;
   // Знижка клієнта лишається: відсоток із таблиці, а якщо записана лише сума — її частка в прайсі.
   var oldList = cellNum_(v[34]) || 0, oldPct = cellNum_(v[35]) || 0, oldUah = cellNum_(v[36]) || 0;
   var discountPct = oldPct > 0 ? oldPct : (oldList > 0 && oldUah > 0 ? Math.round(oldUah / oldList * 10000) / 100 : 0);
@@ -1433,6 +1466,9 @@ function buildProductionMsg_(data, opts) {
     // (ковш, пергола, стенд…) мають ціну від менеджера, тож рахувати їх за площею
     // кошика — вигадувати цифри, яких підрядник не бачив.
     if (it.product_type === "other" || it.product_type === "bracket" || it.product_type === "service") return zero;
+    // Антивандальний кошик і складний візерунок рахуються індивідуально — розкладка за площею
+    // була б чужими цифрами.
+    if (avalonIsIndividualPricing(it.basket_type, it.pattern)) return zero;
     var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
     if (!(w && h)) return zero;
     var p = avalonPriceItem(pricingInput_(it));
@@ -3910,7 +3946,7 @@ function adminUpdateOrder_(data) {
 
   // ── Характеристики позиції: лише цей рядок ──
   var pricingItemTouched = false;
-  var PRICING_KEYS = ["construction", "basket_model", "product_kind", "specs", "size_w", "size_h", "size_d", "quantity"];
+  var PRICING_KEYS = ["basket_type", "pattern", "construction", "basket_model", "product_kind", "specs", "size_w", "size_h", "size_d", "quantity"];
   var pricingKeyInPatch = PRICING_KEYS.some(function (k) { return patch[k] != null; });
   var signatureBefore = pricingKeyInPatch ? pricingSignatureOfRow_(sh, row) : "";
   var ITEM_TEXT = { basket_type: 8, construction: 9, color: 10, pattern: 11,
@@ -3949,9 +3985,10 @@ function adminUpdateOrder_(data) {
     sh.getRange(row, ITEM_NUM[key]).setValue(num);
   });
   // Гроші перераховуємо лише коли справді змінилось те, від чого залежить ціна (модель,
-  // опції, розміри, кількість) — тією ж формулою, що й калькулятор. Правка кольору, типу,
-  // візерунка чи коментаря суми не чіпає. Якщо в цьому ж запиті задана ціна —
-  // applyFinanceToRow_ нижче переважить.
+  // опції, розміри, кількість) — тією ж формулою, що й калькулятор. Правка кольору чи
+  // коментаря суми не чіпає; тип і візерунок — лише коли позиція переходить між «за формулою»
+  // та «індивідуально» (антивандальний, складний візерунок). Якщо в цьому ж запиті задана
+  // ціна — applyFinanceToRow_ нижче переважить.
   if (pricingKeyInPatch && pricingSignatureOfRow_(sh, row) !== signatureBefore) pricingItemTouched = true;
   if (pricingItemTouched) recalcRow_(sh, row);
 
