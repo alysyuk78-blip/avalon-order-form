@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import {
+  Calculator,
   Check,
   ClipboardList,
   Columns3,
@@ -126,6 +127,7 @@ import pricing from '../../lib/avalon-pricing.js';
       partners: (props) => <MaskIcon src="/admin/icons/partners.png" size={props.size} className={props.className} />,
       expenses: (props) => <MaskIcon src="/admin/icons/expenses.png" size={props.size} className={props.className} />,
       form: FilePenLine,
+      calculator: Calculator,
       logout: LogOut,
       info: Info,
       close: (props) => <MaskIcon src="/admin/icons/close.png" size={props.size} className={props.className} />,
@@ -2058,6 +2060,12 @@ import pricing from '../../lib/avalon-pricing.js';
       solid: "суцільний", screen: "екран під утеплювач", universal: "універсальний",
       sectional_frame: "зі знімною боковиною", sectional: "розбірний", closed: "закритий на підставці",
     };
+    // Калькулятор під адресою кабінету. З картки відкривається з позицією: вона завантажується
+    // в калькулятор, а розрахунок зберігається назад у неї.
+    const CALC_URL = "/calc/";
+    function calcUrlFor(orderNumber, row) {
+      return CALC_URL + "?order=" + encodeURIComponent(orderNumber) + "&row=" + encodeURIComponent(row);
+    }
     const PRICING_COVER_OPTIONS = [["", "немає"], ["plain", "не перфорована"], ["perforated", "перфорована"]];
     // Знижка позиції відсотком: з поля, а якщо вписана лише сума — її частка в прайсі.
     function formDiscountPct(form) {
@@ -2073,7 +2081,7 @@ import pricing from '../../lib/avalon-pricing.js';
           width: form.size_w, height: form.size_h, depth: form.size_d, quantity: form.quantity },
         { discountPct: formDiscountPct(form), commissionPct: form.commission_pct });
     }
-    function PricingBlock({ form, setForm, saved, disabled, onApply }) {
+    function PricingBlock({ form, setForm, saved, disabled, onApply, orderNumber }) {
       const type = pricing.avalonModelType(form.construction, form.basket_model);
       const opts = pricing.avalonParseOptions(form.construction, form.specs);
       const calc = calcPosition(form);
@@ -2202,6 +2210,19 @@ import pricing from '../../lib/avalon-pricing.js';
               )}
             </>
           )}
+          {!notInCalculator && !individual && saved.row ? (
+            <div className="pricing-calc-link">
+              <button className="btn secondary" type="button" disabled={disabled || !inputsSaved}
+                onClick={() => window.location.assign(calcUrlFor(orderNumber, saved.row))}>
+                Порахувати в калькуляторі
+              </button>
+              <p className="margin-calc-note">
+                {inputsSaved
+                  ? "За розмірами блока кондиціонера, з пропозицією клієнту й рахунком. Позиція завантажиться сама, розрахунок збережеться в неї."
+                  : "Спершу збережіть товар — калькулятор бере позицію такою, як вона записана в замовленні."}
+              </p>
+            </div>
+          ) : null}
         </div>
       );
     }
@@ -3008,7 +3029,7 @@ import pricing from '../../lib/avalon-pricing.js';
               </>
             )}
             {(!form.product_kind || form.product_kind === "Кошик") && (
-              <PricingBlock form={form} setForm={setForm} saved={currentItem} disabled={busy || stale} onApply={applyCalculation} />
+              <PricingBlock form={form} setForm={setForm} saved={currentItem} disabled={busy || stale} onApply={applyCalculation} orderNumber={orderNumber} />
             )}
             {/* Усе, що формула не рахує, — за тією ж плановою націнкою від вписаної собівартості.
                 Доплата за колір — пропускна сума (маржа 0), їй націнка не потрібна. */}
@@ -5238,6 +5259,8 @@ import pricing from '../../lib/avalon-pricing.js';
               ))}
             </nav>
             <div className="top-actions">
+              {/* Калькулятор живе під адресою кабінету (/calc/ → проксі на avalon-calculator): той самий вхід. */}
+              <IconLink icon="calculator" label="Калькулятор" href={CALC_URL} />
               <IconLink icon="form" label="Форма замовлення" href="/" />
               <IconButton icon="logout" label="Вийти" onClick={() => logout()} />
             </div>
