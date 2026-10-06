@@ -2293,7 +2293,8 @@ function setupDropshippers(ss) {
  */
 function dropSumFormula_(col, extraCriteria) {
   var O = SHEET_ORDERS;
-  return '=BYROW(A2:A;LAMBDA(code;IF(code="";"";SUMIFS(' + O + '!' + col + ':' + col + ';' + O + '!D:D;code;'
+  // Імʼя параметра LAMBDA — звичайне слово, що не збігається з назвою жодної функції таблиць.
+  return '=BYROW(A2:A;LAMBDA(partner;IF(partner="";"";SUMIFS(' + O + '!' + col + ':' + col + ';' + O + '!D:D;partner;'
     + O + '!C:C;"<>Скасовано"' + (extraCriteria || "") + '))))';
 }
 /** «Кошиків продано» партнера: кількість у його замовленнях без скасованих і без рядків-послуг. */

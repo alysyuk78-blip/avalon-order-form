@@ -599,9 +599,9 @@ function testSheetCommissionFormula() {
   // Підсумки партнера — окремо для кожного рядка (BYROW): SUMIFS у ARRAYFORMULA не розгортається
   // по рядках і давав усім партнерам цифри першого.
   assert.equal(context.dropSumFormula_("V", ""),
-    '=BYROW(A2:A;LAMBDA(code;IF(code="";"";SUMIFS(Замовлення!V:V;Замовлення!D:D;code;Замовлення!C:C;"<>Скасовано"))))');
+    '=BYROW(A2:A;LAMBDA(partner;IF(partner="";"";SUMIFS(Замовлення!V:V;Замовлення!D:D;partner;Замовлення!C:C;"<>Скасовано"))))');
   assert.equal(context.dropSoldFormula_(),
-    '=BYROW(A2:A;LAMBDA(code;IF(code="";"";SUMIFS(Замовлення!Q:Q;Замовлення!D:D;code;Замовлення!C:C;"<>Скасовано";Замовлення!AP:AP;"<>Послуга"))))');
+    '=BYROW(A2:A;LAMBDA(partner;IF(partner="";"";SUMIFS(Замовлення!Q:Q;Замовлення!D:D;partner;Замовлення!C:C;"<>Скасовано";Замовлення!AP:AP;"<>Послуга"))))');
   assert.equal(formulas[26], '=IF($W7="";"";$W7-$Y7)', "чистий прибуток = валовий − комісія");
 
   // Схема таблиці розширена до AT (46) — інакше читання картки впаде.
@@ -650,7 +650,7 @@ function testCommissionFormulaMigration() {
   const a = run(OLD);
   assert.deepEqual(a.rows, [3, 6], "формулу Y переставлено лише в рядках-послугах");
   assert.deepEqual(Object.keys(a.dropSet).sort(), ["F2", "G2", "H2"], "I2 (SUMIF) розгортається правильно — її не чіпаємо");
-  assert.ok(a.dropSet.F2.startsWith("=BYROW(A2:A;LAMBDA(code;") && a.dropSet.F2.includes('AP:AP;"<>Послуга"'));
+  assert.ok(a.dropSet.F2.startsWith("=BYROW(A2:A;LAMBDA(partner;") && a.dropSet.F2.includes('AP:AP;"<>Послуга"'));
   assert.ok(a.dropSet.G2.includes("Замовлення!V:V") && a.dropSet.H2.includes("Замовлення!Y:Y"));
   assert.equal(a.flag, "1");
   assert.deepEqual([a.secondRows, a.secondDrop], [0, 0], "удруге нічого не чіпаємо");
