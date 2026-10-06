@@ -2228,8 +2228,8 @@ function setupDropshippers(ss) {
   // Авто-формули (спадають донизу для всіх рядків з КОДом)
   var O = SHEET_ORDERS, P = SHEET_PAYOUTS;
   sh.getRange("F2").setFormula(dropSoldFormula_());
-  sh.getRange("G2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(' + O + '!V:V;' + O + '!D:D;A2:A;' + O + '!C:C;"<>Скасовано")))');
-  sh.getRange("H2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(' + O + '!Y:Y;' + O + '!D:D;A2:A;' + O + '!C:C;"<>Скасовано")))');
+  sh.getRange("G2").setFormula(dropSumFormula_("V", ""));
+  sh.getRange("H2").setFormula(dropSumFormula_("Y", ""));
   sh.getRange("I2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";SUMIF(' + P + '!B:B;A2:A;' + P + '!D:D)))');
   sh.getRange("J2").setFormula('=ARRAYFORMULA(IF(A2:A="";"";H2:H-I2:I))');
   sh.getRange("E2:E").setNumberFormat("#,##0 ₴");
@@ -2258,16 +2258,26 @@ function setupDropshippers(ss) {
   return sh;
 }
 
+/**
+ * Сума по замовленнях партнера (колонка col аркуша «Замовлення»), без скасованих.
+ * BYROW + LAMBDA, а не ARRAYFORMULA(SUMIFS(…)): SUMIFS у масивній формулі НЕ розгортається
+ * по рядках — бере критерій лише з першого рядка, і всі партнери показували б цифри першого.
+ */
+function dropSumFormula_(col, extraCriteria) {
+  var O = SHEET_ORDERS;
+  return '=BYROW(A2:A;LAMBDA(code;IF(code="";"";SUMIFS(' + O + '!' + col + ':' + col + ';' + O + '!D:D;code;'
+    + O + '!C:C;"<>Скасовано"' + (extraCriteria || "") + '))))';
+}
 /** «Кошиків продано» партнера: кількість у його замовленнях без скасованих і без рядків-послуг. */
 function dropSoldFormula_() {
-  var O = SHEET_ORDERS;
-  return '=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(' + O + '!Q:Q;' + O + '!D:D;A2:A;' + O + '!C:C;"<>Скасовано";' + O + '!AP:AP;"<>Послуга")))';
+  return dropSumFormula_("Q", ';' + SHEET_ORDERS + '!AP:AP;"<>Послуга"');
 }
 
 /**
  * Одноразово: рядки-послуги більше не нараховують партнерську ставку «за кошик», а
- * «Кошиків продано» їх не рахує. Переставляємо формулу Y лише в рядках-послугах і формулу F2
- * в «Дропшиперах» — тільки якщо там стоїть стара стандартна (власну формулу не чіпаємо).
+ * «Кошиків продано» їх не рахує; підсумки партнера рахуються окремо для КОЖНОГО партнера.
+ * Переставляємо формулу Y лише в рядках-послугах і формули F2:H2 в «Дропшиперах» — тільки
+ * якщо там стоять старі стандартні (власну формулу власника не чіпаємо).
  */
 function ensureCommissionFormulaV2Once_(sheet) {
   var props = PropertiesService.getScriptProperties();
@@ -2282,11 +2292,18 @@ function ensureCommissionFormulaV2Once_(sheet) {
   try {
     var drop = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_DROP);
     if (drop) {
-      var cell = drop.getRange("F2");
-      var f = String(cell.getFormula() || "");
-      if (f.indexOf("SUMIFS(") >= 0 && f.indexOf("!Q:Q") >= 0 && f.indexOf("AP:AP") < 0) cell.setFormula(dropSoldFormula_());
+      // F «Кошиків продано», G «Виручка», H «Нараховано»: стара стандартна формула
+      // ARRAYFORMULA(…SUMIFS…) рахувала всіх партнерів за кодом першого рядка.
+      [["F2", "!Q:Q", dropSoldFormula_()], ["G2", "!V:V", dropSumFormula_("V", "")], ["H2", "!Y:Y", dropSumFormula_("Y", "")]]
+        .forEach(function (spec) {
+          var cell = drop.getRange(spec[0]);
+          var f = String(cell.getFormula() || "");
+          if (f.indexOf("ARRAYFORMULA(") >= 0 && f.indexOf("SUMIFS(") >= 0 && f.indexOf(spec[1]) >= 0 && f.indexOf("BYROW(") < 0) {
+            cell.setFormula(spec[2]);
+          }
+        });
     }
-  } catch (dropErr) { console.error("Формула «Кошиків продано»: " + dropErr); }
+  } catch (dropErr) { console.error("Формули «Дропшиперів»: " + dropErr); }
   props.setProperty("COMMISSION_FORMULA_V2_READY", "1");
 }
 
