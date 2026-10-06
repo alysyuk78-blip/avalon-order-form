@@ -1072,6 +1072,74 @@ function testAddOrderItem() {
   assert.throws(() => ctx.adminAddOrderItem_({ order_number: ORD, request_id: "calc-3" }), /Немає даних позиції/);
 }
 
+// ── Єдиний алгоритм ціни: нове замовлення без суми і правка позиції в картці ──
+function testUnifiedPricingInSheet() {
+  let appended = null;
+  // Макет таблиці + оформлення клітинок (жирний, фон, формат) — воно тут не перевіряється.
+  const styled = (sh) => Object.assign({}, sh, {
+    getRange: (...args) => {
+      const rng = sh.getRange(...args);
+      const proxy = new Proxy(rng, { get: (target, prop) => (prop in target ? target[prop] : () => proxy) });
+      return proxy;
+    },
+  });
+  const raw = makeSheet([]);
+  const sheet = styled(raw);
+  const ctx = load({
+    SpreadsheetApp: { getActiveSpreadsheet: () => ({ getSheetByName: () => sheet }), flush() {} },
+    Utilities: { formatDate: () => "06.10.2026 12:00" },
+    PropertiesService: { getScriptProperties: () => makeProps() },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+  });
+  ctx.ensureDiscountColumns_ = () => {};
+  ctx.getPatternFileInfo_ = () => null;
+  ctx.ensureContactColumns_ = () => {};
+  ctx.setCommissionFormulas_ = () => {};
+  ctx.nextOrderNumber = () => "ORD-061026-001";
+  ctx.appendOrderRow_ = (sh, row) => { appended = row; sh.getRange(sh.getLastRow() + 1, 1, 1, row.length).setValues([row]); return sh.getLastRow(); };
+
+  // Нове замовлення з кабінету без ціни: суми — рівно як у калькуляторі (AVL-05, 14 шт., −10 %).
+  const item = { product_type: "basket", basket_model: "AVL-05", basket_model_name: "Розбірний",
+    construction_type: "Розбірний (з 3-х частин) · AVL-05", size_w: 750, size_h: 700, size_d: 440, quantity: 14, discount_pct: 10 };
+  ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", items: [item] });
+  assert.deepEqual(appended.slice(17, 24), [1.14, 2476, 34664, 3009, 42122, 7458, 17.7]);
+  assert.deepEqual(raw.data[1].slice(34, 37), [46802, 10, 4680], "прайс, знижка % і ₴ — у своїх колонках");
+
+  // Через ТОВ (комісія 30 % з маржі): націнка 50 %, щоб чистими лишились планові 35 %.
+  ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", commission_pct: 30, items: [Object.assign({}, item, { discount_pct: "" })] });
+  assert.equal(appended[21], 51996, "3 714 × 14");
+  // Вписана лише собівартість: ціна за плановою націнкою (а з комісією — за збільшеною).
+  ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", items: [{ product_type: "other", basket_model_name: "Стенд", quantity: 1, cost_total: 1000 }] });
+  assert.equal(appended[21], 1350, "рівно +35 %");
+  ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", commission_pct: 30, items: [{ product_type: "other", basket_model_name: "Стенд", quantity: 1, cost_total: 1000 }] });
+  assert.equal(appended[21], 1500, "з комісією 30 % — +50 %");
+  // Заявка з форми (суми нулі) лишається без ціни — її рахує менеджер.
+  ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", items: [Object.assign({}, item, { price_total: 0, cost_total: 0 })] });
+  assert.equal(appended[21], "", "форма автоматичну ціну не передає");
+
+  // Правка в картці: колір, тип і візерунок суми не чіпають; кількість — перераховує, знижка лишається.
+  const us = makeSheet([orderRow(ORD, "Нове", { 8: "Розбірний (з 3-х частин) · AVL-05", 13: 750, 14: 700, 15: 440, 16: 14,
+    19: 30000, 21: 40000, 22: 10000, 34: 44000, 35: 10, 36: 4000, 40: "Розбірний", 41: "Кошик" })]);
+  ctx.adminOrdersSheet_ = () => styled(us);
+  ctx.syncOrderPaymentState_ = () => {};
+  ctx.syncProcessingEvent_ = () => {};
+  ctx.adminGetOrder_ = () => ({ status: "ok" });
+  const same = { construction: "Розбірний (з 3-х частин) · AVL-05", basket_model: "Розбірний", product_kind: "Кошик",
+    specs: "", size_w: 750, size_h: 700, size_d: 440, quantity: 14 };
+  ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { color: "Білий", basket_type: "Антивандальний", pattern: "K3", specs: "Кронштейн: K2" }) });
+  assert.deepEqual([us.data[1][19], us.data[1][21]], [30000, 40000], "вписані вручну суми лишились");
+  assert.equal(us.data[1][9], "Білий");
+  ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 3 }) });
+  assert.deepEqual(us.data[1].slice(17, 24), [1.14, 2476, 7428, 3009, 9026, 1598, 17.7], "3 шт.: 3 343 × 3 − 10 %");
+  assert.deepEqual(us.data[1].slice(34, 37), [10029, 10, 1003]);
+  // Опція в характеристиках, що впливає на ціну, — теж перераховує.
+  ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 3, specs: "Матеріал: Оцинкований метал" }) });
+  assert.equal(us.data[1][19], 11628, "(2 475,97 + 1 400) × 3");
+  // У тому ж запиті задана ціна — вона переважає формулу.
+  ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 5, cost_total: 12000, list_price: 20000, discount_pct: 0, discount_uah: 0, revenue: 20000 }) });
+  assert.deepEqual([us.data[1][19], us.data[1][21]], [12000, 20000]);
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
@@ -1089,4 +1157,5 @@ testDeleteOrderItem();
 testMarginOwedAndCancelReason();
 testItemComments();
 testAddOrderItem();
+testUnifiedPricingInSheet();
 console.log("contractor-send tests: OK");
