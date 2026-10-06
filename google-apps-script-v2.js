@@ -388,6 +388,11 @@ function pricingSignature_(o) {
     opts.universalSectional ? 1 : 0, opts.universalRemovableSide ? 1 : 0,
     mm(o.width), mm(o.height), mm(o.depth), Number(o.quantity) || 1].join("|");
 }
+/** Чи є в рядку всі розміри, потрібні формулі (для кошика — й глибина). */
+function pricingSizedOfRow_(sh, row) {
+  var v = sh.getRange(row, 1, 1, Math.min(sh.getMaxColumns(), 41)).getValues()[0];
+  return avalonItemSized({ construction: v[8], model: v[40], width: v[13], height: v[14], depth: v[15] });
+}
 function pricingSignatureOfRow_(sh, row) {
   var v = sh.getRange(row, 1, 1, Math.min(sh.getMaxColumns(), 43)).getValues()[0];
   return pricingSignature_({ basketType: v[7], pattern: v[10], construction: v[8], model: v[40], kind: v[41], specs: v[42],
@@ -956,7 +961,16 @@ function onEditDelivery(e) {
         }
       }
       if (doRecalc) {
-        for (var ri = 0; ri < range.getNumRows(); ri++) recalcRow_(sh, range.getRow() + ri);
+        // Стерли один із розмірів однієї клітинки: старе значення відоме, тож бачимо, що
+        // позиція була з розмірами, — тоді суми зі старих розмірів прибираються.
+        var wasSizedBefore = false;
+        if (single && [14, 15, 16].indexOf(col) >= 0) {
+          var sizeRow = sh.getRange(range.getRow(), 1, 1, 41).getValues()[0];
+          var prev = { construction: sizeRow[8], model: sizeRow[40], width: sizeRow[13], height: sizeRow[14], depth: sizeRow[15] };
+          prev[col === 14 ? "width" : (col === 15 ? "height" : "depth")] = e.oldValue;
+          wasSizedBefore = avalonItemSized(prev);
+        }
+        for (var ri = 0; ri < range.getNumRows(); ri++) recalcRow_(sh, range.getRow() + ri, { wasSized: wasSizedBefore });
       }
       // Діапазон, що почався з іншої колонки (статус, дата…), обробляють ще й гілки нижче.
       if (pricingStart) return;
@@ -1071,19 +1085,28 @@ function setCommissionFormulas_(sheet, row) {
  * Колонки: R(18) Площа, S(19) Собів.1шт, T(20) Собів.заг, U(21) Ціна1шт,
  *          V(22) Виручка, W(23) Валовий, X(24) Маржа. Y/Z — формули, оновляться самі.
  */
-function recalcRow_(sh, row) {
+function recalcRow_(sh, row, opts) {
   if (row < 2) return;
   var v = sh.getRange(row, 1, 1, Math.min(sh.getMaxColumns(), COMMISSION_PCT_COL)).getValues()[0];
   // Формула чинна ЛИШЕ для кошиків. Кронштейни й довільні вироби (пергола, стенд…)
   // мають власну ціну від менеджера — не перетираємо її.
   var kind = String(v[41] || "");
   if (kind && kind.toLowerCase().indexOf("кошик") < 0) return;
-  var w = Number(v[13]) || 0, h = Number(v[14]) || 0;
-  // Без розмірів не перераховуємо (напр. «розрахує менеджер»); кошику потрібна й глибина.
-  if (!avalonItemSized({ construction: v[8], model: v[40], width: w, height: h, depth: v[15] })) return;
   // Антивандальний кошик і складний візерунок рахуються індивідуально — вписані менеджером
   // суми не чіпаємо.
   if (avalonIsIndividualPricing(v[7], v[10])) return;
+  var w = Number(v[13]) || 0, h = Number(v[14]) || 0;
+  // Без розмірів не перераховуємо (напр. «розрахує менеджер»); кошику потрібна й глибина.
+  if (!avalonItemSized({ construction: v[8], model: v[40], width: w, height: h, depth: v[15] })) {
+    // Позиція щойно ВТРАТИЛА потрібний розмір (була з розмірами — стала без): площа й суми,
+    // пораховані зі старих розмірів, більше нічого не означають — прибираємо їх, знижку %
+    // лишаємо. Позицію, що й раніше була без розмірів (ціну веде менеджер), не чіпаємо.
+    if (opts && opts.wasSized) {
+      sh.getRange(row, 18, 1, 7).setValues([["", "", "", "", "", "", ""]]);
+      sh.getRange(row, 35, 1, 3).setValues([["", cellNum_(v[35]) || "", ""]]);
+    }
+    return;
+  }
   // Знижка клієнта лишається: відсоток із таблиці, а якщо записана лише сума — її частка в прайсі.
   var oldList = cellNum_(v[34]) || 0, oldPct = cellNum_(v[35]) || 0, oldUah = cellNum_(v[36]) || 0;
   var discountPct = oldPct > 0 ? oldPct : (oldList > 0 && oldUah > 0 ? Math.round(oldUah / oldList * 10000) / 100 : 0);
@@ -4216,6 +4239,7 @@ function adminUpdateOrder_(data) {
   var PRICING_KEYS = ["basket_type", "pattern", "construction", "basket_model", "product_kind", "specs", "size_w", "size_h", "size_d", "quantity"];
   var pricingKeyInPatch = PRICING_KEYS.some(function (k) { return patch[k] != null; });
   var signatureBefore = pricingKeyInPatch ? pricingSignatureOfRow_(sh, row) : "";
+  var sizedBefore = pricingKeyInPatch ? pricingSizedOfRow_(sh, row) : false;
   var ITEM_TEXT = { basket_type: 8, construction: 9, color: 10, pattern: 11,
                     ac_brand: 12, ac_model: 13, basket_model: 41,
                     product_kind: 42, specs: 43, unit: 44, item_comment: ITEM_COMMENT_COL };
@@ -4257,7 +4281,7 @@ function adminUpdateOrder_(data) {
   // та «індивідуально» (антивандальний, складний візерунок). Якщо в цьому ж запиті задана
   // ціна — applyFinanceToRow_ нижче переважить.
   if (pricingKeyInPatch && pricingSignatureOfRow_(sh, row) !== signatureBefore) pricingItemTouched = true;
-  if (pricingItemTouched) recalcRow_(sh, row);
+  if (pricingItemTouched) recalcRow_(sh, row, { wasSized: sizedBefore });
 
   // ── Ставка комісії партнера/ТОВ: спільна для всього замовлення ──
   // Пишемо в усі рядки та переставляємо формули Y/Z — зокрема й на старих

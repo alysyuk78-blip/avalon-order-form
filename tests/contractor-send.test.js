@@ -1401,6 +1401,18 @@ function testAuditFixes() {
   t.ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", items: [Object.assign({}, noDepth, { basket_model: "AVL-02", construction_type: "Розбірна · AVL-02", size_h: 540, size_d: 0 })] });
   assert.equal(t.appended()[19], 2577, "екран без бортів: 0,432 × 2 030 + кріплення 1 700");
 
+  // 1д. Пораховану формулою позицію лишили без глибини — суми зі старих розмірів прибираються
+  //     (знижка % лишається); позицію, що й була без розмірів, зміна кількості не чіпає.
+  t = make([basket({ 9: "Сірий (RAL 7016)", 17: 0.9, 18: 1827, 34: 2466, 35: 5, 36: 123 })]);
+  t.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { size_d: 0 }) });
+  assert.deepEqual(t.raw.data[1].slice(17, 24), ["", "", "", "", "", "", ""], "площа й суми прибрані");
+  assert.deepEqual(t.raw.data[1].slice(34, 37), ["", 5, ""], "знижка % лишилась");
+  t.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { size_d: 500 }) });
+  assert.deepEqual([t.raw.data[1][19], t.raw.data[1][21], t.raw.data[1][35]], [1827, 2343, 5], "глибину повернули — формула знову рахує, зі знижкою 5 %");
+  t = make([basket({ 9: "Сірий (RAL 7016)", 15: "", 19: 3000, 21: 4500, 22: 1500 })]);
+  t.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { size_d: 0, quantity: 3 }) });
+  assert.deepEqual([t.raw.data[1][16], t.raw.data[1][19], t.raw.data[1][21]], [3, 3000, 4500], "ціну менеджера для позиції без розмірів не чіпаємо");
+
   // 2. Заявка з форми: площа, розміри блока, опис власного візерунка, контакт без дубля.
   t = make([]);
   const zeros = { price_total: 0, area_m2: 0, cost_total: 0 };
