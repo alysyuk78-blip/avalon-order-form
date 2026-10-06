@@ -661,6 +661,7 @@ function testCommissionFormulaMigration() {
   try {
     const failed = run(OLD, { G2: "#ERROR!" });
     assert.equal(failed.dropSet.G2, OLD.G2, "G2 повернуто до старої формули");
+    assert.equal(failed.flag, "rejected", "таблиця формулу не прийняла — фіксуємо це окремо й щокроку не повторюємо");
     assert.ok(failed.dropSet.F2.startsWith("=BYROW(") && failed.dropSet.H2.startsWith("=BYROW("));
   } finally { console.error = originalError; }
   // Власні формули власника лишаються як є.

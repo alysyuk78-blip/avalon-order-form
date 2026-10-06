@@ -66,9 +66,10 @@ function doPost(e) {
 
     var written = writeOrderToSheet_(data);
 
-    if (!written.duplicate) {
-      addDeliveryEvent(data); // подія в Google Календарі + нагадування (за 2 дні і в день о 08:30)
-    }
+    // Подія в Google Календарі + нагадування (за 2 дні і в день о 08:30). Викликаємо й для
+    // повтору запиту: якщо перша спроба обірвалась одразу після запису рядків, події ще немає,
+    // а якщо вона вже є — addDeliveryEvent другої не створить.
+    addDeliveryEvent(data);
     // У групу підрядника замовлення НЕ йде автоматично — лише коли менеджер
     // надішле замовлення підряднику (CRM або статус у таблиці). Так підрядник не бачить
     // попередніх/неопрацьованих запитів.
@@ -765,7 +766,9 @@ function writeOrderToSheet_(data) {
       sheet.getRange(lastRow, 21).setFontWeight("bold");            // Ціна продажу 1шт
       if (lastRow % 2 === 0) rr.setBackground("#F8F6F2");
       // Позицію записано повністю — знімаємо знак «у роботі» (остання дія для рядка).
-      if (requestId) sheet.getRange(lastRow, 45).setValue(requestId);
+      // _deferComplete: дія кабінету ще має доробити своє (прайс і знижку, доплату за колір,
+      // подію в календарі) — «готово» вона поставить сама через finishRequest_.
+      if (requestId && !data._deferComplete) sheet.getRange(lastRow, 45).setValue(requestId);
     });
   if (resumeRows.length) {
     return { order_number: data.order_number, row: resumeRows[0], rows: resumeRows.concat(writtenRows), completed: true };
@@ -775,6 +778,20 @@ function writeOrderToSheet_(data) {
 
 // Знак «рядок ще заповнюється» перед ID запиту в колонці AS (див. writeOrderToSheet_).
 var REQUEST_PENDING_PREFIX = "~";
+
+/**
+ * Дію кабінету завершено повністю — знімаємо знак «у роботі» з усіх її рядків. Шукаємо за
+ * самою позначкою, а не за номерами рядків: поки дія тривала, рядки могли зсунутись
+ * (зʼявилась чи зникла доплата за колір).
+ */
+function finishRequest_(sheet, requestId) {
+  requestId = String(requestId || "").trim().substring(0, 120);
+  if (!requestId || sheet.getLastRow() < 2) return;
+  var markers = sheet.getRange(2, 45, sheet.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < markers.length; i++) {
+    if (String(markers[i][0] || "").trim() === REQUEST_PENDING_PREFIX + requestId) sheet.getRange(i + 2, 45).setValue(requestId);
+  }
+}
 
 function findLastRealOrderRow_(sheet) {
   var last = sheet.getLastRow();
@@ -856,6 +873,8 @@ function getCal() {
 function addDeliveryEvent(order) {
   try {
     if (!order.delivery_date) return;
+    // Одна подія на замовлення: повтор того самого запиту не має створити другу.
+    if (order.order_number && PropertiesService.getScriptProperties().getProperty("evt_" + order.order_number)) return;
     var p = String(order.delivery_date).split("-"); // формат yyyy-MM-dd
     if (p.length !== 3) return;
     var y = parseInt(p[0], 10), mo = parseInt(p[1], 10) - 1, da = parseInt(p[2], 10);
@@ -2351,7 +2370,9 @@ function dropSoldFormula_() {
  */
 function ensureCommissionFormulaV2Once_(sheet) {
   var props = PropertiesService.getScriptProperties();
-  if (props.getProperty("COMMISSION_FORMULA_V2_READY") === "1") return;
+  // "1" — зроблено; "rejected" — таблиця не прийняла нові формули партнерів (власника
+  // сповіщено, щокроку не повторюємо). Порожньо — ще не зроблено або минулого разу стався збій.
+  if (props.getProperty("COMMISSION_FORMULA_V2_READY")) return;
   var last = sheet.getLastRow();
   if (last >= 2 && sheet.getMaxColumns() >= 42) {
     var kinds = sheet.getRange(2, 42, last - 1, 1).getValues();
@@ -2359,28 +2380,35 @@ function ensureCommissionFormulaV2Once_(sheet) {
       if (/послуг/i.test(String(kinds[i][0] || ""))) setCommissionFormulas_(sheet, i + 2);
     }
   }
-  try {
-    var drop = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_DROP);
-    if (drop) {
-      // F «Кошиків продано», G «Виручка», H «Нараховано»: стара стандартна формула
-      // ARRAYFORMULA(…SUMIFS…) рахувала всіх партнерів за кодом першого рядка.
-      [["F2", "!Q:Q", dropSoldFormula_()], ["G2", "!V:V", dropSumFormula_("V", "")], ["H2", "!Y:Y", dropSumFormula_("Y", "")]]
-        .forEach(function (spec) {
-          var cell = drop.getRange(spec[0]);
-          var f = String(cell.getFormula() || "");
-          if (f.indexOf("ARRAYFORMULA(") >= 0 && f.indexOf("SUMIFS(") >= 0 && f.indexOf(spec[1]) >= 0 && f.indexOf("BYROW(") < 0) {
-            cell.setFormula(spec[2]);
-            // Запобіжник: якщо таблиця нову формулу не прийняла (помилка в клітинці) —
-            // повертаємо стару, щоб аркуш партнерів не лишився з «#ERROR!».
-            SpreadsheetApp.flush();
-            if (/^#/.test(String(cell.getDisplayValue() || ""))) {
-              cell.setFormula(f);
-              console.error("Формула " + spec[0] + " «Дропшиперів» не оновлена: таблиця повернула помилку");
-            }
+  var rejected = [];
+  var drop = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_DROP);
+  if (drop) {
+    // F «Кошиків продано», G «Виручка», H «Нараховано»: стара стандартна формула
+    // ARRAYFORMULA(…SUMIFS…) рахувала всіх партнерів за кодом першого рядка.
+    [["F2", "!Q:Q", dropSoldFormula_()], ["G2", "!V:V", dropSumFormula_("V", "")], ["H2", "!Y:Y", dropSumFormula_("Y", "")]]
+      .forEach(function (spec) {
+        var cell = drop.getRange(spec[0]);
+        var f = String(cell.getFormula() || "");
+        if (f.indexOf("ARRAYFORMULA(") >= 0 && f.indexOf("SUMIFS(") >= 0 && f.indexOf(spec[1]) >= 0 && f.indexOf("BYROW(") < 0) {
+          cell.setFormula(spec[2]);
+          // Запобіжник: якщо таблиця нову формулу не прийняла (помилка в клітинці) —
+          // повертаємо стару, щоб аркуш партнерів не лишився з «#ERROR!».
+          SpreadsheetApp.flush();
+          if (/^#/.test(String(cell.getDisplayValue() || ""))) {
+            cell.setFormula(f);
+            rejected.push(spec[0]);
           }
-        });
-    }
-  } catch (dropErr) { console.error("Формули «Дропшиперів»: " + dropErr); }
+        }
+      });
+  }
+  // Збій посеред оновлення (виняток вище) прапорця не ставить — спробуємо наступного разу.
+  if (rejected.length) {
+    props.setProperty("COMMISSION_FORMULA_V2_READY", "rejected");
+    console.error("Формули «Дропшиперів» не оновлено: " + rejected.join(", "));
+    alertOwner_("Формули аркуша «Дропшипери» не оновились автоматично (" + rejected.join(", ") + ").",
+      "Підсумки партнерів (продано / виручка / нараховано) рахуються за кодом першого партнера. Потрібна ручна заміна формул F2:H2.");
+    return;
+  }
   props.setProperty("COMMISSION_FORMULA_V2_READY", "1");
 }
 
@@ -3879,7 +3907,10 @@ function adminCreateOrder_(data) {
     notes: src.notes || "",
     request_id: String(src.request_id || "").trim(),
     commission_pct: src.commission_pct,   // % від маржі (партнер/ТОВ)
-    items: items
+    items: items,
+    // Рядки лишаються «у роботі», доки нижче не застосовано прайс/знижку, доплату за колір і
+    // подію в календарі: якщо дія обірветься посередині, повтор запиту зробить усе заново.
+    _deferComplete: true
   };
 
   var written = writeOrderToSheet_(order);
@@ -3910,6 +3941,9 @@ function adminCreateOrder_(data) {
   try { syncColorSurcharge_(sheetForFin, written.order_number); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
 
   addDeliveryEvent(order); // подія в календарі + нагадування (як для онлайн-заявок)
+
+  // Усе зроблено — рядки замовлення стають «готовими».
+  finishRequest_(sheetForFin, order.request_id);
 
   SpreadsheetApp.flush();
   var created = adminGetOrder_({ order_number: written.order_number });
@@ -4000,6 +4034,8 @@ function adminAddOrderItem_(data) {
       // кеш скрипта очиститься (за годину чи при витісненні).
       request_id: String(data.request_id || "").trim(),
       _append: { afterRow: rows[rows.length - 1], base: base },
+      // Позначку «готово» ставимо нижче — після прайсу/знижки й доплати за колір.
+      _deferComplete: true,
       contact_method: String(base[37] || "").trim() || "phone",
       contact_telegram: String(base[38] || ""), contact_email: String(base[39] || ""),
       commission_pct: base[COMMISSION_PCT_COL - 1],
@@ -4030,6 +4066,8 @@ function adminAddOrderItem_(data) {
     }
     try { syncColorSurcharge_(sh, num, row); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
     try { syncOrderPaymentState_(num); } catch (syncErr) { /* не валимо додавання */ }
+    // Позицію додано повністю — вона стає «готовою» (рядок шукаємо за позначкою: він міг зсунутись).
+    finishRequest_(sh, data.request_id);
     SpreadsheetApp.flush();
     var out = adminGetOrder_({ order_number: num });
     out.added_row = row;

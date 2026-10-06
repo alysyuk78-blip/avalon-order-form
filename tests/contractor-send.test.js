@@ -1350,6 +1350,42 @@ function testAuditFixes() {
   assert.deepEqual(t.raw.data.slice(1).map((r) => [r[0], r[40], r[44]]),
     [[ORD, "Суцільний", ""], [ORD, "Монтаж", "req-add"], ["ORD-110926-002", "Ковш для трактора", ""]]);
 
+  // 1г. Дія кабінету обірвалась ПІСЛЯ запису рядків, але до прайсу/знижки: рядки лишаються
+  //     «у роботі», тож повтор того самого запиту робить усе заново, а не повертає «готово».
+  t = make([orderRow("ORD-110926-002", "Нове")]);
+  let failFinance = true;
+  const realFinance = t.ctx.applyFinanceToRow_;
+  t.ctx.applyFinanceToRow_ = (sh, row, fin) => { if (failFinance) throw new Error("Service Spreadsheets failed"); return realFinance(sh, row, fin); };
+  t.ctx.addDeliveryEvent = () => {};
+  t.ctx.adminGetOrder_ = (d) => ({ status: "ok", order_number: d.order_number });
+  t.ctx.appendOrderRow_ = (sh, row) => { const at = sh.getLastRow(); sh.insertRowsAfter(at, 1); sh.getRange(at + 1, 1, 1, row.length).setValues([row]); return at + 1; };
+  const calcOrder = { client: "Петро", phone: "+380671234567", request_id: "req-create", items: [
+    { product_type: "basket", basket_model: "AVL-05", basket_model_name: "Розбірний", construction_type: "Розбірний (з 3-х частин) · AVL-05", color: "Сірий (RAL 7016)",
+      size_w: 750, size_h: 700, size_d: 440, quantity: 14, cost_total: 34664, list_price: 46802, discount_pct: 10, discount_uah: 4680, price_total: 42122 },
+    { product_type: "service", basket_model_name: "Монтаж", construction_type: "Монтаж", basket_type: "Монтаж", quantity: 14, unit: "шт.", cost_total: 21000, price_total: 21000 }] };
+  assert.throws(() => t.ctx.adminCreateOrder_({ order: JSON.parse(JSON.stringify(calcOrder)) }), /Service Spreadsheets failed/);
+  assert.deepEqual(t.raw.data.slice(2).map((r) => r[44]), ["~req-create", "~req-create"], "рядки записано, але вони ще «у роботі»");
+  failFinance = false;
+  const again = t.ctx.adminCreateOrder_({ order: JSON.parse(JSON.stringify(calcOrder)) });
+  assert.deepEqual(t.raw.data.slice(1).map((r) => [r[0], r[40], r[44]]),
+    [["ORD-110926-002", "Ковш для трактора", ""], [ORD, "Розбірний", "req-create"], [ORD, "Монтаж", "req-create"]],
+    "недороблені рядки замінено, дублів немає, позначки — «готово»");
+  assert.deepEqual(t.raw.data[2].slice(34, 37), [46802, 10, 4680], "прайс і знижку цього разу застосовано");
+  assert.equal(again.order_number, ORD);
+  // Третій раз той самий запит — уже готовий дубль: нічого не змінюється.
+  const snapshot = JSON.stringify(t.raw.data);
+  t.ctx.adminCreateOrder_({ order: JSON.parse(JSON.stringify(calcOrder)) });
+  assert.equal(JSON.stringify(t.raw.data), snapshot);
+  // Подія в календарі — одна на замовлення.
+  const evProps = makeProps({ ["evt_" + ORD]: "ev1" });
+  let created = 0;
+  const cal = load({ PropertiesService: { getScriptProperties: () => evProps } });
+  cal.getCal = () => ({ createEvent: () => { created += 1; return { removeAllReminders() {}, addPopupReminder() {}, addEmailReminder() {}, getId: () => "ev2" }; } });
+  cal.addDeliveryEvent({ order_number: ORD, delivery_date: "2026-10-20", first_name: "Тест" });
+  assert.equal(created, 0, "подія вже є — другу не створюємо");
+  cal.addDeliveryEvent({ order_number: "ORD-061026-777", delivery_date: "2026-10-20", first_name: "Тест" });
+  assert.equal(created, 1);
+
   // 1в. Кошик без глибини формулою не рахується (була б одна лицева стінка); екрану глибина не обовʼязкова.
   t = make([]);
   const noDepth = { product_type: "basket", basket_model: "AVL-01", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 500, size_d: "", quantity: 1 };
