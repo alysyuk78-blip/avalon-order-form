@@ -2132,6 +2132,12 @@ import pricing from '../../lib/avalon-pricing.js';
               Знімна бокова частина
             </label>
           )}
+          {!pricing.avalonIsBaseColor(form.color) && (
+            <p className="margin-calc-note">
+              Колір небазовий: до замовлення додається «{pricing.AVALON_COLOR_SURCHARGE_NAME}» {money(pricing.avalonColorSurcharge(form.color))} —
+              один раз на замовлення, окремою позицією (у ціну кошика не входить). Базові: сірий RAL 7016, чорний RAL 9005, білий RAL 9016.
+            </p>
+          )}
           {!calc ? (
             <p className="margin-calc-note">Вкажіть ширину й висоту в розділі «Товар» — і тут зʼявиться розрахунок.</p>
           ) : (
@@ -2182,6 +2188,50 @@ import pricing from '../../lib/avalon-pricing.js';
                 </>
               )}
             </>
+          )}
+        </div>
+      );
+    }
+
+    // Ціна за плановою націнкою для позиції, яку формула не рахує (виріб не з каталогу,
+    // послуга, кошик без розмірів): собівартість може бути будь-якою, правило те саме.
+    // З комісією з маржі (ТОВ/партнер) націнка збільшується так, щоб ПІСЛЯ комісії
+    // лишалась планова: 1 000 000 → 1 500 000, комісія 150 000, чистими 350 000.
+    function PlannedPriceBlock({ form, setForm, disabled }) {
+      const cost = Number(form.cost_total) || 0;
+      if (!(cost > 0)) return null;
+      const rateRaw = Number(form.commission_pct);
+      const rate = rateRaw > 0 && rateRaw < 100 ? rateRaw : 0;
+      const plan = pricing.AVALON_PRICING_DEFAULTS.markupPct;
+      const price = Math.round(cost * pricing.avalonMarkupFactor(rate));
+      const margin = price - cost;
+      const commission = Math.round(margin * rate) / 100;
+      const applied = (Number(form.revenue) || 0) === price;
+      return (
+        <div className="margin-calc pricing-block">
+          <div className="margin-calc-title">Ціна за плановою націнкою {plan}%</div>
+          <div className="margin-net-row"><span>Собівартість</span><b>{money(cost)}</b></div>
+          {rate > 0 ? (
+            <>
+              <div className="margin-net-row">
+                <span>Маржа — націнка {String(Math.round((pricing.avalonMarkupFactor(rate) - 1) * 10000) / 100).replace(".", ",")}%,
+                  щоб після комісії {pct(rate)} лишились планові {plan}%</span>
+                <b>{money(margin)}</b>
+              </div>
+              <div className="margin-net-row"><span>Комісія {pct(rate)} від маржі</span><b>− {money2(commission)}</b></div>
+              <div className="margin-net-row"><span>Чистими</span><b>{money2(margin - commission)}</b></div>
+            </>
+          ) : (
+            <div className="margin-net-row"><span>Маржа — націнка {plan}%</span><b>{money(margin)}</b></div>
+          )}
+          <div className="margin-net-row margin-net-main"><span>Ціна продажу</span><b>{money(price)}</b></div>
+          {applied ? (
+            <p className="send-hint ok" style={{ marginTop: 8 }}>Ціна позиції відповідає плановій націнці.</p>
+          ) : (
+            <button className="btn secondary" type="button" style={{ marginTop: 8 }} disabled={disabled}
+              onClick={() => setForm(f => ({ ...f, revenue: String(price), list_price: String(price), discount_pct: "", discount_uah: "" }))}>
+              Підставити ціну {money(price)}
+            </button>
           )}
         </div>
       );
@@ -2947,6 +2997,12 @@ import pricing from '../../lib/avalon-pricing.js';
             {(!form.product_kind || form.product_kind === "Кошик") && (
               <PricingBlock form={form} setForm={setForm} saved={currentItem} disabled={busy || stale} onApply={applyCalculation} />
             )}
+            {/* Усе, що формула не рахує, — за тією ж плановою націнкою від вписаної собівартості.
+                Доплата за колір — пропускна сума (маржа 0), їй націнка не потрібна. */}
+            {!((!form.product_kind || form.product_kind === "Кошик") && calcPosition(form))
+              && !String(form.basket_model || "").startsWith(pricing.AVALON_COLOR_SURCHARGE_NAME) && (
+              <PlannedPriceBlock form={form} setForm={setForm} disabled={busy || stale} />
+            )}
             <div className="grid2">
               <div className="field"><label>Собівартість (разом)</label>
                 <input type="number" value={form.cost_total} onChange={e => setForm({ ...form, cost_total: e.target.value })} /></div>
@@ -3437,6 +3493,9 @@ import pricing from '../../lib/avalon-pricing.js';
                   <div className="margin-net-row"><span>Знижка {pct(autoCalc.discountPct)}</span><b>− {money(autoCalc.discountAmount)}</b></div>
                 )}
                 <div className="margin-net-row margin-net-main"><span>Ціна продажу ({autoCalc.quantity} шт.)</span><b>{money(autoCalc.total)}</b></div>
+                {pricing.avalonColorSurcharge(form.color) > 0 && (
+                  <div className="margin-net-row"><span>Доплата за небазовий колір — на замовлення, окремою позицією</span><b>+ {money(pricing.avalonColorSurcharge(form.color))}</b></div>
+                )}
                 <p className="margin-calc-note">Гроші порожні — у замовлення запишуться ці суми. Матеріал і кришки можна уточнити в картці після створення.</p>
               </div>
             )}

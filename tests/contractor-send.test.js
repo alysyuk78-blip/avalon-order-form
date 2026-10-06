@@ -1140,6 +1140,100 @@ function testUnifiedPricingInSheet() {
   assert.deepEqual([us.data[1][19], us.data[1][21]], [12000, 20000]);
 }
 
+// ── Небазовий колір: +200 ₴ один раз на замовлення окремою позицією ──
+function testColorSurchargeInSheet() {
+  const styled = (sh) => Object.assign({}, sh, {
+    getRange: (...args) => {
+      const rng = sh.getRange(...args);
+      const proxy = new Proxy(rng, { get: (target, prop) => (prop in target ? target[prop] : () => proxy) });
+      return proxy;
+    },
+  });
+  const basket = (extra) => orderRow(ORD, "Нове", Object.assign({ 8: "Суцільний · AVL-01", 9: "Сірий (RAL 7016)", 13: 800, 14: 500, 15: 500, 16: 1,
+    19: 1827, 21: 2466, 22: 639, 40: "Суцільний", 41: "Кошик" }, extra));
+  const make = (rows) => {
+    const raw = makeSheet(rows);
+    const ctx = load({
+      SpreadsheetApp: { getActiveSpreadsheet: () => ({ getSheetByName: () => styled(raw) }), flush() {} },
+      Utilities: { formatDate: () => "06.10.2026 12:00" },
+      PropertiesService: { getScriptProperties: () => makeProps() },
+      LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    });
+    ctx.ensureDiscountColumns_ = () => {};
+    ctx.getPatternFileInfo_ = () => null;
+    ctx.ensureContactColumns_ = () => {};
+    ctx.setCommissionFormulas_ = () => {};
+    ctx.applyOrderRowControls_ = () => {};
+    ctx.withRequestCache_ = (_prefix, _id, fn) => fn();
+    ctx.adminOrdersSheet_ = () => styled(raw);
+    ctx.syncOrderPaymentState_ = () => {};
+    ctx.syncProcessingEvent_ = () => {};
+    ctx.adminGetOrder_ = () => ({ status: "ok" });
+    return { raw, ctx, sh: styled(raw) };
+  };
+  const surcharges = (raw) => raw.data.slice(1).filter((r) => r[40] === "Доплата за колір");
+  const same = { construction: "Суцільний · AVL-01", basket_model: "Суцільний", product_kind: "Кошик", specs: "", size_w: 800, size_h: 500, size_d: 500, quantity: 1 };
+
+  // Два кошики небазового кольору → ОДНА доплата на замовлення, під останньою позицією.
+  let t = make([basket({ 9: "RAL 6005 зелений" }), basket({ 9: "RAL 3000 червоний", 16: 3 }), orderRow("ORD-110926-002", "Нове")]);
+  assert.equal(t.ctx.syncColorSurcharge_(t.sh, ORD), true);
+  assert.equal(surcharges(t.raw).length, 1);
+  const added = t.raw.data[3];
+  assert.deepEqual([added[0], added[2], added[4], added[16], added[19], added[21], added[22], added[41]],
+    [ORD, "Нове", "Олександр Заєць", 1, 200, 200, 0, "Послуга"], "собівартість = ціна, маржа 0; дані замовлення — як у решти позицій");
+  assert.equal(t.raw.data[4][0], "ORD-110926-002", "чуже замовлення зсунулось, але не змінилось");
+  assert.equal(t.ctx.syncColorSurcharge_(t.sh, ORD), false, "повторний виклик нічого не дублює");
+  assert.equal(surcharges(t.raw).length, 1);
+
+  // Калькулятор переносить свою «Доплату за колір» — другої не зʼявляється, сума оновлюється.
+  t.ctx.adminAddOrderItem_({ order_number: ORD, request_id: "calc-color",
+    item: { product_type: "service", basket_model_name: "Доплата за колір", construction_type: "Доплата за колір", basket_type: "Доплата за колір", quantity: 1, unit: "шт.", cost_total: 300, price_total: 300 } });
+  assert.equal(surcharges(t.raw).length, 1);
+  assert.deepEqual([surcharges(t.raw)[0][19], surcharges(t.raw)[0][21]], [300, 300]);
+
+  // Кольори стали базовими → доплата зникає; змінену вручну (ціна ≠ собівартість) не чіпаємо.
+  t = make([basket({ 9: "RAL 6005" })]);
+  t.ctx.syncColorSurcharge_(t.sh, ORD);
+  t.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { color: "Чорний (RAL 9005)" }) });
+  assert.equal(surcharges(t.raw).length, 0, "базовий колір — доплату прибрано");
+  assert.equal(t.raw.data.length, 2);
+  t.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { color: "RAL 6005" }) });
+  assert.equal(surcharges(t.raw).length, 1, "колір знову небазовий — доплата повернулась (через правку в картці)");
+  t.raw.data[2][21] = 350;
+  t.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { color: "Білий (RAL 9016)" }) });
+  assert.equal(surcharges(t.raw).length, 1, "вручну змінену доплату лишаємо менеджеру");
+
+  // Без доплати: базовий колір; кошик ще без ціни (заявка з форми); не кошик; замовлення вже у виробництві.
+  t = make([basket({})]);
+  assert.equal(t.ctx.syncColorSurcharge_(t.sh, ORD), false);
+  t = make([basket({ 9: "RAL 6005", 19: "", 21: "", 22: "" })]);
+  assert.equal(t.ctx.syncColorSurcharge_(t.sh, ORD), false, "ціни ще немає — доплату додамо, коли менеджер порахує");
+  t = make([orderRow(ORD, "Нове", { 9: "RAL 6005" })]);
+  assert.equal(t.ctx.syncColorSurcharge_(t.sh, ORD), false, "«Інший виріб» рахує менеджер");
+  t = make([basket({ 2: "Виготовлення", 9: "RAL 6005" })]);
+  assert.equal(t.ctx.syncColorSurcharge_(t.sh, ORD), false, "після запуску у виробництво ціна сама не міняється");
+  assert.equal(t.raw.data.length, 2);
+
+  // Видалили єдиний кошик небазового кольору — доплата йде разом із ним.
+  t = make([basket({}), basket({ 9: "RAL 6005" })]);
+  t.ctx.syncColorSurcharge_(t.sh, ORD);
+  assert.equal(t.raw.data.length, 4);
+  t.ctx.adminDeleteOrderItem_({ order_number: ORD, row: 3 });
+  assert.deepEqual(t.raw.data.slice(1).map((r) => r[9]), ["Сірий (RAL 7016)"]);
+
+  // Повідомлення підряднику: доплата — рядком у фінансах, а не «Послугою»; один кошик лишається «Кошик».
+  const mctx = load({ Utilities: { formatDate: () => "06.10.2026, 12:00" }, Date, PropertiesService: { getScriptProperties: () => makeProps() } });
+  const msg = mctx.buildProductionMsg_({ order_number: ORD, items: [
+    { product_type: "basket", construction_type: "Суцільний · AVL-01", color: "RAL 6005 зелений", size_w: 800, size_h: 500, size_d: 500, quantity: 1, unit: "шт.", cost_total: 1827 },
+    { product_type: "service", basket_model_name: "Доплата за колір", basket_type: "Доплата за колір", quantity: 1, unit: "шт.", cost_total: 200 },
+  ] }, { finance: true }).replace(/<[^>]+>/g, "");
+  assert.ok(!msg.includes("Послуга"), msg);
+  assert.ok(!msg.includes("Кошик 1"), "єдиний кошик — без номера");
+  assert.ok(msg.includes("• Кошик: 0.9 м² × 2 030 ₴/м² = 1 827 ₴"));
+  assert.ok(msg.includes("• Доплата за колір (небазовий, на замовлення): 200 ₴"));
+  assert.ok(msg.includes("• Разом виробнича: 2 027 ₴"));
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
@@ -1158,4 +1252,5 @@ testMarginOwedAndCancelReason();
 testItemComments();
 testAddOrderItem();
 testUnifiedPricingInSheet();
+testColorSurchargeInSheet();
 console.log("contractor-send tests: OK");

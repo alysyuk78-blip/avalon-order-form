@@ -30,7 +30,7 @@ if (existsSync(calcDir)) {
 export {
   AVALON_PRICING_DEFAULTS, AVALON_MATERIALS, AVALON_MODEL_TYPES,
   avalonSnap, avalonModelType, avalonParseOptions, avalonPrice, avalonPriceItem,
-  avalonMarkupFactor, avalonCostLines,
+  avalonMarkupFactor, avalonCostLines, avalonIsBaseColor, avalonColorSurcharge, AVALON_COLOR_SURCHARGE_NAME,
 };
 `);
   console.log("калькулятор: src/lib/avalonPricing.mjs оновлено");

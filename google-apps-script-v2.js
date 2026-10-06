@@ -96,8 +96,12 @@ var AVALON_PRICING_DEFAULTS = {
   coverPerfRate: 2030,      // кришка перфорована, ₴/м²
   screenKitPrice: 1700,     // AVL-02: система кріплення (2 кронштейни + 2 перемички), за комплект
   universalBracketPrice: 800, // AVL-03: кронштейни для еталона Ш1000×Г550×В600 (∝ Ш+Г+В)
-  markupPct: 35             // планова націнка, %
+  markupPct: 35,            // планова націнка, %
+  colorSurcharge: 200       // небазовий колір: доплата на ЗАМОВЛЕННЯ (не на виріб), ₴
 };
+// Базові кольори (без доплати): сірий RAL 7016, чорний RAL 9005, білий RAL 9016.
+var AVALON_BASE_RAL = ["7016", "9005", "9016"];
+var AVALON_COLOR_SURCHARGE_NAME = "Доплата за колір";
 var AVALON_UNIVERSAL_REF_SUM = 2150; // 1000 + 550 + 600 мм
 var AVALON_MATERIALS = {
   black_steel: "Чорний метал",
@@ -248,6 +252,36 @@ function avalonPrice(input, rates) {
   };
 }
 
+/**
+ * Чи колір базовий. Із кодом RAL — лише 7016 / 9005 / 9016; без коду — рівно «сірий»,
+ * «чорний» або «білий». Порожній (колір ще не вказано) доплати не дає.
+ */
+function avalonIsBaseColor(color) {
+  var text = String(color == null ? "" : color).replace(/^\s+|\s+$/g, "").toLowerCase();
+  if (!text) return true;
+  var codes = text.match(/\d{4}/g);
+  if (codes) {
+    for (var i = 0; i < codes.length; i++) {
+      if (AVALON_BASE_RAL.indexOf(codes[i]) < 0) return false;
+    }
+    return true;
+  }
+  return text === "сірий" || text === "чорний" || text === "білий";
+}
+
+/**
+ * Доплата за небазовий колір: ОДНА на замовлення, хоч скільки в ньому виробів і позицій.
+ * colors — колір позиції або масив кольорів усіх позицій замовлення.
+ */
+function avalonColorSurcharge(colors, rates) {
+  var list = Object.prototype.toString.call(colors) === "[object Array]" ? colors : [colors];
+  var amount = avalonNum((rates || {}).colorSurcharge, AVALON_PRICING_DEFAULTS.colorSurcharge);
+  for (var i = 0; i < list.length; i++) {
+    if (!avalonIsBaseColor(list[i])) return amount;
+  }
+  return 0;
+}
+
 /** Множник «собівартість → ціна»: 1,35 за планової націнки; з комісією 30 % — 1,5. */
 function avalonMarkupFactor(commissionPct, markupPct) {
   var plan = avalonNum(markupPct, AVALON_PRICING_DEFAULTS.markupPct);
@@ -322,6 +356,86 @@ function pricingSignatureOfRow_(sh, row) {
   var v = sh.getRange(row, 1, 1, Math.min(sh.getMaxColumns(), 43)).getValues()[0];
   return pricingSignature_({ construction: v[8], model: v[40], kind: v[41], specs: v[42],
     width: v[13], height: v[14], depth: v[15], quantity: v[16] });
+}
+
+/** Чи це позиція «Доплата за колір» (рядок таблиці: вид у AP, назва в AO). */
+function isColorSurchargeRow_(v) {
+  return /послуг/i.test(String(v[41] || ""))
+    && String(v[40] || "").replace(/^\s+/, "").toLowerCase().indexOf(AVALON_COLOR_SURCHARGE_NAME.toLowerCase()) === 0;
+}
+/** Те саме для позиції з форми/калькулятора/повідомлення. */
+function isColorSurchargeItem_(it) {
+  return !!it && it.product_type === "service"
+    && String(it.basket_model_name || it.basket_model || "").replace(/^\s+/, "").toLowerCase().indexOf(AVALON_COLOR_SURCHARGE_NAME.toLowerCase()) === 0;
+}
+
+/**
+ * Доплата за небазовий колір — ОДНА на замовлення (не на виріб): окрема позиція-послуга
+ * «Доплата за колір» (собівартість = ціна, маржа 0). Додається, коли в замовленні є кошик
+ * небазового кольору з уже порахованою ціною; прибирається, коли небазових не лишилось.
+ * Працює лише до запуску у виробництво («Нове», «В опрацюванні підрядником»): далі ціна
+ * погоджена з клієнтом і сама собою мінятись не повинна.
+ * keepRow — рядок, який менеджер саме править: його не видаляємо.
+ * Повертає true, якщо позиції замовлення змінились.
+ */
+function syncColorSurcharge_(sh, orderNumber, keepRow) {
+  var last = sh.getLastRow();
+  if (last < 2) return false;
+  var nums = sh.getRange(2, 1, last - 1, 1).getValues();
+  var rows = [];
+  for (var i = 0; i < nums.length; i++) {
+    if (String(nums[i][0] || "").trim() === orderNumber) rows.push(i + 2);
+  }
+  if (!rows.length) return false;
+  var base = null, pricedColors = [], allColors = [], surcharges = [];
+  rows.forEach(function (r) {
+    var v = sh.getRange(r, 1, 1, ADMIN_ORDER_COLS).getValues()[0];
+    if (!base) base = v;
+    if (isColorSurchargeRow_(v)) {
+      surcharges.push({ row: r, cost: cellNum_(v[19]) || 0, revenue: cellNum_(v[21]) || 0 });
+      return;
+    }
+    var kind = String(v[41] || "");
+    if (kind && kind.toLowerCase().indexOf("кошик") < 0) return;
+    allColors.push(v[9]);
+    if ((cellNum_(v[21]) || 0) > 0) pricedColors.push(v[9]);
+  });
+  var status = canonStatus_(base[2]);
+  if (status !== "Нове" && status !== STATUS_PROCESSING) return false;
+
+  var amount = avalonColorSurcharge(pricedColors);
+  if (amount > 0 && !surcharges.length) {
+    var written = writeOrderToSheet_({
+      order_number: orderNumber, request_id: "",
+      _append: { afterRow: rows[rows.length - 1], base: base },
+      contact_method: String(base[37] || "").trim() || "phone",
+      contact_telegram: String(base[38] || ""), contact_email: String(base[39] || ""),
+      commission_pct: base[COMMISSION_PCT_COL - 1],
+      notes: "",
+      items: [{
+        product_type: "service", basket_model_name: AVALON_COLOR_SURCHARGE_NAME,
+        construction_type: AVALON_COLOR_SURCHARGE_NAME, basket_type: AVALON_COLOR_SURCHARGE_NAME,
+        quantity: 1, unit: "шт.", cost_total: amount, price_total: amount
+      }]
+    });
+    [PROCESSING_DUE_COL, PROCESSING_TASK_COL, CANCEL_REASON_COL].forEach(function (col) {
+      var val = base[col - 1];
+      if (val !== "" && val != null) sh.getRange(written.row, col).setValue(val);
+    });
+    return true;
+  }
+  // Небазових кольорів не лишилось — прибираємо доплату. Лише «чисту» (собівартість = ціна):
+  // змінену вручну, а також єдиний рядок замовлення не чіпаємо.
+  if (surcharges.length && avalonColorSurcharge(allColors) === 0 && rows.length > surcharges.length) {
+    var removed = false;
+    for (var k = surcharges.length - 1; k >= 0; k--) {
+      if (surcharges[k].row === keepRow || surcharges[k].cost !== surcharges[k].revenue) continue;
+      sh.deleteRow(surcharges[k].row);
+      removed = true;
+    }
+    return removed;
+  }
+  return false;
 }
 
 /**
@@ -1288,6 +1402,10 @@ function buildProductionMsg_(data, opts) {
     ac_brand: data.ac_brand, ac_model: data.ac_model, area_m2: data.area_m2, cost_total: data.cost_total
   }];
   var multi = items.length > 1;
+  // Доплата за колір — рядок грошей, а не виріб: у «Виробництві» її не показуємо,
+  // і одиничний кошик через неї не стає «Кошик 1».
+  var blocks = items.filter(function (it) { return !isColorSurchargeItem_(it); }).length;
+  var multiBlocks = blocks > 1;
   function itemUnit(it) {
     return esc_(String(it.unit || (it.product_type === "bracket" ? "комп." : "шт.")).trim() || "шт.");
   }
@@ -1302,10 +1420,11 @@ function buildProductionMsg_(data, opts) {
     return out;
   }
   function itemLabel_(it, i) {
+    if (isColorSurchargeItem_(it)) return AVALON_COLOR_SURCHARGE_NAME + " (небазовий, на замовлення)";
     var base = it.product_type === "bracket" ? "Кронштейни"
              : it.product_type === "other" ? "Виріб"
              : it.product_type === "service" ? "Послуга" : "Кошик";
-    return base + " " + (i + 1);
+    return multiBlocks ? base + " " + (i + 1) : base;
   }
   // Розкладка собівартості — тим самим алгоритмом, що рахує ціну (avalonPrice).
   function breakdown(it) {
@@ -1344,13 +1463,14 @@ function buildProductionMsg_(data, opts) {
 
   // Лише послуги (різання, фарбування, гнуття…) — інший заголовок, щоб підрядник одразу
   // бачив, що це робота з матеріалом, а не виготовлення виробу.
-  var onlyServices = items.every(function (it) { return it.product_type === "service"; });
+  var onlyServices = items.every(function (it) { return it.product_type === "service"; }) && blocks > 0;
   m += onlyServices ? "\n🛠 <b>ПОСЛУГИ</b>\n" : "\n🏭 <b>ВИРОБНИЦТВО</b>\n";
   items.forEach(function (it, i) {
     var color = it.color ? esc_(it.color) + (it.color_custom ? " (" + esc_(it.color_custom) + ")" : "") : "";
     var pattern = it.pattern ? esc_(it.pattern) + (it.pattern_custom ? " (" + esc_(it.pattern_custom) + ")" : "") : "";
+    if (isColorSurchargeItem_(it)) return;
     if (it.product_type === "service") {
-      if (multi) m += "\n🛠 <b>Послуга " + (i + 1) + "</b>\n";
+      if (multiBlocks) m += "\n🛠 <b>Послуга " + (i + 1) + "</b>\n";
       // Види робіт кабінет зберігає в колонці «Тип» через «; » — підряднику списком через кому.
       var ops = String(it.basket_type || "").split(/\s*[;\n]\s*/).filter(function (x) { return x; });
       var title = String(it.basket_model_name || it.basket_model || "").trim();
@@ -1366,7 +1486,7 @@ function buildProductionMsg_(data, opts) {
       return;
     }
     if (it.product_type === "other") {
-      if (multi) m += "\n🧱 <b>Виріб " + (i + 1) + "</b>\n";
+      if (multiBlocks) m += "\n🧱 <b>Виріб " + (i + 1) + "</b>\n";
       if (it.basket_model_name || it.basket_model) m += "• Виріб: <b>" + esc_(it.basket_model_name || it.basket_model) + "</b>\n";
       if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
         if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
@@ -1378,7 +1498,7 @@ function buildProductionMsg_(data, opts) {
       return;
     }
     if (it.product_type === "bracket") {
-      if (multi) m += "\n🔩 <b>Кронштейни " + (i + 1) + "</b>\n";
+      if (multiBlocks) m += "\n🔩 <b>Кронштейни " + (i + 1) + "</b>\n";
       if (it.basket_model_name || it.basket_model) m += "• Модель: <b>" + esc_(it.basket_model_name || it.basket_model) + "</b>\n";
       if (it.bracket_length) m += "• Довжина: <b>" + esc_(it.bracket_length) + "</b>\n";
       m += "• Віброподушки: <b>" + (it.vibro_pads ? "Так" : "Ні") + "</b>\n";
@@ -1387,7 +1507,7 @@ function buildProductionMsg_(data, opts) {
       m += itemCommentLines(it);
       return;
     }
-    if (multi) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
+    if (multiBlocks) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
     // Порожні «Тип:» і «Конструкція:» не друкуємо — у повідомленні вони виглядали як загублені дані.
     if (String(it.basket_type || "").trim()) m += "• Тип: <b>" + esc_(it.basket_type) + "</b>\n";
     // Конструкція + модель: «Суцільний · AVL-04 · Зі знімною боковиною» — підрядник одразу
@@ -3539,6 +3659,9 @@ function adminCreateOrder_(data) {
     }
   });
 
+  // Небазовий колір → одна доплата на замовлення окремою позицією.
+  try { syncColorSurcharge_(sheetForFin, written.order_number); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
+
   addDeliveryEvent(order); // подія в календарі + нагадування (як для онлайн-заявок)
 
   SpreadsheetApp.flush();
@@ -3592,6 +3715,22 @@ function adminAddOrderItem_(data) {
     }
     if (!rows.length) throw new Error("Order not found");
     var base = sh.getRange(rows[0], 1, 1, ADMIN_ORDER_COLS).getValues()[0];
+    // Доплата за колір — одна на замовлення: якщо вона вже є (додана автоматично чи
+    // попереднім переносом із калькулятора), другу не створюємо, а оновлюємо суму наявної.
+    if (isColorSurchargeItem_(it)) {
+      for (var ci = 0; ci < rows.length; ci++) {
+        if (!isColorSurchargeRow_(sh.getRange(rows[ci], 1, 1, ADMIN_ORDER_COLS).getValues()[0])) continue;
+        var amount = Number(it.price_total);
+        if (isFinite(amount) && amount > 0) {
+          applyFinanceToRow_(sh, rows[ci], { cost_total: Number(it.cost_total) || 0, list_price: amount, discount_pct: 0, discount_uah: 0, revenue: amount });
+          try { syncOrderPaymentState_(num); } catch (payErr) { /* не валимо додавання */ }
+        }
+        var merged = adminGetOrder_({ order_number: num });
+        merged.added_row = rows[ci];
+        merged.duplicate = true;
+        return merged;
+      }
+    }
     var item = {
       product_type: it.product_type || "basket",
       basket_model: it.basket_model || "", basket_model_name: it.basket_model_name || it.basket_model || "",
@@ -3640,6 +3779,7 @@ function adminAddOrderItem_(data) {
     if (fin.list_price != null || fin.discount_pct != null || fin.discount_uah != null) {
       applyFinanceToRow_(sh, row, fin);
     }
+    try { syncColorSurcharge_(sh, num, row); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
     try { syncOrderPaymentState_(num); } catch (syncErr) { /* не валимо додавання */ }
     SpreadsheetApp.flush();
     var out = adminGetOrder_({ order_number: num });
@@ -3673,6 +3813,8 @@ function adminDeleteOrderItem_(data) {
   // Дія в ADMIN_WRITE_ACTIONS: doPost уже тримає замок скрипта, другий waitLock завис би.
   assertItemIdentity_(sh, row, data.expect);
   sh.deleteRow(row);
+  // Прибрали останній кошик небазового кольору — доплата за колір більше не потрібна.
+  try { syncColorSurcharge_(sh, num); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
   // Виручка замовлення змінилась — перераховуємо галочки оплат.
   try { syncOrderPaymentState_(num); } catch (syncErr) { /* не валимо видалення */ }
   return adminGetOrder_({ order_number: num });
@@ -3875,6 +4017,14 @@ function adminUpdateOrder_(data) {
   }
   if (patch.payment_method != null) {
     targetRows.forEach(function (r) { sh.getRange(r, 30).setValue(String(patch.payment_method)); });
+  }
+
+  // Доплата за небазовий колір (одна на замовлення) — наприкінці, коли всі спільні колонки
+  // вже оновлені: нова позиція успадкує їх, а номери рядків вище не зсунуться.
+  if (patch.color != null || patch.product_kind != null || financeTouched || pricingItemTouched) {
+    try {
+      if (syncColorSurcharge_(sh, orderNumber, row)) syncOrderPaymentState_(orderNumber);
+    } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
   }
 
   SpreadsheetApp.flush();

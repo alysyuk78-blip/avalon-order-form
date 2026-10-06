@@ -16,7 +16,7 @@ function coreOf(file) {
 
 // Змінив формулу — онови всі копії (npm run sync:pricing) і цю суму. Та сама сума стоїть у
 // тесті калькулятора (test/avalonPricing.test.mjs): розбіжність = алгоритми розʼїхались.
-const CORE_SHA256 = "5048c6d85896455b19d57787e9fbc74607b7c9c050f897755a2123f1119bc3f8";
+const CORE_SHA256 = "b936ddbac860acd827af85cc8d9642ae80273938dc5535c8612b53e8107cd42c";
 
 function testCopiesAreIdentical() {
   const root = path.join(__dirname, "..");
@@ -116,7 +116,44 @@ function testOptionsRoundTrip() {
   assert.equal(P.applyOptionsToText("Розбірна · AVL-02 + кришка", "", { topCover: "plain" }, "screen").construction, "Розбірна · AVL-02");
 }
 
+// Приклад власника: собівартість 1 000 000 ₴, планова націнка 35 % = 350 000 ₴.
+// На карту/ФОП ціна 1 350 000. На ТОВ — така, щоб після комісії 30 % з маржі лишилось 350 000.
+function testOwnerTovExample() {
+  const cost = 1000000;
+  assert.equal(Math.round(cost * P.avalonMarkupFactor(0)), 1350000);
+  const price = Math.round(cost * P.avalonMarkupFactor(30));
+  assert.equal(price, 1500000);
+  const margin = price - cost;
+  assert.equal(margin * 0.3, 150000, "комісія ТОВ");
+  assert.equal(margin - margin * 0.3, 350000, "чистими — рівно планова націнка");
+  // Собівартість буває будь-якою: чистими завжди лишається 35 % від неї (± округлення ціни до гривні).
+  [1, 37, 999.99, 2475.97, 12345.67, 58000, 743210.55, 9876543].forEach((c) => {
+    const p = Math.round(c * P.avalonMarkupFactor(30));
+    assert.ok(Math.abs((p - c) * 0.7 - c * 0.35) <= 0.35 + 1e-9, "собівартість " + c);
+  });
+  // Інша ставка комісії — той самий принцип.
+  [10, 15, 25, 40].forEach((rate) => {
+    const p = cost * P.avalonMarkupFactor(rate);
+    assert.ok(Math.abs((p - cost) * (1 - rate / 100) - 350000) < 0.01, "комісія " + rate + " %");
+  });
+}
+
+// Небазовий колір: +200 ₴ ОДИН раз на замовлення, хоч скільки в ньому виробів.
+function testColorSurcharge() {
+  ["", "RAL 7016", "Сірий (RAL 7016)", "RAL 9005 чорний", "Білий (RAL 9016)", "білий", "Чорний", " сірий "].forEach((c) =>
+    assert.equal(P.avalonIsBaseColor(c), true, "базовий: " + c));
+  ["RAL 6005 зелений", "Мохово-зелений (RAL 6005)", "Інший", "золото", "RAL 7016 / RAL 3000", "чорний матовий"].forEach((c) =>
+    assert.equal(P.avalonIsBaseColor(c), false, "небазовий: " + c));
+  assert.equal(P.avalonColorSurcharge("RAL 6005"), 200);
+  assert.equal(P.avalonColorSurcharge(["RAL 7016", "RAL 6005", "RAL 3000", "золото"]), 200, "одна на замовлення, а не на позицію");
+  assert.equal(P.avalonColorSurcharge(["RAL 7016", "Білий (RAL 9016)", ""]), 0);
+  assert.equal(P.avalonColorSurcharge([]), 0);
+  assert.equal(P.avalonColorSurcharge(["RAL 6005"], { colorSurcharge: 300 }), 300, "сума — з налаштувань");
+}
+
 testCopiesAreIdentical();
+testOwnerTovExample();
+testColorSurcharge();
 testGoldenValues();
 testCommissionGrossUp();
 testOrderItemText();
