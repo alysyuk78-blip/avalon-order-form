@@ -966,6 +966,14 @@ function testItemComments() {
   uctx.syncOrderPaymentState_ = () => {};
   uctx.syncProcessingEvent_ = () => {};
   uctx.adminGetOrder_ = () => ({ status: "ok" });
+  // Загальні примітки оновлюються в усіх позиціях; технічні рядки позиції лишаються своїми.
+  sheet.data[3][31] = common + "\nДовжина кронштейнів: 600 мм";
+  uctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: { notes: "Доставка до 16:00" } });
+  assert.equal(sheet.data[1][31], "Доставка до 16:00");
+  assert.equal(sheet.data[2][31], "Доставка до 16:00\nКоментар до моделі: Без вух, на анкери", "стара примітка не лишилась в іншій позиції");
+  assert.equal(sheet.data[3][31], "Доставка до 16:00\nДовжина кронштейнів: 600 мм", "технічний рядок позиції збережено");
+  sheet.data[1][31] = common; sheet.data[2][31] = common + "\nКоментар до моделі: Без вух, на анкери"; sheet.data[3][31] = common;
+
   uctx.adminUpdateOrder_({ order_number: ORD, row: 3, patch: { item_comment: "" } });
   assert.equal(sheet.data[2][49], "");
   assert.equal(sheet.data[2][31], common, "старий рядок із приміток прибрано — очищений коментар не повертається");
@@ -1045,6 +1053,21 @@ function testAddOrderItem() {
   // Повтор із тим самим request_id (загублена відповідь) — без дубля.
   ctx.adminAddOrderItem_({ order_number: ORD, item, request_id: "calc-1" });
   assert.equal(sheet.data.length, 5, "повтор не створює другу позицію");
+  assert.equal(sheet.data[3][44], "calc-1", "ID запиту збережено в самому рядку (колонка AS)");
+  // Кеш скрипта очистився (минула година) — повтор усе одно впізнається за рядком.
+  cache.remove("additem_calc-1");
+  const again = ctx.adminAddOrderItem_({ order_number: ORD, item, request_id: "calc-1" });
+  assert.equal(again.duplicate, true);
+  assert.equal(sheet.data.length, 5, "і без кешу дубля немає");
+  assert.equal(applied.length, 1, "фінанси вдруге не застосовуються");
+
+  // Хибна знижка відхиляється ДО вставки рядка — напівзаписаної позиції не лишається.
+  assert.throws(() => ctx.adminAddOrderItem_({ order_number: ORD, request_id: "calc-bad",
+    item: Object.assign({}, item, { list_price: 1000, discount_uah: 5000 }) }), /Знижка ₴ не може перевищувати/);
+  assert.throws(() => ctx.adminAddOrderItem_({ order_number: ORD, request_id: "calc-bad2",
+    item: Object.assign({}, item, { discount_pct: 150 }) }), /100%/);
+  assert.equal(sheet.data.length, 5, "після відмови рядків не додалось");
+
   assert.throws(() => ctx.adminAddOrderItem_({ order_number: "ORD-999999-999", item, request_id: "calc-2" }), /not found/i);
   assert.throws(() => ctx.adminAddOrderItem_({ order_number: ORD, request_id: "calc-3" }), /Немає даних позиції/);
 }

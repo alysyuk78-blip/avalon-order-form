@@ -2903,6 +2903,11 @@ function cellBool_(v) {
   return v === true || v === "TRUE" || v === "true";
 }
 
+/** Рядок приміток, що стосується ОДНІЄЇ позиції (його пише форма/запис замовлення), а не всього замовлення. */
+function isItemNoteLine_(line) {
+  return /^\s*(Довжина кронштейнів|Віброподушки|Потужність \(BTU\)|Посилання на кондиціонер|Коментар до моделі|Файл візерунку)\s*:/i.test(String(line || ""));
+}
+
 /**
  * Коментар до позиції: колонка AX. Для заявок, створених до появи колонки, форма писала
  * його в примітки рядка як «Коментар до моделі: …» — підхоплюємо й звідти.
@@ -3371,10 +3376,16 @@ function adminAddOrderItem_(data) {
       quantity: it.quantity, unit: String(it.unit || "").trim() || "шт.",
       specs: it.specs || "", item_comment: it.item_comment || "",
       price_total: (it.price_total === "" || it.price_total == null) ? null : Number(it.price_total),
-      cost_total: (it.cost_total === "" || it.cost_total == null) ? null : Number(it.cost_total)
+      cost_total: (it.cost_total === "" || it.cost_total == null) ? null : Number(it.cost_total),
+      // Прайс і знижка — для перевірки ДО запису: інакше хибна знижка лишила б у таблиці
+      // напівзаписану позицію (рядок вставлено, а фінанси відхилено).
+      list_price: it.list_price, discount_pct: it.discount_pct, discount_uah: it.discount_uah
     };
     var written = writeOrderToSheet_({
       order_number: num,
+      // ID запиту лягає в колонку AS нового рядка: повтор упізнається й після того, як
+      // кеш скрипта очиститься (за годину чи при витісненні).
+      request_id: String(data.request_id || "").trim(),
       _append: { afterRow: rows[rows.length - 1], base: base },
       contact_method: String(base[37] || "").trim() || "phone",
       contact_telegram: String(base[38] || ""), contact_email: String(base[39] || ""),
@@ -3383,6 +3394,13 @@ function adminAddOrderItem_(data) {
       items: [item]
     });
     var row = written.row;
+    if (written.duplicate) {
+      // Цю позицію вже додано раніше тим самим запитом — нічого не дублюємо.
+      var same = adminGetOrder_({ order_number: num });
+      same.added_row = row;
+      same.duplicate = true;
+      return same;
+    }
     // Опрацювання й причина скасування — спільні для замовлення: тримаємо рядки однаковими.
     [PROCESSING_DUE_COL, PROCESSING_TASK_COL, CANCEL_REASON_COL].forEach(function (col) {
       var v = base[col - 1];
@@ -3608,7 +3626,21 @@ function adminUpdateOrder_(data) {
     targetRows.forEach(function (r) { sh.getRange(r, 34).setValue(mp); });
     notifyOwnerPaymentChange_(sh, row, 34, mp);
   }
-  if (patch.notes != null) sh.getRange(row, 32).setValue(String(patch.notes));
+  if (patch.notes != null) {
+    // Примітки в картці — загальні для замовлення: оновлюємо їх у ВСІХ позиціях, інакше
+    // в інших рядках лишався б старий текст і підрядник бачив би обидва варіанти.
+    // Технічні рядки конкретної позиції (довжина кронштейнів, віброподушки, BTU, посилання,
+    // файл візерунку, старий «Коментар до моделі») кожен рядок зберігає свої.
+    var newNotes = String(patch.notes);
+    var generalLines = newNotes.split(/\n/).filter(function (line) { return !isItemNoteLine_(line); });
+    targetRows.forEach(function (r) {
+      if (r === row) { sh.getRange(r, 32).setValue(newNotes); return; }
+      var own = String(sh.getRange(r, 32).getValue() || "").split(/\n/).filter(function (line) {
+        return String(line || "").trim() && isItemNoteLine_(line);
+      });
+      sh.getRange(r, 32).setValue(generalLines.concat(own).filter(function (line) { return String(line || "").trim(); }).join("\n"));
+    });
+  }
   if (patch.delivery_date != null) {
     var iso = toISODate(patch.delivery_date) || String(patch.delivery_date || "");
     targetRows.forEach(function (r) { sh.getRange(r, 29).setValue(iso); });
