@@ -1308,6 +1308,21 @@ function testAuditFixes() {
   assert.equal(surcharges(t.raw).length, 1);
   assert.equal(t.props.getProperty("color_waived_" + ORD), null);
 
+  // 1а. Повтор запиту після обриву: попередня спроба записала лише першу з трьох позицій —
+  //     замовлення не вважаємо готовим, а дописуємо решту під той самий номер.
+  t = make([Object.assign(basket({ 9: "Сірий (RAL 7016)", 40: "Перша" }), { 44: "req-partial" }), orderRow("ORD-110926-002", "Нове")]);
+  const three = ["Перша", "Друга", "Третя"].map((name) => ({ product_type: "other", basket_model_name: name, quantity: 1, cost_total: 100, price_total: 150 }));
+  let nextCalled = 0;
+  t.ctx.nextOrderNumber = () => { nextCalled += 1; return "ORD-999999-999"; };
+  let resumed = t.ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", request_id: "req-partial", items: three });
+  assert.deepEqual(t.raw.data.slice(1).map((r) => [r[0], r[40]]),
+    [[ORD, "Перша"], [ORD, "Друга"], [ORD, "Третя"], ["ORD-110926-002", "Ковш для трактора"]], "решта позицій — під тим самим номером, одразу під першою");
+  assert.deepEqual([resumed.order_number, resumed.rows.length, !!resumed.duplicate, resumed.completed, nextCalled], [ORD, 3, false, true, 0]);
+  assert.equal(t.raw.data[2][4], "Олександр Заєць", "клієнт і решта спільних даних — з уже записаного рядка");
+  // Удруге той самий запит — уже повний дубль, нічого не додається.
+  resumed = t.ctx.writeOrderToSheet_({ first_name: "Тест", phone: "+380000000000", request_id: "req-partial", items: three });
+  assert.deepEqual([resumed.duplicate, resumed.rows.length, t.raw.data.length], [true, 3, 5]);
+
   // 2. Заявка з форми: площа, розміри блока, опис власного візерунка, контакт без дубля.
   t = make([]);
   const zeros = { price_total: 0, area_m2: 0, cost_total: 0 };

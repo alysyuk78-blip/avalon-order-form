@@ -2081,7 +2081,7 @@ import pricing from '../../lib/avalon-pricing.js';
           width: form.size_w, height: form.size_h, depth: form.size_d, quantity: form.quantity },
         { discountPct: formDiscountPct(form), commissionPct: form.commission_pct });
     }
-    function PricingBlock({ form, setForm, saved, disabled, onApply, orderNumber }) {
+    function PricingBlock({ form, setForm, saved, savedCommission, disabled, onApply, orderNumber }) {
       const type = pricing.avalonModelType(form.construction, form.basket_model);
       const opts = pricing.avalonParseOptions(form.construction, form.specs);
       const calc = calcPosition(form);
@@ -2099,6 +2099,11 @@ import pricing from '../../lib/avalon-pricing.js';
       const inputsSaved = ["construction", "basket_model", "specs", "basket_type", "pattern"].every(k => String(form[k] || "") === String(saved[k] || ""))
         && ["size_w", "size_h", "size_d"].every(k => num(form[k]) === num(saved[k]))
         && (num(form.quantity) || 1) === (num(saved.quantity) || 1);
+      // Калькулятор відкриває позицію такою, як вона ЗБЕРЕЖЕНА. Тому до збереження не пускаємо
+      // й тоді, коли змінено колір (від нього залежить доплата), знижку, прайс чи комісію.
+      const launchReady = inputsSaved && String(form.color || "") === String(saved.color || "")
+        && ["discount_pct", "discount_uah", "list_price"].every(k => num(form[k]) === num(saved[k]))
+        && num(form.commission_pct) === num(savedCommission);
       const moneySaved = !!calc && num(saved.cost_total) === calc.costTotal && num(saved.revenue) === calc.total
         && (num(saved.list_price) || num(saved.revenue)) === calc.listTotal;
       const lines = calc ? pricing.avalonCostLines(calc) : [];
@@ -2216,14 +2221,14 @@ import pricing from '../../lib/avalon-pricing.js';
               індивідуально, формульна ціна калькулятора затерла б суми менеджера. */}
           {!notInCalculator && !individual && !pricing.avalonIsIndividualPricing(saved.basket_type, saved.pattern) && saved.row ? (
             <div className="pricing-calc-link">
-              <button className="btn secondary" type="button" disabled={disabled || !inputsSaved}
+              <button className="btn secondary" type="button" disabled={disabled || !launchReady}
                 onClick={() => window.location.assign(calcUrlFor(orderNumber, saved.row))}>
                 Порахувати в калькуляторі
               </button>
               <p className="margin-calc-note">
-                {inputsSaved
+                {launchReady
                   ? "За розмірами блока кондиціонера, з пропозицією клієнту й рахунком. Позиція завантажиться сама, розрахунок збережеться в неї."
-                  : "Спершу збережіть товар — калькулятор бере позицію такою, як вона записана в замовленні."}
+                  : "Спершу збережіть зміни (товар, знижку, комісію) — калькулятор бере позицію такою, як вона записана в замовленні."}
               </p>
             </div>
           ) : null}
@@ -3033,7 +3038,9 @@ import pricing from '../../lib/avalon-pricing.js';
               </>
             )}
             {(!form.product_kind || form.product_kind === "Кошик") && (
-              <PricingBlock form={form} setForm={setForm} saved={currentItem} disabled={busy || stale} onApply={applyCalculation} orderNumber={orderNumber} />
+              <PricingBlock form={form} setForm={setForm} saved={currentItem}
+                savedCommission={order.commission_pct ?? currentItem.commission_pct}
+                disabled={busy || stale} onApply={applyCalculation} orderNumber={orderNumber} />
             )}
             {/* Усе, що формула не рахує, — за тією ж плановою націнкою від вписаної собівартості.
                 Доплата за колір — пропускна сума (маржа 0), їй націнка не потрібна. */}

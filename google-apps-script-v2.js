@@ -504,6 +504,12 @@ function writeOrderToSheet_(data) {
     ensureDiscountColumns_(sheet);
 
     var requestId = String(data.request_id || "").trim().substring(0, 120);
+    // Повтор того самого запиту (обрив звʼязку, автоматична друга спроба): нічого не дублюємо.
+    // Але якщо попередня спроба встигла записати лише ЧАСТИНУ позицій (скрипт обірвався
+    // посеред замовлення), вважати замовлення готовим не можна — дописуємо решту під той
+    // самий номер (resumeRows).
+    var expectedItems = (Array.isArray(data.items) && data.items.length) ? data.items.length : 1;
+    var resumeRows = [];
     if (requestId && sheet.getLastRow() >= 2) {
       var existingIds = sheet.getRange(2, 45, sheet.getLastRow() - 1, 1).getValues();
       var existingRows = [];
@@ -514,7 +520,10 @@ function writeOrderToSheet_(data) {
         var existingNumber = String(sheet.getRange(existingRows[0], 1).getValue() || "").trim();
         if (!existingNumber) throw new Error("ID запиту вже використано без номера замовлення");
         data.order_number = existingNumber;
-        return { order_number: existingNumber, row: existingRows[0], rows: existingRows, duplicate: true };
+        if (existingRows.length >= expectedItems || data._append) {
+          return { order_number: existingNumber, row: existingRows[0], rows: existingRows, duplicate: true };
+        }
+        resumeRows = existingRows;
       }
     }
 
@@ -563,7 +572,15 @@ function writeOrderToSheet_(data) {
     // Номер резервуємо лише після успішної перевірки всіх позицій.
     // _append — дописуємо позицію до наявного замовлення (номер уже є).
     var append = data._append || null;
-    if (!append) data.order_number = nextOrderNumber();
+    if (resumeRows.length) {
+      // Дописуємо позиції, яких бракує: одразу під уже записаними, зі спільними даними
+      // замовлення з його першого рядка. Позиції пишуться по порядку, тож бракує останніх.
+      append = {
+        afterRow: resumeRows[resumeRows.length - 1],
+        base: sheet.getRange(resumeRows[0], 1, 1, 32).getValues()[0]
+      };
+      itemsIn = itemsIn.slice(resumeRows.length);
+    } else if (!append) data.order_number = nextOrderNumber();
     var appendAfter = append ? Number(append.afterRow) : 0;
 
     itemsIn.forEach(function (it) {
@@ -709,6 +726,9 @@ function writeOrderToSheet_(data) {
       sheet.getRange(lastRow, 21).setFontWeight("bold");            // Ціна продажу 1шт
       if (lastRow % 2 === 0) rr.setBackground("#F8F6F2");
     });
+  if (resumeRows.length) {
+    return { order_number: data.order_number, row: resumeRows[0], rows: resumeRows.concat(writtenRows), completed: true };
+  }
   return { order_number: data.order_number, row: lastRow, rows: writtenRows };
 }
 
