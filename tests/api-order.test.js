@@ -93,6 +93,9 @@ function testPartialTotalsAndColorFee() {
   assert.ok(!mixed.includes("• Тип: \n"), "порожній «Тип» не друкуємо");
   const one = plain({ items: [basket({ color: "RAL 6005" })] });
   assert.ok(one.includes("• Доплата за небазовий колір (на замовлення): 200 ₴") && one.includes("• Вартість виробнича: 2 027 ₴"), one);
+  // «Інший» з уточненням базового RAL — це базовий колір (так само його бачить таблиця).
+  assert.ok(!plain({ items: [basket({ color: "Інший", color_custom: "RAL 7016" })] }).includes("Доплата"));
+  assert.ok(plain({ items: [basket({ color: "Інший", color_custom: "RAL 6005" })] }).includes("Доплата за небазовий колір"));
   const base = plain({ items: [basket({}), basket({})] });
   assert.ok(!base.includes("Доплата") && base.includes("• Разом виробнича: 3 654 ₴"), base);
   // Нічого не пораховано — доплату окремо не показуємо, лише «потрібен прорахунок».

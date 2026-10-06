@@ -231,7 +231,9 @@ function formatTelegramMessage(order) {
   // Небазовий колір: +200 ₴ один раз на замовлення (лише коли є що рахувати за формулою).
   const colorFee = avalonColorSurcharge(items
     .filter((it) => it.product_type !== "bracket" && it.product_type !== "other" && it.product_type !== "service")
-    .map((it) => it.color || it.color_custom));
+    // Колір разом з уточненням — тим самим записом, що йде в таблицю («Інший: RAL 7016»):
+    // інакше власнику показали б доплату, якої в замовленні не буде.
+    .map((it) => [it.color, it.color_custom].map((x) => String(x || "").trim()).filter(Boolean).join(": ")));
   const colorFeeLine = `Доплата за небазовий колір (на замовлення): <b>${num(colorFee)} ₴</b>\n`;
   if (multi) {
     let pending = "";

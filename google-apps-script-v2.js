@@ -893,6 +893,17 @@ function addDeliveryEvent(order) {
       "\nДжерело: " + (order.referral_source || "direct");
 
     var cal = getCal();
+    // Подія могла вже бути створена спробою, що обірвалась до запису позначки evt_<№>:
+    // шукаємо її в календарі за номером замовлення, щоб не зробити другу з тими самими нагадуваннями.
+    if (order.order_number) {
+      var sameDay = cal.getEvents(start, end);
+      for (var ei = 0; ei < sameDay.length; ei++) {
+        if (String(sameDay[ei].getTitle() || "").indexOf(order.order_number) >= 0) {
+          PropertiesService.getScriptProperties().setProperty("evt_" + order.order_number, sameDay[ei].getId());
+          return;
+        }
+      }
+    }
     var ev = cal.createEvent(title, start, end, { description: desc });
     ev.removeAllReminders();
     ev.addPopupReminder(0);          // у день події, о 08:30

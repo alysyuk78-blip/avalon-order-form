@@ -1380,11 +1380,18 @@ function testAuditFixes() {
   const evProps = makeProps({ ["evt_" + ORD]: "ev1" });
   let created = 0;
   const cal = load({ PropertiesService: { getScriptProperties: () => evProps } });
-  cal.getCal = () => ({ createEvent: () => { created += 1; return { removeAllReminders() {}, addPopupReminder() {}, addEmailReminder() {}, getId: () => "ev2" }; } });
+  let inCalendar = [];
+  cal.getCal = () => ({ getEvents: () => inCalendar,
+    createEvent: () => { created += 1; return { removeAllReminders() {}, addPopupReminder() {}, addEmailReminder() {}, getId: () => "ev2" }; } });
   cal.addDeliveryEvent({ order_number: ORD, delivery_date: "2026-10-20", first_name: "Тест" });
   assert.equal(created, 0, "подія вже є — другу не створюємо");
   cal.addDeliveryEvent({ order_number: "ORD-061026-777", delivery_date: "2026-10-20", first_name: "Тест" });
   assert.equal(created, 1);
+  // Подію створено, але позначку записати не встигли: знаходимо її в календарі за номером.
+  inCalendar = [{ getTitle: () => "📦 ORD-061026-888 — Тест", getId: () => "ev-found" }];
+  cal.addDeliveryEvent({ order_number: "ORD-061026-888", delivery_date: "2026-10-20", first_name: "Тест" });
+  assert.equal(created, 1, "другої події не створено");
+  assert.equal(evProps.getProperty("evt_ORD-061026-888"), "ev-found");
 
   // 1в. Кошик без глибини формулою не рахується (була б одна лицева стінка); екрану глибина не обовʼязкова.
   t = make([]);
