@@ -667,6 +667,14 @@ function writeOrderToSheet_(data) {
         data.delivery_date || "", data.payment_method || "",                           // AC-AD
         data.how_found || (data.how_found_custom || ""), notes                         // AE-AF
       ];
+      var ROW_COLS = row.length;   // A–AF: стільки колонок оформлюємо нижче
+      // ID запиту (AS, 45) пишемо ТИМ САМИМ записом, що й рядок: якщо скрипт обірветься одразу
+      // після нього, повтор запиту побачить цю позицію як уже записану й не створить її вдруге.
+      // AG–AR між ними заповнюються нижче (галочки, знижка, контакт, виріб).
+      if (requestId) {
+        while (row.length < 44) row.push("");
+        row.push(requestId);
+      }
       if (append) {
         // Спільні для замовлення колонки беремо з його першого рядка — дата, статус,
         // джерело, клієнт, доставка, оплата: нова позиція не «роздвоює» замовлення.
@@ -714,7 +722,7 @@ function writeOrderToSheet_(data) {
       var itemComment = String(it.item_comment || it.model_comment || "").trim().slice(0, 1000);
       if (itemComment) sheet.getRange(lastRow, ITEM_COMMENT_COL).setValue(itemComment);
       writtenRows.push(lastRow);
-      var rr = sheet.getRange(lastRow, 1, 1, row.length);
+      var rr = sheet.getRange(lastRow, 1, 1, ROW_COLS);
       rr.setVerticalAlignment("middle").setWrap(true);
       sheet.getRange(lastRow, 1).setFontWeight("bold");
       sheet.getRange(lastRow, 3).setBackground("#FFF3CD").setFontColor("#856404").setFontWeight("bold").setHorizontalAlignment("center");
