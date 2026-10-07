@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import {
+  BadgePercent,
+  BookOpen,
   Calculator,
   Check,
   ClipboardList,
@@ -120,6 +122,8 @@ import pricing from '../../lib/avalon-pricing.js';
       board: Columns3,
       list: List,
       orders: ClipboardList,
+      rates: BadgePercent,
+      guide: BookOpen,
       clients: UsersRound,
       dashboard: (props) => <MaskIcon src="/admin/icons/dashboard.png" size={props.size} className={props.className} />,
       // Шлях АБСОЛЮТНИЙ: кабінет відкривається і як /admin, і як /admin/ — відносний
@@ -143,6 +147,7 @@ import pricing from '../../lib/avalon-pricing.js';
       { id: "dash", label: "Зведення", icon: "dashboard" },
       { id: "partners", label: "Партнери", icon: "partners" },
       { id: "expenses", label: "Витрати", icon: "expenses" },
+      { id: "rates", label: "Ставки", icon: "rates" },
     ];
 
     function Icon({ name, size = 20 }) {
@@ -544,6 +549,47 @@ import pricing from '../../lib/avalon-pricing.js';
         localStorage.removeItem(ORDERS_CACHE_KEY);
         localStorage.removeItem(FILES_CACHE_KEY);
       } catch (_) {}
+    }
+
+    // ── Ставки підрядника ──
+    // Приходять із сервера в кожній відповіді із замовленнями: pricing = { versions, today,
+    // current_from }. Кожне замовлення рахується СВОЇМИ ставками — order.rates_from (дата
+    // початку їх дії; "" — ставки до першої зміни). Власних ставок у кабінеті немає.
+    const pricingStore = {
+      info: (() => {
+        const cached = readAdminCache().pricing;
+        return cached && Array.isArray(cached.versions) ? cached : { versions: [], today: "", current_from: "" };
+      })(),
+      fresh: false,           // чи ставки вже прийшли з таблиці, а не зі знімка
+      listeners: new Set(),
+    };
+    function notePricing(data) {
+      const p = data && data.pricing;
+      if (!p || !Array.isArray(p.versions)) return;
+      const fromSnapshot = !!(data.snapshot && data.snapshot.source === "snapshot");
+      if (fromSnapshot && pricingStore.fresh) return;   // свіжіші вже є — знімок їх не затирає
+      pricingStore.info = { versions: p.versions, today: p.today || "", current_from: p.current_from || "", error: p.error || "" };
+      if (!fromSnapshot) pricingStore.fresh = true;
+      writeAdminCache({ pricing: pricingStore.info });
+      pricingStore.listeners.forEach(fn => fn());
+    }
+    function usePricingInfo() {
+      const [, force] = useState(0);
+      useEffect(() => {
+        const fn = () => force(x => x + 1);
+        pricingStore.listeners.add(fn);
+        return () => { pricingStore.listeners.delete(fn); };
+      }, []);
+      return pricingStore.info;
+    }
+    // Ставки за датою початку дії; без аргументу — чинні сьогодні.
+    function ratesFor(from) {
+      const key = from == null ? pricingStore.info.current_from : from;
+      return (pricing.avalonRatesByKey(pricingStore.info.versions, key) || pricing.avalonRatesByKey([], "")).rates;
+    }
+    function ratesDateLabel(from) {
+      const m = String(from || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      return m ? `${m[3]}.${m[2]}.${m[1]}` : "";
     }
     /** Список файлів замовлення з минулого разу — щоб картка не чекала на Google Диск. */
     function readFilesCache(orderNumber) {
@@ -1027,12 +1073,14 @@ import pricing from '../../lib/avalon-pricing.js';
         window.dispatchEvent(new Event("admin-unauthorized"));
       }
       if (!res.ok) {
-        const err = new Error(data.error || data.message || ("HTTP " + res.status));
+        // Скрипт таблиці віддає свої помилки з технічним початком «Error: » — людині він не потрібен.
+        const err = new Error(String(data.error || data.message || ("HTTP " + res.status)).replace(/^(Error:\s*)+/, ""));
         err.status = res.status;
         err.code = data.code;
         err.data = data;
         throw err;
       }
+      notePricing(data);
       return data;
     }
 
@@ -2076,19 +2124,42 @@ import pricing from '../../lib/avalon-pricing.js';
       const list = Number(form.list_price) || 0, uah = Number(form.discount_uah) || 0;
       return list > 0 && uah > 0 ? Math.round(uah / list * 10000) / 100 : 0;
     }
-    function calcPosition(form) {
+    function calcPosition(form, rates) {
       const input = { construction: form.construction, model: form.basket_model, specs: form.specs, pattern: form.pattern,
         width: form.size_w, height: form.size_h, depth: form.size_d, quantity: form.quantity };
       // Кошику потрібні всі три розміри (екрану — ширина й висота): без глибини формула
       // порахувала б одну лицеву стінку.
       if (!pricing.avalonItemSized(input)) return null;
       return pricing.avalonPriceItem(input,
-        { discountPct: formDiscountPct(form), commissionPct: form.commission_pct });
+        { discountPct: formDiscountPct(form), commissionPct: form.commission_pct, rates: rates || ratesFor() });
     }
-    function PricingBlock({ form, setForm, saved, savedCommission, disabled, onApply, orderNumber }) {
+    // Якими ставками рахується замовлення — і перехід на чинні, якщо є новіші.
+    function RatesNote({ ratesFrom, canReprice, onReprice, disabled }) {
+      const info = usePricingInfo();
+      if (!info.versions.length) return null;   // ставки ще жодного разу не змінювали
+      const own = ratesFrom == null ? info.current_from : ratesFrom;
+      const isCurrent = own === info.current_from;
+      return (
+        <div className={"rates-note" + (isCurrent ? "" : " old")}>
+          <span>
+            {isCurrent ? "Рахується за чинними ставками" : "Рахується за попередніми ставками"}
+            {own ? ` (діють з ${ratesDateLabel(own)})` : " (до першої зміни)"}.
+            {!isCurrent && (info.current_from ? ` Чинні — з ${ratesDateLabel(info.current_from)}.` : "")}
+          </span>
+          {!isCurrent && canReprice && (
+            <button className="btn secondary" type="button" disabled={disabled} onClick={onReprice}>
+              Перерахувати за чинними ставками
+            </button>
+          )}
+        </div>
+      );
+    }
+    function PricingBlock({ form, setForm, saved, savedCommission, disabled, onApply, orderNumber, ratesFrom, canReprice, onReprice }) {
+      usePricingInfo();   // ставки оновились — перерахувати показане
+      const rates = ratesFor(ratesFrom);
       const type = pricing.avalonModelType(form.construction, form.basket_model);
       const opts = pricing.avalonParseOptions(form.construction, form.specs);
-      const calc = calcPosition(form);
+      const calc = calcPosition(form, rates);
       // Антивандальне виконання і складний візерунок формула не рахує — ціну визначає менеджер.
       const individual = pricing.avalonIndividualReason(form.basket_type, form.pattern);
       const setOption = patch => {
@@ -2119,6 +2190,7 @@ import pricing from '../../lib/avalon-pricing.js';
       return (
         <div className="margin-calc pricing-block">
           <div className="margin-calc-title">Розрахунок за формулою калькулятора</div>
+          <RatesNote ratesFrom={ratesFrom} canReprice={canReprice} onReprice={onReprice} disabled={disabled} />
           {individual && (
             <div className="margin-net-warn" style={{ margin: "0 0 8px" }}>
               Ця позиція рахується індивідуально: {individual}. Нижче — лише орієнтир для звичайного кошика, без надбавки;
@@ -2130,8 +2202,8 @@ import pricing from '../../lib/avalon-pricing.js';
             {type === "lamella" ? " Бокові стінки — з візерунком, лицьова — ламельна: до ставки стінки додається гнуття кожної ламелі." : ""}
             {type === "lamella_full" ? " Ламельні всі три стінки: до ставки стінки додається гнуття кожної ламелі." : ""}
             {type === "four_sided" ? " Чотири стінки: дві лицьові й дві бокові." : ""}
-            {["lamella", "lamella_full", "four_sided"].includes(type) ? " Виконання — у полі «Конструкція»: суцільне рахується за " + money(calc ? calc.solidRate : 2030) + "/м², розбірне — за ставкою розбірного." : ""}
-            {customPattern ? " Візерунок «Інший»: +" + money(pricing.AVALON_PRICING_DEFAULTS.customPatternRate) + " до ставки за м² поверхонь із візерунком." : ""}
+            {["lamella", "lamella_full", "four_sided"].includes(type) ? " Виконання — у полі «Конструкція»: суцільне рахується за " + money(calc ? calc.solidRate : rates.solidRate) + "/м², розбірне — за ставкою розбірного." : ""}
+            {customPattern ? " Візерунок «Інший»: +" + money(rates.customPatternRate) + " до ставки за м² поверхонь із візерунком." : ""}
             {type === "screen" ? " Висота — вже з рамкою (+40 мм), глибина — борти екрана." : ""}
           </p>
           <div className="grid2">
@@ -2168,7 +2240,7 @@ import pricing from '../../lib/avalon-pricing.js';
           )}
           {!pricing.avalonIsBaseColor(form.color) && (
             <p className="margin-calc-note">
-              Колір небазовий: до замовлення додається «{pricing.AVALON_COLOR_SURCHARGE_NAME}» {money(pricing.avalonColorSurcharge(form.color))} —
+              Колір небазовий: до замовлення додається «{pricing.AVALON_COLOR_SURCHARGE_NAME}» {money(pricing.avalonColorSurcharge(form.color, rates))} —
               один раз на замовлення, окремою позицією (у ціну кошика не входить). Базові: сірий RAL 7016, чорний RAL 9005, білий RAL 9016.
               Щоб не брати доплату з цього замовлення — видаліть її позицію у списку позицій.
             </p>
@@ -2252,13 +2324,14 @@ import pricing from '../../lib/avalon-pricing.js';
     // послуга, кошик без розмірів): собівартість може бути будь-якою, правило те саме.
     // З комісією з маржі (ТОВ/партнер) націнка збільшується так, щоб ПІСЛЯ комісії
     // лишалась планова: 1 000 000 → 1 500 000, комісія 150 000, чистими 350 000.
-    function PlannedPriceBlock({ form, setForm, disabled }) {
+    function PlannedPriceBlock({ form, setForm, disabled, ratesFrom }) {
+      usePricingInfo();
       const cost = Number(form.cost_total) || 0;
       if (!(cost > 0)) return null;
       const rateRaw = Number(form.commission_pct);
       const rate = rateRaw > 0 && rateRaw < 100 ? rateRaw : 0;
-      const plan = pricing.AVALON_PRICING_DEFAULTS.markupPct;
-      const price = Math.round(cost * pricing.avalonMarkupFactor(rate));
+      const plan = ratesFor(ratesFrom).markupPct;
+      const price = Math.round(cost * pricing.avalonMarkupFactor(rate, plan));
       const margin = price - cost;
       const commission = Math.round(margin * rate) / 100;
       const applied = (Number(form.revenue) || 0) === price;
@@ -2269,7 +2342,7 @@ import pricing from '../../lib/avalon-pricing.js';
           {rate > 0 ? (
             <>
               <div className="margin-net-row">
-                <span>Маржа — націнка {String(Math.round((pricing.avalonMarkupFactor(rate) - 1) * 10000) / 100).replace(".", ",")}%,
+                <span>Маржа — націнка {String(Math.round((pricing.avalonMarkupFactor(rate, plan) - 1) * 10000) / 100).replace(".", ",")}%,
                   щоб після комісії {pct(rate)} лишились планові {plan}%</span>
                 <b>{money(margin)}</b>
               </div>
@@ -2585,6 +2658,28 @@ import pricing from '../../lib/avalon-pricing.js';
           setData(res);
           applyItemToForm(res, itemIdx);
           onChanged && onChanged(res);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      // Перевести замовлення на чинні ставки: формульні позиції перерахуються, вписані вручну — ні.
+      async function repriceByCurrentRates() {
+        if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return; }
+        if (!window.confirm("Перерахувати замовлення за чинними ставками?\n\n"
+          + "Ціни кошиків, порахованих формулою, зміняться. Ціни, які ви вписали самі, лишаться. Знижка у відсотках збережеться.")) return;
+        setBusy(true); setError("");
+        try {
+          const res = await api("/api/admin/order", { method: "POST", token, body: { action: "reprice", order_number: orderNumber } });
+          setData(res);
+          applyItemToForm(res, itemIdx);
+          onChanged && onChanged(res);
+          if (Number(res.kept_manual) > 0) {
+            setError("Перераховано позицій: " + (Number(res.repriced) || 0) + ". Не змінено (ціну вписано вручну або рахується індивідуально): "
+              + res.kept_manual + " — перевірте їх самі.");
+          }
         } catch (e) {
           setError(e.message);
         } finally {
@@ -3056,13 +3151,15 @@ import pricing from '../../lib/avalon-pricing.js';
             {(!form.product_kind || form.product_kind === "Кошик") && (
               <PricingBlock form={form} setForm={setForm} saved={currentItem}
                 savedCommission={order.commission_pct ?? currentItem.commission_pct}
-                disabled={busy || stale} onApply={applyCalculation} orderNumber={orderNumber} />
+                disabled={busy || stale} onApply={applyCalculation} orderNumber={orderNumber}
+                ratesFrom={order.rates_from} onReprice={repriceByCurrentRates}
+                canReprice={order.status !== "Завершено" && order.status !== "Скасовано"} />
             )}
             {/* Усе, що формула не рахує, — за тією ж плановою націнкою від вписаної собівартості.
                 Доплата за колір — пропускна сума (маржа 0), їй націнка не потрібна. */}
-            {(pricing.avalonIsIndividualPricing(form.basket_type, form.pattern) || !((!form.product_kind || form.product_kind === "Кошик") && calcPosition(form)))
+            {(pricing.avalonIsIndividualPricing(form.basket_type, form.pattern) || !((!form.product_kind || form.product_kind === "Кошик") && calcPosition(form, ratesFor(order.rates_from))))
               && !String(form.basket_model || "").startsWith(pricing.AVALON_COLOR_SURCHARGE_NAME) && (
-              <PlannedPriceBlock form={form} setForm={setForm} disabled={busy || stale} />
+              <PlannedPriceBlock form={form} setForm={setForm} disabled={busy || stale} ratesFrom={order.rates_from} />
             )}
             <div className="grid2">
               <div className="field"><label>Собівартість (разом)</label>
@@ -3229,6 +3326,7 @@ import pricing from '../../lib/avalon-pricing.js';
     // Ручне внесення замовлення: телефон, Instagram, повторний клієнт — усе, що не
     // прийшло через онлайн-форму. Пише той самий рядок таблиці, що й форма.
     function NewOrderDrawer({ token, onClose, onCreated }) {
+      usePricingInfo();   // попередня ціна — за чинними ставками
       const [kind, setKind] = useState("basket"); // basket | bracket | other | service
       const [form, setForm] = useState({
         client: "", phone: "", contact_method: "phone", contact_telegram: "", contact_email: "",
@@ -3291,7 +3389,7 @@ import pricing from '../../lib/avalon-pricing.js';
             pattern: form.pattern,   // візерунок «Інший» дає надбавку за м² — сервер порахує так само
             size_w: form.size_w, size_h: form.size_h, size_d: form.size_d, quantity: form.quantity,
             discount_pct: form.discount_pct, commission_pct: form.commission_pct,
-          })
+          }, ratesFor())
         : null;
       const revenueTotal = priceUnitOverride
         ? Math.round(priceUnitOverride * qtyNum)
@@ -3566,8 +3664,8 @@ import pricing from '../../lib/avalon-pricing.js';
                   <div className="margin-net-row"><span>Знижка {pct(autoCalc.discountPct)}</span><b>− {money(autoCalc.discountAmount)}</b></div>
                 )}
                 <div className="margin-net-row margin-net-main"><span>Ціна продажу ({autoCalc.quantity} шт.)</span><b>{money(autoCalc.total)}</b></div>
-                {pricing.avalonColorSurcharge(form.color) > 0 && (
-                  <div className="margin-net-row"><span>Доплата за небазовий колір — на замовлення, окремою позицією</span><b>+ {money(pricing.avalonColorSurcharge(form.color))}</b></div>
+                {pricing.avalonColorSurcharge(form.color, ratesFor()) > 0 && (
+                  <div className="margin-net-row"><span>Доплата за небазовий колір — на замовлення, окремою позицією</span><b>+ {money(pricing.avalonColorSurcharge(form.color, ratesFor()))}</b></div>
                 )}
                 <p className="margin-calc-note">Гроші порожні — у замовлення запишуться ці суми. Матеріал і кришки можна уточнити в картці після створення.</p>
               </div>
@@ -4723,6 +4821,276 @@ import pricing from '../../lib/avalon-pricing.js';
     }
 
 
+
+    // ── Екран «Ставки» ──
+    // Ставки називає підрядник; власник вносить їх тут — і ними рахують калькулятор, кабінет
+    // і таблиця. Зміна діє з обраної дати; замовлення, пораховані раніше, лишаються на своїх.
+    const RATE_GROUPS = [
+      ["area", "Ставки підрядника за площу"],
+      ["unit", "Ставки підрядника за одиницю"],
+      ["markup", "Ваша націнка"],
+    ];
+    function rateText(value, unit) {
+      const n = Number(value) || 0;
+      const text = Number.isInteger(n) ? n.toLocaleString("uk-UA") : n.toLocaleString("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return unit === "%" ? text + " %" : text + " " + unit;
+    }
+    function rateNumber(raw) {
+      const n = Number(String(raw == null ? "" : raw).replace(/[\s  ]/g, "").replace(",", "."));
+      return Number.isFinite(n) ? n : NaN;
+    }
+    // Що змінилось між двома наборами ставок: [{ field, before, after, pct, large }].
+    function ratesDiff(before, after) {
+      return pricing.AVALON_RATE_FIELDS.map(field => {
+        const a = Number(before[field.key]), b = Number(after[field.key]);
+        if (!(a !== b)) return null;
+        const pctChange = a > 0 ? (b - a) / a * 100 : null;
+        return { field, before: a, after: b, pct: pctChange, large: pctChange != null && Math.abs(pctChange) > 30 };
+      }).filter(Boolean);
+    }
+    function diffText(d) {
+      const sign = d.pct == null ? "" : ` (${d.pct > 0 ? "+" : "−"}${String(Math.round(Math.abs(d.pct) * 10) / 10).replace(".", ",")} %)`;
+      return `${d.field.label}: ${rateText(d.before, d.field.unit)} → ${rateText(d.after, d.field.unit)}${sign}`;
+    }
+    // Приклад для наочності: суцільний кошик 800×500×500 мм, чорний метал, без кришки.
+    function examplePrice(rates) {
+      return pricing.avalonPrice({ type: "solid", width: 800, height: 500, depth: 500, quantity: 1 }, rates).unitPrice;
+    }
+
+    function RatesView({ token, onSaved }) {
+      const info = usePricingInfo();
+      const [error, setError] = useState("");
+      const [busy, setBusy] = useState(false);
+      const [form, setForm] = useState(null);   // null — форма закрита
+      const [loaded, setLoaded] = useState(false);
+
+      useEffect(() => {
+        // Свіжі ставки з таблиці — щойно екран відкрили.
+        api("/api/admin/order?resource=rates", { token }).then(() => setLoaded(true)).catch(e => { setError(e.message); setLoaded(true); });
+      }, [token]);
+
+      const defaults = pricing.avalonRatesByKey([], "").rates;
+      const versions = info.versions;
+      const last = versions.length ? versions[versions.length - 1] : null;
+      const current = ratesFor(info.current_from);
+      const upcoming = versions.filter(v => info.today && v.from > info.today);
+      const today = info.today || new Date().toISOString().slice(0, 10);
+
+      function openForm() {
+        const from = last && last.from > today ? last.from : today;   // заплановану зміну правимо, а не плодимо другу
+        const start = last ? last.rates : defaults;
+        const values = {};
+        pricing.AVALON_RATE_FIELDS.forEach(f => { values[f.key] = String(start[f.key]).replace(".", ","); });
+        setError("");
+        setForm({ from, values, note: last && last.from === from ? (last.note || "") : "", confirmLarge: false });
+      }
+
+      // Із чим порівнюємо: зі ставками, що діяли ДО цієї зміни. Та сама дата, що в останньої
+      // зміни, — це її виправлення, тож порівнюємо з попередньою.
+      const replacing = !!form && !!last && form.from === last.from;
+      const before = !form ? current
+        : replacing ? (versions.length > 1 ? versions[versions.length - 2].rates : defaults)
+        : (last ? last.rates : defaults);
+      const typed = {};
+      const fieldErrors = {};
+      if (form) {
+        pricing.AVALON_RATE_FIELDS.forEach(f => {
+          const n = rateNumber(form.values[f.key]);
+          if (String(form.values[f.key]).trim() === "") { fieldErrors[f.key] = "вкажіть значення"; typed[f.key] = before[f.key]; return; }
+          if (Number.isNaN(n)) { fieldErrors[f.key] = "це не число"; typed[f.key] = before[f.key]; return; }
+          if (n < f.min) fieldErrors[f.key] = "не менше за " + f.min;
+          else if (f.max != null && n > f.max) fieldErrors[f.key] = "не більше за " + f.max;
+          typed[f.key] = Math.round(n * 100) / 100;
+        });
+      }
+      const diff = form ? ratesDiff(before, typed) : [];
+      const hasErrors = Object.keys(fieldErrors).length > 0;
+      const large = diff.filter(d => d.large);
+      const minDate = (() => {
+        const d = new Date(today + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - 31);
+        const floor = d.toISOString().slice(0, 10);
+        return last && last.from > floor ? last.from : floor;
+      })();
+      const dateError = form && (!/^\d{4}-\d{2}-\d{2}$/.test(form.from) ? "вкажіть дату"
+        : form.from < minDate ? (last && last.from === minDate ? "не раніше за останню зміну — " + ratesDateLabel(last.from) : "не раніше ніж 31 день тому") : "");
+
+      async function save() {
+        setBusy(true); setError("");
+        try {
+          await api("/api/admin/order?resource=rates", { method: "POST", token,
+            body: { from: form.from, rates: typed, note: form.note, confirm_large: large.length > 0 && form.confirmLarge } });
+          setForm(null);
+          onSaved && onSaved();
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setBusy(false);
+        }
+      }
+      async function removeLast() {
+        if (!last) return;
+        if (!window.confirm("Скасувати зміну ставок від " + ratesDateLabel(last.from) + "?\n\n"
+          + "Замовлення, уже пораховані за цими ставками, самі не перерахуються — перевірте їх у картках.")) return;
+        setBusy(true); setError("");
+        try {
+          await api("/api/admin/order?resource=rates&from=" + encodeURIComponent(last.from), { method: "DELETE", token });
+          setForm(null);
+          onSaved && onSaved();
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      const ratesTable = (rates, compareWith) => (
+        <div className="rates-groups">
+          {RATE_GROUPS.map(([group, title]) => (
+            <div className="rates-group" key={group}>
+              <div className="rates-group-title">{title}</div>
+              {pricing.AVALON_RATE_FIELDS.filter(f => f.group === group).map(f => (
+                <div className="margin-net-row" key={f.key}>
+                  <span>{f.label}</span>
+                  <b>
+                    {compareWith && compareWith[f.key] !== rates[f.key]
+                      ? <><s className="rates-was">{rateText(compareWith[f.key], f.unit)}</s> {rateText(rates[f.key], f.unit)}</>
+                      : rateText(rates[f.key], f.unit)}
+                  </b>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      );
+
+      return (
+        <div className="panel rates-view">
+          <h2>Ставки підрядника</h2>
+          <p className="rates-lead">
+            Ставки називає підрядник. Ви вносите їх тут один раз — і ними рахують калькулятор, кабінет і таблиця.
+            Нові ставки діють для замовлень, створених від обраної дати. Замовлення, пораховані раніше, лишаються
+            на своїх ставках, доки ви самі не натиснете в картці «Перерахувати за чинними ставками».
+          </p>
+          {info.error && <div className="error">{info.error}</div>}
+          {error && <div className="error">{error}</div>}
+
+          {!form && (
+            <>
+              <div className="rates-current">
+                <div className="section-title" style={{ marginTop: 0 }}>
+                  Чинні ставки {info.current_from ? "— діють з " + ratesDateLabel(info.current_from) : "— до першої зміни"}
+                </div>
+                {ratesTable(current)}
+                <p className="margin-calc-note">
+                  Приклад: суцільний кошик AVL-01 800×500×500 мм без кришки — ціна клієнту {money(examplePrice(current))}.
+                </p>
+              </div>
+              {upcoming.map(v => (
+                <div className="rates-upcoming" key={v.from}>
+                  <div className="section-title" style={{ marginTop: 0 }}>Заплановано — діятимуть з {ratesDateLabel(v.from)}</div>
+                  {ratesDiff(current, v.rates).map(d => <div className="rates-diff-line" key={d.field.key}>{diffText(d)}</div>)}
+                  {v.note && <p className="margin-calc-note">Примітка: {v.note}</p>}
+                </div>
+              ))}
+              <button className="btn" type="button" disabled={busy || !loaded || !!info.error} onClick={openForm}>
+                {last && last.from > today ? "Виправити заплановані ставки" : "Змінити ставки"}
+              </button>
+            </>
+          )}
+
+          {form && (
+            <div className="rates-form">
+              <div className="section-title" style={{ marginTop: 0 }}>{replacing ? "Виправлення зміни від " + ratesDateLabel(last.from) : "Нові ставки"}</div>
+              <div className="grid2">
+                <div className="field">
+                  <label>Діють з</label>
+                  <input type="date" value={form.from} min={minDate} onChange={e => setForm(f => ({ ...f, from: e.target.value }))} />
+                  {dateError && <div className="rates-field-error">{dateError}</div>}
+                </div>
+                <div className="field">
+                  <label>Примітка (необовʼязково)</label>
+                  <input value={form.note} maxLength={160} placeholder="Напр.: лист підрядника, подорожчав метал"
+                    onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
+                </div>
+              </div>
+              {RATE_GROUPS.map(([group, title]) => (
+                <div key={group}>
+                  <div className="rates-group-title">{title}</div>
+                  <div className="grid2">
+                    {pricing.AVALON_RATE_FIELDS.filter(f => f.group === group).map(f => {
+                      const changed = !fieldErrors[f.key] && typed[f.key] !== before[f.key];
+                      return (
+                        <div className="field" key={f.key}>
+                          <label>{f.label}, {f.unit}</label>
+                          <input inputMode="decimal" value={form.values[f.key]} className={changed ? "rates-changed" : ""}
+                            onChange={e => setForm(fm => ({ ...fm, values: { ...fm.values, [f.key]: e.target.value }, confirmLarge: false }))} />
+                          {fieldErrors[f.key]
+                            ? <div className="rates-field-error">{fieldErrors[f.key]}</div>
+                            : <div className="rates-field-hint">було {rateText(before[f.key], f.unit)}</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              <div className="rates-summary">
+                <div className="rates-group-title">Що зміниться</div>
+                {diff.length === 0
+                  ? <p className="margin-calc-note">Поки нічого не змінено.</p>
+                  : diff.map(d => <div className={"rates-diff-line" + (d.large ? " large" : "")} key={d.field.key}>{diffText(d)}</div>)}
+                {diff.length > 0 && !hasErrors && (
+                  <p className="margin-calc-note">
+                    Приклад: суцільний кошик AVL-01 800×500×500 мм без кришки — було {money(examplePrice(before))}, стане {money(examplePrice(typed))}.
+                  </p>
+                )}
+                {large.length > 0 && (
+                  <label className="pricing-check rates-confirm">
+                    <input type="checkbox" checked={form.confirmLarge} onChange={e => setForm(f => ({ ...f, confirmLarge: e.target.checked }))} />
+                    Зміна понад 30 % — це не помилка (перевірте, чи немає зайвого нуля)
+                  </label>
+                )}
+              </div>
+              <div className="rates-actions">
+                <button className="btn" type="button"
+                  disabled={busy || hasErrors || !!dateError || diff.length === 0 || (large.length > 0 && !form.confirmLarge)} onClick={save}>
+                  {busy ? "Зберігаю…" : "Зберегти ставки з " + (ratesDateLabel(form.from) || "…")}
+                </button>
+                <button className="btn secondary" type="button" disabled={busy} onClick={() => { setForm(null); setError(""); }}>Скасувати</button>
+              </div>
+            </div>
+          )}
+
+          <div className="section-title">Історія змін</div>
+          {versions.length === 0 ? (
+            <p className="empty" style={{ textAlign: "left", padding: 0 }}>Ставки ще не змінювали — діють початкові.</p>
+          ) : (
+            <div className="table-scroll">
+              <table>
+                <thead><tr><th>Діють з</th><th>Що змінилось</th><th>Примітка</th><th>Збережено</th><th></th></tr></thead>
+                <tbody>
+                  {versions.slice().reverse().map((v, i) => {
+                    const idx = versions.length - 1 - i;
+                    const prev = idx > 0 ? versions[idx - 1].rates : defaults;
+                    const changes = ratesDiff(prev, v.rates);
+                    return (
+                      <tr key={v.from}>
+                        <td>{ratesDateLabel(v.from)}{info.today && v.from > info.today ? " (заплановано)" : v.from === info.current_from ? " (чинні)" : ""}</td>
+                        <td>{changes.length ? changes.map(d => <div key={d.field.key}>{diffText(d)}</div>) : "—"}</td>
+                        <td>{v.note || "—"}</td>
+                        <td>{v.saved_at || "—"}</td>
+                        <td>{i === 0 && <button className="btn secondary" type="button" disabled={busy} style={{ padding: "4px 8px" }} onClick={removeLast}>Скасувати зміну</button>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     function ClientsView({ token, groups, loading, error, refreshOrders, onRetry, onOpenOrder }) {
       const [q, setQ] = useState("");
       const [selected, setSelected] = useState(null);
@@ -5348,6 +5716,9 @@ import pricing from '../../lib/avalon-pricing.js';
             <div style={{ display: tab === "expenses" ? "block" : "none" }}>
               <ExpensesView token={token} expenses={expenses} refreshExpenses={refreshExpenses} />
             </div>
+            {tab === "rates" && (
+              <RatesView token={token} onSaved={() => { const r = refreshData({ direct: true }); if (r && r.catch) r.catch(() => {}); }} />
+            )}
           </main>
           {selectedOrder && (
             <OrderDrawer

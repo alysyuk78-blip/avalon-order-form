@@ -574,6 +574,33 @@
     .pricing-check input { width: 16px; height: 16px; margin: 0; }
     .pricing-calc-link { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(0,0,0,.08); }
     .pricing-calc-link .margin-calc-note { margin-top: 6px; }
+    /* Якими ставками рахується замовлення (картка) */
+    .rates-note {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 8px;
+      font-size: 12px; line-height: 1.45; color: var(--muted);
+    }
+    .rates-note.old { padding: 8px 10px; border-radius: 8px; background: rgba(154,103,0,.10); color: var(--warn); font-weight: 650; }
+    .rates-note .btn { padding: 6px 10px; font-size: 12px; }
+    /* Екран «Ставки» */
+    .rates-view { max-width: 860px; }
+    .rates-lead { margin: 0 0 14px; font-size: 14px; line-height: 1.55; color: var(--muted); }
+    .rates-current, .rates-upcoming, .rates-form, .rates-summary {
+      margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: var(--control-bg);
+    }
+    .rates-upcoming { background: rgba(154,103,0,.10); }
+    .rates-form { background: rgba(143,115,64,.08); }
+    .rates-summary { margin-top: 12px; background: var(--panel); border: 1px solid rgba(0,0,0,.08); }
+    .rates-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px 28px; font-size: 13px; }
+    .rates-group-title { margin: 10px 0 6px; font-size: 12px; font-weight: 750; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); }
+    .rates-groups .rates-group-title { margin-top: 4px; }
+    .rates-was { color: var(--muted); font-weight: 500; margin-right: 4px; }
+    .rates-field-hint { margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+    .rates-field-error { margin-top: 3px; font-size: 11.5px; color: var(--danger); font-weight: 650; }
+    .rates-form input.rates-changed { box-shadow: inset 0 0 0 2px var(--accent); }
+    .rates-diff-line { font-size: 13px; line-height: 1.6; color: var(--ink); }
+    .rates-diff-line.large { color: var(--danger); font-weight: 700; }
+    .rates-confirm { margin-top: 10px; color: var(--danger); font-weight: 650; }
+    .rates-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
     /* ── Файли замовлення ── */
     .files-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
