@@ -205,7 +205,24 @@ function testCoverRemovedIsVisible() {
   assert.ok(!text(item({ has_cover: false, basket_model: "AVL-01", basket_model_name: "Суцільний кошик", construction_type: "Суцільний · AVL-01" })).includes("кришка"));
 }
 
+// Сповіщення власникові рахує розкладку тими ставками, якими заявку порахувала таблиця
+// (вони приходять у відповіді скрипта); без них — типовими.
+function testMessageUsesOrderRates() {
+  const order = { order_number: "ORD-021126-001", first_name: "Тест", phone: "+380000000000", items: [{
+    product_type: "basket", basket_model: "AVL-01", basket_model_name: "Суцільний кошик", construction_type: "Суцільний · AVL-01",
+    color: "RAL 6005", size_w: 800, size_h: 500, size_d: 500, quantity: 1 }] };
+  // Числа в сповіщенні — з нерозривними пробілами («2 030»): для звірки робимо їх звичайними.
+  const text = (rates) => handler.formatTelegramMessage(order, rates).replace(/<[^>]+>/g, "").replace(/[\u00a0\u202f]/g, " ");
+  const base = text(null);
+  assert.ok(base.includes("0.9 м² × 2 030 ₴/м² = 1 827 ₴"), base);
+  assert.ok(base.includes("Доплата за небазовий колір (на замовлення): 200 ₴"), base);
+  const changed = text({ solidRate: 2233, colorSurcharge: 250 });
+  assert.ok(changed.includes("0.9 м² × 2 233 ₴/м² = 2 010 ₴"), changed);
+  assert.ok(changed.includes("Доплата за небазовий колір (на замовлення): 250 ₴"), changed);
+}
+
 async function run() {
+  testMessageUsesOrderRates();
   testCoverRemovedIsVisible();
   testRemovableSidePanelMessage();
   testPartialTotalsAndColorFee();

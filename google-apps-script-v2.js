@@ -75,7 +75,10 @@ function doPost(e) {
     // надішле замовлення підряднику (CRM або статус у таблиці). Так підрядник не бачить
     // попередніх/неопрацьованих запитів.
 
-    return jsonOut({ status: "ok", order_number: written.order_number, row: written.row, duplicate: !!written.duplicate });
+    // Ставки, якими пораховано заявку, — для сповіщення власнику (його складає сервер форми).
+    var ratesOut = null;
+    try { ratesOut = (orderRatesMemo_[written.order_number] || currentRates_()).rates; } catch (ratesErr) { ratesOut = null; }
+    return jsonOut({ status: "ok", order_number: written.order_number, row: written.row, duplicate: !!written.duplicate, pricing_rates: ratesOut });
   } catch (error) {
     return jsonOut({ status: "error", message: error.toString() });
   } finally {

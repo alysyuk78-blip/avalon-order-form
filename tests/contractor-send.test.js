@@ -1716,6 +1716,204 @@ function testAuditFixes() {
   assert.equal(cs.raw.data[addedOut.added_row - 1][44], "req-waive-existing", "added_row вказує на нову позицію після зсуву");
 }
 
+// ── Ставки підрядника: зміна з дати початку дії, якими ставками рахується замовлення ──
+function testContractorRates() {
+  const styled = (sh) => Object.assign({}, sh, {
+    getRange: (...args) => {
+      const rng = sh.getRange(...args);
+      const proxy = new Proxy(rng, { get: (target, prop) => (prop in target ? target[prop] : () => proxy) });
+      return proxy;
+    },
+  });
+  // «Сьогодні» керуємо самі: iso — для ставок, ua — для дати створення замовлення.
+  const now = { iso: "2026-10-07", ua: "07.10.2026 12:00" };
+  const setToday = (iso) => { now.iso = iso; now.ua = iso.slice(8, 10) + "." + iso.slice(5, 7) + "." + iso.slice(0, 4) + " 12:00"; };
+  const make = (rows, initialProps) => {
+    const raw = makeSheet(rows);
+    const props = makeProps(initialProps);
+    let counter = 0;
+    const ctx = load({
+      SpreadsheetApp: { getActiveSpreadsheet: () => ({ getSheetByName: () => styled(raw) }), flush() {} },
+      Utilities: { formatDate: (_d, _tz, fmt) => (fmt === "yyyy-MM-dd" ? now.iso : now.ua) },
+      PropertiesService: { getScriptProperties: () => props },
+      LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    });
+    Object.assign(ctx, {
+      ensureDiscountColumns_: () => {}, getPatternFileInfo_: () => null, ensureContactColumns_: () => {},
+      setCommissionFormulas_: () => {}, applyOrderRowControls_: () => {}, withRequestCache_: (_p, _id, fn) => fn(),
+      adminOrdersSheet_: () => styled(raw), syncOrderPaymentState_: () => {}, syncProcessingEvent_: () => {},
+      adminGetOrder_: () => ({ status: "ok" }), nextOrderNumber: () => "ORD-NEW-" + (++counter),
+      appendOrderRow_: (sh, row) => { sh.getRange(sh.getLastRow() + 1, 1, 1, row.length).setValues([row]); return sh.getLastRow(); },
+    });
+    // Нове виконання скрипта: кеш ставок і памʼять про замовлення порожні.
+    const fresh = () => { ctx.pricingVersionsCache_ = null; ctx.orderRatesMemo_ = {}; };
+    return { raw, ctx, props, sh: styled(raw), fresh };
+  };
+  const OLD = "ORD-071026-001", LEAD = "ORD-071026-002";
+  // Кошик AVL-01 800×500×500: площа стінок 0,9 м². За типовими ставками 1 827 / 2 466 ₴.
+  const basket = (num, extra) => orderRow(num, "Нове", Object.assign({ 1: "07.10.2026 10:00", 8: "Суцільний · AVL-01",
+    9: "Сірий (RAL 7016)", 13: 800, 14: 500, 15: 500, 16: 1, 19: 1827, 21: 2466, 22: 639, 40: "Суцільний", 41: "Кошик" }, extra));
+  const noMoney = { 13: "", 14: "", 15: "", 19: "", 21: "", 22: "" };
+  const same = { construction: "Суцільний · AVL-01", basket_model: "Суцільний", product_kind: "Кошик", specs: "", size_w: 800, size_h: 500, size_d: 500 };
+  const money = (raw, i) => [raw.data[i][19], raw.data[i][21]];
+  const newItem = { product_type: "basket", basket_model: "AVL-01", basket_model_name: "Суцільний", construction_type: "Суцільний",
+    color: "Сірий (RAL 7016)", size_w: 800, size_h: 500, size_d: 500, quantity: 1 };
+  const newOrder = (ctx, extra, itemExtra) => ctx.writeOrderToSheet_(Object.assign({ first_name: "Тест", phone: "+380000000000",
+    items: [Object.assign({}, newItem, itemExtra)] }, extra));
+  const save = (ctx, change) => ctx.adminRatesSave_({ rates_change: change });
+  const plain = (x) => JSON.parse(JSON.stringify(x));
+
+  // 1. Змін ставок немає — діють типові; замовлення рахується, як і досі.
+  let t = make([basket(OLD)]);
+  assert.deepEqual(plain(t.ctx.pricingInfo_()), { versions: [], today: "2026-10-07", current_from: "" });
+  let w = newOrder(t.ctx);
+  assert.deepEqual(money(t.raw, w.row - 1), [1827, 2466]);
+  assert.equal(t.props.getProperty("rates_" + w.order_number), null, "без змін ставок нічого не закріплюємо");
+
+  // 2. Перевірки під час збереження.
+  assert.throws(() => save(t.ctx, { from: "01.11.2026", rates: { solidRate: 2100 } }), /Вкажіть дату/);
+  assert.throws(() => save(t.ctx, { from: "2026-02-30", rates: { solidRate: 2100 } }), /Вкажіть дату/, "такого дня немає");
+  assert.throws(() => save(t.ctx, { from: "2026-09-01", rates: { solidRate: 2100 } }), /не раніше ніж 31 день тому/);
+  assert.throws(() => save(t.ctx, { from: "2027-11-01", rates: { solidRate: 2100 } }), /не далі ніж на рік/);
+  assert.throws(() => save(t.ctx, { from: "2026-11-01", rates: {} }), /не відрізняються/);
+  assert.throws(() => save(t.ctx, { from: "2026-11-01", rates: { solidRate: 2030, markupPct: "35" } }), /не відрізняються/);
+  assert.throws(() => save(t.ctx, { from: "2026-11-01", rates: { coverRate: 0 } }), /Кришка без візерунка: не менше за 1/);
+  assert.throws(() => save(t.ctx, { from: "2026-11-01", rates: { solidRate: "дві тисячі" } }), /Стінки суцільні: це не число/);
+  assert.throws(() => save(t.ctx, { from: "2026-11-01", rates: { solidRate: 20300 } }), /Зміна понад 30 %.*Стінки суцільні: 2030 → 20300/);
+  assert.equal(t.props.getProperty("PRICING_RATES_V1"), null, "жодна з хибних спроб нічого не зберегла");
+  // Зайвий нуль із підтвердженням зберігається — рішення за власником.
+  const typo = make([basket(OLD)]);
+  assert.equal(save(typo.ctx, { from: "2026-11-01", rates: { solidRate: 20300 }, confirm_large: true }).pricing.versions[0].rates.solidRate, 20300);
+
+  // 3. Нові ставки з 01.11.2026: суцільні 2 233 (+10 %), доплата за колір 250. Решта — як була.
+  let saved = save(t.ctx, { from: "2026-11-01", rates: { solidRate: "2 233", colorSurcharge: 250 }, note: "лист підрядника" });
+  assert.equal(saved.pricing.versions.length, 1);
+  const v0 = saved.pricing.versions[0];
+  assert.deepEqual([v0.from, v0.rates.solidRate, v0.rates.sectionalRate, v0.rates.colorSurcharge, v0.rates.markupPct, v0.note, v0.saved_at],
+    ["2026-11-01", 2233, 2170, 250, 35, "лист підрядника", "07.10.2026 12:00"]);
+  assert.equal(saved.pricing.current_from, "", "до 1 листопада чинні ще попередні");
+  // До дати початку дії нове замовлення рахується за попередніми ставками.
+  t.fresh();
+  w = newOrder(t.ctx);
+  assert.deepEqual(money(t.raw, w.row - 1), [1827, 2466]);
+  const RATES = t.props.getProperty("PRICING_RATES_V1");
+
+  // 4. Настало 2 листопада.
+  setToday("2026-11-02");
+  t = make([basket(OLD), basket(LEAD, noMoney)], { PRICING_RATES_V1: RATES });
+  assert.equal(t.ctx.pricingInfo_().current_from, "2026-11-01");
+  // Нове замовлення — за новими: 0,9 м² × 2 233 = 2 009,7 → собівартість 2 010, ціна 2 713.
+  w = newOrder(t.ctx);
+  assert.deepEqual(money(t.raw, w.row - 1), [2010, 2713]);
+  assert.equal(t.props.getProperty("rates_" + w.order_number), null, "нове замовлення й так рахується ставками свого дня");
+  // Старе, вже пораховане замовлення: правка кількості рахує за СТАРИМИ ставками.
+  t.fresh();
+  t.ctx.adminUpdateOrder_({ order_number: OLD, row: 2, patch: Object.assign({}, same, { quantity: 2 }) });
+  assert.deepEqual(money(t.raw, 1), [3654, 4932], "2 × 1 827 і 2 × 2 466 — погоджена ціна не росте сама");
+  assert.equal(t.props.getProperty("rates_" + OLD), null);
+  // Заявка без розмірів і без ціни: першу ціну отримує за ЧИННИМИ ставками й лишається на них.
+  t.fresh();
+  t.ctx.adminUpdateOrder_({ order_number: LEAD, row: 3, patch: Object.assign({}, same, { quantity: 1 }) });
+  assert.deepEqual(money(t.raw, 2), [2010, 2713]);
+  assert.equal(t.props.getProperty("rates_" + LEAD), "2026-11-01");
+  t.fresh();
+  t.ctx.adminUpdateOrder_({ order_number: LEAD, row: 3, patch: Object.assign({}, same, { quantity: 3 }) });
+  assert.deepEqual(money(t.raw, 2), [6029, 8139], "3 × 2 009,7 → 6 029; 3 × 2 713 = 8 139");
+
+  // 5. Картки для кабінету: якими ставками рахується кожне замовлення.
+  t.fresh();
+  const byNum = {};
+  t.ctx.adminGroupOrders_(t.raw.data.slice(1).map((r, i) => t.ctx.mapOrderRow_(i + 2, r)), [])
+    .forEach((g) => { byNum[g.order_number] = g.rates_from; });
+  assert.equal(byNum[OLD], "", "старе пораховане — попередні ставки");
+  assert.equal(byNum[LEAD], "2026-11-01", "закріплене — чинні");
+  assert.equal(byNum[w.order_number], "2026-11-01", "створене після зміни — чинні");
+  // Заявка без ціни, якої ще ніхто не рахував: кабінет і калькулятор одразу бачать чинні ставки.
+  const t5 = make([basket(LEAD, noMoney)], { PRICING_RATES_V1: RATES });
+  assert.equal(t5.ctx.adminGroupOrders_([t5.ctx.mapOrderRow_(2, t5.raw.data[1])], [])[0].rates_from, "2026-11-01");
+  // Ціна з калькулятора (готові суми) теж закріплює ставки, за якими її рахували.
+  t5.ctx.adminUpdateOrder_({ order_number: LEAD, row: 2, patch: { cost_total: 2010, list_price: 2713, discount_pct: 0, discount_uah: 0, revenue: 2713 } });
+  assert.equal(t5.props.getProperty("rates_" + LEAD), "2026-11-01");
+
+  // 6. Повідомлення підряднику показує ставки цього замовлення.
+  t.fresh();
+  const line = (num, cost) => t.ctx.buildProductionMsg_({ order_number: num, created_at: "07.10.2026 10:00", items: [
+    { product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 500, size_d: 500, quantity: 1, unit: "шт.", cost_total: cost },
+  ] }, { finance: true }).replace(/<[^>]+>/g, "");
+  assert.ok(line(OLD, 1827).includes("0.9 м² × 2 030 ₴/м²"), line(OLD, 1827));
+  assert.ok(line(LEAD, 2010).includes("0.9 м² × 2 233 ₴/м²"), line(LEAD, 2010));
+
+  // 7. «Перерахувати за чинними ставками»: формульні позиції — за новими, знижка % лишається,
+  //    ціна, вписана менеджером, не змінюється; «чиста» доплата за колір отримує нову суму.
+  const t7 = make([
+    basket(OLD, { 9: "RAL 6005", 19: 1827, 21: 2219, 22: 392, 34: 2466, 35: 10, 36: 247 }),   // формула, знижка 10 %
+    basket(OLD, { 9: "RAL 6005", 19: 1900, 21: 3000, 22: 1100 }),                              // ціну вписав менеджер
+    orderRow(OLD, "Нове", { 1: "07.10.2026 10:00", 16: 1, 19: 200, 21: 200, 22: 0, 40: "Доплата за колір", 41: "Послуга" }),
+  ], { PRICING_RATES_V1: RATES });
+  const out = t7.ctx.adminOrderReprice_({ order_number: OLD });
+  assert.deepEqual([out.repriced, out.kept_manual], [1, 1]);
+  assert.deepEqual(money(t7.raw, 1), [2010, 2442], "2 713 − 10 % = 2 441,7 → 2 442");
+  assert.deepEqual([t7.raw.data[1][34], t7.raw.data[1][35], t7.raw.data[1][36]], [2713, 10, 271]);
+  assert.deepEqual(money(t7.raw, 2), [1900, 3000]);
+  assert.deepEqual(money(t7.raw, 3), [250, 250], "доплата за колір — за новою ставкою");
+  assert.equal(t7.props.getProperty("rates_" + OLD), "2026-11-01");
+  t7.fresh();
+  assert.throws(() => t7.ctx.adminOrderReprice_({ order_number: OLD }), /вже рахується за чинними/);
+  const t7done = make([basket(OLD, { 2: "Завершено" })], { PRICING_RATES_V1: RATES });
+  assert.throws(() => t7done.ctx.adminOrderReprice_({ order_number: OLD }), /«Завершено» не перераховуємо/);
+  assert.deepEqual(money(t7done.raw, 1), [1827, 2466]);
+
+  // 8. Доплата за колір — зі ставок замовлення: старе 200 ₴, нове 250 ₴.
+  const t8 = make([basket(OLD, { 9: "RAL 6005" })], { PRICING_RATES_V1: RATES });
+  const fee = (raw) => raw.data.slice(1).filter((r) => r[40] === "Доплата за колір").map((r) => r[21]);
+  t8.ctx.syncColorSurcharge_(t8.sh, OLD);
+  assert.deepEqual(fee(t8.raw), [200]);
+  const w8 = newOrder(t8.ctx, {}, { color: "RAL 6005" });
+  t8.ctx.syncColorSurcharge_(t8.sh, w8.order_number);
+  assert.deepEqual(fee(t8.raw), [200, 250]);
+
+  // 9. Та сама дата замінює останню зміну (виправлення), раніша дата — помилка,
+  //    скасувати можна лише останню.
+  t.fresh();
+  assert.throws(() => save(t.ctx, { from: "2026-10-20", rates: { solidRate: 2250 } }), /Уже є ставки від 01\.11\.2026/);
+  saved = save(t.ctx, { from: "2026-11-01", rates: { solidRate: 2250, colorSurcharge: 250 } });
+  assert.deepEqual([saved.pricing.versions.length, saved.pricing.versions[0].rates.solidRate], [1, 2250], "та сама дата — заміна, а не друга зміна");
+  assert.throws(() => t.ctx.adminRatesDelete_({ rates_change: { from: "2026-10-01" } }), /лише останню зміну — від 01\.11\.2026/);
+  assert.equal(t.ctx.adminRatesDelete_({ rates_change: { from: "2026-11-01" } }).pricing.versions.length, 0);
+  assert.throws(() => t.ctx.adminRatesDelete_({ rates_change: { from: "2026-11-01" } }), /Змін ставок ще немає/);
+  t.fresh();
+  assert.equal(t.ctx.pricingInfo_().current_from, "");
+  // Націнка — теж зі ставок: 40 % → 1 827 × 1,4 = 2 557,8 → 2 558; з комісією ТОВ 30 % —
+  // націнка 40 / 0,7 = 57,14 % → 2 871.
+  save(t.ctx, { from: "2026-11-02", rates: { markupPct: 40 } });
+  t.fresh();
+  w = newOrder(t.ctx);
+  assert.deepEqual(money(t.raw, w.row - 1), [1827, 2558]);
+  w = newOrder(t.ctx, { commission_pct: 30 });
+  assert.deepEqual(money(t.raw, w.row - 1), [1827, 2871]);
+
+  // 10. Пошкоджений запис ставок: за типовими мовчки не рахуємо.
+  const bad = make([basket(OLD)], { PRICING_RATES_V1: "{oops" });
+  assert.throws(() => bad.ctx.pricingVersions_(), /Ставки пошкоджено/);
+  assert.throws(() => newOrder(bad.ctx), /Ставки пошкоджено/);
+  assert.match(bad.ctx.pricingInfo_().error, /Ставки пошкоджено/);
+  assert.equal(bad.ctx.adminGroupOrders_([bad.ctx.mapOrderRow_(2, bad.raw.data[1])], [])[0].rates_from, "", "перелік замовлень при цьому відкривається");
+  const badRate = make([basket(OLD)], { PRICING_RATES_V1: JSON.stringify([{ from: "2026-11-01", rates: { solidRate: -5 } }]) });
+  assert.throws(() => badRate.ctx.pricingVersions_(), /Ставки пошкоджено \(запис від «2026-11-01»\)/);
+
+  // 11. Довгий перелік змін зберігається частинами й читається назад без втрат.
+  const t11 = make([basket(OLD)]);
+  t11.ctx.PRICING_RATES_CHUNK = 150;
+  save(t11.ctx, { from: "2026-11-01", rates: { solidRate: 2233 }, note: "підрядник підняв ставки через метал і електроенергію" });
+  assert.match(t11.props.getProperty("PRICING_RATES_V1"), /^chunks:[2-9]$/);
+  t11.fresh();
+  assert.deepEqual([t11.ctx.pricingVersions_().length, t11.ctx.pricingVersions_()[0].rates.solidRate], [1, 2233]);
+  t11.ctx.PRICING_RATES_CHUNK = 8000;
+  save(t11.ctx, { from: "2026-11-01", rates: { solidRate: 2240 } });
+  assert.equal(t11.props.getProperty("PRICING_RATES_V1").charAt(0), "[");
+  assert.deepEqual([t11.props.getProperty("PRICING_RATES_V1_1"), t11.props.getProperty("PRICING_RATES_V1_2")], [null, null], "зайві частини прибрано");
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
@@ -1736,4 +1934,5 @@ testAddOrderItem();
 testUnifiedPricingInSheet();
 testColorSurchargeInSheet();
 testAuditFixes();
+testContractorRates();
 console.log("contractor-send tests: OK");
