@@ -588,11 +588,13 @@
         fullName: "Суцільний ламельний кошик з кришкою",
         image: "images/basket-models/avl-06-lamella-cover.jpg",
         construction: "Суцільний",
+        // Кришка — типово є, але за потреби її можна прибрати.
         defaultCover: true,
+        coverOptional: true,
         patternAllowed: true,
         patternLabel: "Візерунок бокових частин",
         summary: "Ламельний фасад і захист зверху як єдина готова модель.",
-        benefits: ["Верхня кришка вже передбачена", "Ламельний фасад", "Візерунок бокових частин"],
+        benefits: ["Верхня кришка — типово є, за потреби можна прибрати", "Ламельний фасад", "Візерунок бокових частин"],
         mounting: "Фасад або кронштейни"
       },
       {
@@ -603,11 +605,13 @@
         type: "basket",
         construction: "Суцільний",
         constructionChoice: true,
-        defaultCover: false,
+        // Кришка — типово є, але за потреби її можна прибрати.
+        defaultCover: true,
         coverAllowed: true,
+        coverOptional: true,
         patternAllowed: false,
-        summary: "Ламельний кошик у суцільному або розбірному виконанні, з опційною верхньою кришкою. Без вибору візерунка.",
-        benefits: ["Суцільне або розбірне виконання", "Вибір кольору", "Опційна верхня кришка"],
+        summary: "Ламельний кошик у суцільному або розбірному виконанні, з верхньою кришкою (за потреби можна прибрати). Без вибору візерунка.",
+        benefits: ["Суцільне або розбірне виконання", "Вибір кольору", "Верхня кришка — типово є, можна прибрати"],
         mounting: "Фасад або кронштейни"
       },
       {
@@ -2049,7 +2053,7 @@
                     {!isBracket && <React.Fragment>
                     <div>
                       <h3 className="text-sm font-bold" style={{ color: "#26322d" }}>Верхня кришка</h3>
-                      {selectedModel.coverAllowed === false ? <p className="mt-3 text-sm font-semibold p-3" style={{ color: "#526058", background: "#f4f5f3", borderRadius: 16 }}>Для цієї моделі верхня кришка не передбачена.</p> : selectedModel.defaultCover ? <p className="mt-3 text-sm font-semibold p-3" style={{ color: "#173d31", background: "#edf5f0", borderRadius: 16 }}>Передбачена конструкцією цієї моделі.</p> : <div className="mt-3 grid grid-cols-2 gap-2">{[{ value: false, label: "Без кришки" }, { value: true, label: "З кришкою" }].map(option => <button key={String(option.value)} type="button" onClick={() => set("has_cover", option.value)} className={`catalog-option catalog-choice text-sm font-semibold ${form.has_cover === option.value ? "is-active" : ""}`}>{option.label}</button>)}</div>}
+                      {selectedModel.coverAllowed === false ? <p className="mt-3 text-sm font-semibold p-3" style={{ color: "#526058", background: "#f4f5f3", borderRadius: 16 }}>Для цієї моделі верхня кришка не передбачена.</p> : (selectedModel.defaultCover && !selectedModel.coverOptional) ? <p className="mt-3 text-sm font-semibold p-3" style={{ color: "#173d31", background: "#edf5f0", borderRadius: 16 }}>Передбачена конструкцією цієї моделі.</p> : <div className="mt-3 grid grid-cols-2 gap-2">{[{ value: false, label: "Без кришки" }, { value: true, label: "З кришкою" }].map(option => <button key={String(option.value)} type="button" onClick={() => set("has_cover", option.value)} className={`catalog-option catalog-choice text-sm font-semibold ${form.has_cover === option.value ? "is-active" : ""}`}>{option.label}</button>)}</div>}
                     </div>
 
                     {selectedModel.id === "AVL-02" ? <div className={`p-4 ${showErrors && !measurementIsComplete() ? "catalog-choice-group is-error" : ""}`} style={{ background: showErrors && !measurementIsComplete() ? "#fff8f8" : "#f3f7f4", borderRadius: 16, border: showErrors && !measurementIsComplete() ? "1px solid #ef4444" : "1px solid #dce1dc" }}>

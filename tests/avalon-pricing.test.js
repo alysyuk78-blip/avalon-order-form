@@ -16,7 +16,7 @@ function coreOf(file) {
 
 // Змінив формулу — онови всі копії (npm run sync:pricing) і цю суму. Та сама сума стоїть у
 // тесті калькулятора (test/avalonPricing.test.mjs): розбіжність = алгоритми розʼїхались.
-const CORE_SHA256 = "bd41d8c4c4be71e61d9608bf45732b9f2b00faa38052e167ac1602d4ded4bcf8";
+const CORE_SHA256 = "97beb50560a73f21961a800498ef3b08b63bcdb31722d5bbec1cea411c2f3fd0";
 
 function testCopiesAreIdentical() {
   const root = path.join(__dirname, "..");
@@ -49,7 +49,7 @@ function testGoldenValues() {
   // Округлення розмірів угору до 10 мм — до площі.
   p = price({ type: "solid", width: 801, height: 541, depth: 499 });
   assert.deepEqual([p.width, p.height, p.depth], [810, 550, 500]);
-  // Власні ставки (налаштування калькулятора) перекривають типові.
+  // Ставки можна передати явно (для перевірок); калькулятор, кабінет і таблиця беруть типові.
   assert.equal(P.avalonPrice({ type: "solid", width: 1000, height: 1000, depth: 0, markupPct: 40 }, { solidRate: 1000 }).unitPrice, 1400);
 }
 
@@ -78,11 +78,17 @@ function testOrderItemText() {
   assert.equal(type("Суцільний", "Зі знімною боковиною"), "sectional_frame");
   assert.equal(type("Розбірний (з 3-х частин) · AVL-05", "Розбірний"), "sectional");
   assert.equal(type("Суцільний · AVL-07 + кришка", ""), "closed");
-  assert.equal(type("Суцільний · AVL-06/1", "Ламельний"), "solid");
-  // Моделей AVL-06, 06/1, 08 у калькуляторі немає — ставку визначає текст конструкції, як і раніше.
-  assert.equal(type("Розбірний · AVL-06/1", "Ламельний кошик"), "sectional");
-  assert.equal(type("Суцільний · AVL-08", "Закритий кошик для монтажу на горизонтальну площу"), "solid");
-  assert.equal(type("Суцільний · AVL-06 + кришка", "Розбірний"), "solid", "з кодом моделі назва тип не визначає");
+  // Ламельні моделі й AVL-08 мають власні формули (виконання — суцільне чи розбірне — впливає
+  // лише на ставку стінок, тип лишається той самий).
+  assert.equal(type("Суцільний · AVL-06/1", "Ламельний"), "lamella_full");
+  assert.equal(type("Розбірний · AVL-06/1", "Ламельний кошик"), "lamella_full");
+  assert.equal(type("Суцільний · AVL-06-1", ""), "lamella_full", "«06-1» — те саме, що «06/1»");
+  assert.equal(type("Суцільний · AVL-08", "Закритий кошик для монтажу на горизонтальну площу"), "four_sided");
+  assert.equal(type("Суцільний · AVL-06 + кришка", "Розбірний"), "lamella", "з кодом моделі назва тип не визначає");
+  assert.equal(type("Суцільний", "Ламель з кришкою"), "lamella");
+  assert.equal(type("Суцільний", "Горизонтальний монтаж"), "four_sided");
+  assert.equal(type("Суцільний · AVL-01/2", ""), "solid", "невідомий варіант відомої моделі — як сама модель");
+  assert.equal(type("Розбірний · AVL-11", "Щось нове"), "sectional", "невідома модель — за текстом конструкції");
   // Повна назва з форми без коду моделі.
   assert.equal(type("Суцільний", "Суцільний кошик зі знімною боковою частиною"), "sectional_frame");
   assert.equal(type("Суцільний", "Розбірний AVL-05"), "sectional", "код моделі важливіший за текст конструкції");
@@ -178,7 +184,81 @@ function testIndividualPricing() {
   assert.equal(P.avalonIndividualReason("Декоративний", "K1"), "");
 }
 
+// Правила власника (07.10.2026) для моделей, яких раніше не було в розрахунку.
+function testLamellaAndFourSidedModels() {
+  // Ламелі: на панелі 600,4 мм — 8 штук (креслення власника); висота ламелі й проміжок сталі.
+  const count = P.avalonLamellaCount;
+  assert.equal(count(600.4), 8);
+  assert.deepEqual([400, 500, 530, 600, 670, 700, 740, 800, 810, 900, 1000].map(count), [5, 6, 7, 8, 9, 9, 10, 10, 11, 12, 13]);
+  assert.deepEqual([0, 30, 66, "", null].map(count), [0, 0, 0, 0, 0]);
+  const item = (construction, extra) => P.avalonPriceItem(Object.assign(
+    { construction, width: 800, height: 600, depth: 500, quantity: 1 }, extra));
+
+  // AVL-06: бокові й лицьова × 2 030, +12 ₴ за кожну ламель лицьової, кришка 1 920 / 2 030.
+  //   стінки (2 × 0,6×0,5 + 0,6×0,8) = 1,08 м² × 2 030 = 2 192,40; ламелі 8 × 12 = 96; кришка 0,4 м².
+  let p = item("Суцільний · AVL-06 + кришка");
+  assert.deepEqual([p.type, p.lamellaCount, p.lamellaPanels, p.lamellaCost, p.costTotal, p.unitPrice], ["lamella", 8, 1, 96, 3056, 4126]);
+  assert.equal(item("Суцільний · AVL-06 + кришка", { specs: "Верхня кришка: перфорована" }).costTotal, 3100, "кришка з візерунком × 2 030");
+  assert.equal(item("Суцільний · AVL-06").costTotal, 2288, "кришку можна прибрати");
+  assert.deepEqual(P.avalonCostLines(p).map((l) => [l.key, l.cost]), [["walls", 2192], ["top", 768], ["lamella", 96]]);
+  assert.equal(P.avalonCostLines(p)[2].label, "Гнуття ламелей (8 шт × 12 ₴)");
+
+  // AVL-06/1: ламельні всі три стінки — 3 × 8 × 12 = 288.
+  p = item("Суцільний · AVL-06/1 + кришка");
+  assert.deepEqual([p.type, p.lamellaCount * p.lamellaPanels, p.lamellaCost, p.costTotal], ["lamella_full", 24, 288, 3248]);
+  assert.equal(item("Суцільний · AVL-06/1").costTotal, 2480);
+  assert.equal(item("Розбірний (з 3-х частин) · AVL-06/1").costTotal, 2632, "розбірне виконання: 1,08 × 2 170 + 288");
+  assert.equal(item("Суцільний · AVL-06-1 + кришка").costTotal, 3248, "«06-1» = «06/1»");
+
+  // AVL-08: чотири стінки (дві лицьові + дві бокові) і кришка.
+  //   (2 × 0,6×0,5 + 2 × 0,6×0,8) = 1,56 м² × 2 030 = 3 166,80; кришка 0,4 × 1 920 = 768.
+  p = item("Суцільний · AVL-08 + кришка");
+  assert.deepEqual([p.type, p.wallArea, p.costTotal, p.lamellaCost], ["four_sided", 1.56, 3935, 0]);
+  assert.equal(item("Суцільний · AVL-08 + кришка", { specs: "Верхня кришка: перфорована" }).costTotal, 3979);
+  assert.equal(item("Суцільний · AVL-08").costTotal, 3167);
+  // Кількість: собівартість і ціна — рівно за одиницю × кількість.
+  p = item("Суцільний · AVL-06/1 + кришка", { quantity: 150 });
+  assert.deepEqual([p.costTotal, p.total], [Math.round(3248.4 * 150), 4385 * 150]);
+  // Глибина обовʼязкова й цим моделям.
+  assert.equal(P.avalonItemSized({ construction: "Суцільний · AVL-06", width: 800, height: 600, depth: "" }), false);
+}
+
+// Візерунок «Інший»: +100 ₴ до ставки за м² поверхонь із візерунком (2 030 → 2 130, 2 170 → 2 270).
+function testCustomPattern() {
+  ["Інший", "інший", " Інший: дубове листя", "ІНШИЙ (ескіз клієнта)"].forEach((x) => assert.equal(P.avalonIsCustomPattern(x), true, x));
+  ["K1", "K10", "", null, undefined, "Листя", "K3"].forEach((x) => assert.equal(P.avalonIsCustomPattern(x), false, String(x)));
+  assert.equal(P.avalonIsIndividualPricing("Декоративний", "Інший"), false, "«Інший» рахує формула, а не менеджер вручну");
+  const item = (construction, extra) => P.avalonPriceItem(Object.assign(
+    { construction, width: 800, height: 500, depth: 500, quantity: 1, pattern: "Інший: листя" }, extra));
+  // 0,9 м² стінок: 2 030 + 100 = 2 130 → 1 917; розбірний 2 170 + 100 = 2 270 → 2 043.
+  let p = item("Суцільний · AVL-01");
+  assert.deepEqual([p.costTotal, p.patternArea, p.patternRate, p.patternCost], [1917, 0.9, 100, 90]);
+  assert.equal(p.costTotal, Math.round(0.9 * 2130));
+  assert.equal(item("Розбірний (з 3-х частин) · AVL-05").costTotal, Math.round(0.9 * 2270));
+  assert.equal(item("Суцільний · AVL-01", { pattern: "K1" }).costTotal, 1827, "базовий візерунок — без надбавки");
+  assert.deepEqual(P.avalonCostLines(p).map((l) => [l.key, l.cost]), [["walls", 1827], ["pattern", 90]]);
+  // Кришка: з візерунком (перфорована) — теж +100; без візерунка — ні.
+  assert.equal(item("Суцільний · AVL-01 + кришка").costTotal, Math.round(0.9 * 2130 + 0.4 * 1920));
+  assert.equal(item("Суцільний · AVL-01", { specs: "Верхня кришка: перфорована" }).costTotal, Math.round(0.9 * 2130 + 0.4 * 2130));
+  // Знімна бічна панель AVL-04 теж із візерунком: (0,9 + 0,25) × 100.
+  p = item("Суцільний · AVL-04");
+  assert.equal(p.patternArea, 1.15);
+  assert.equal(p.costTotal, Math.round(0.9 * 2030 + 0.25 * 2030 + 1.15 * 100));
+  // AVL-06: візерунок лише на бокових (лицьова — ламельна); AVL-06/1 візерунка на стінках не має.
+  p = item("Суцільний · AVL-06 + кришка", { height: 600 });
+  assert.deepEqual([p.patternArea, p.costTotal], [0.6, 3116]);
+  assert.equal(item("Суцільний · AVL-06/1 + кришка", { height: 600 }).costTotal, 3248);
+  // AVL-08: усі чотири стінки.
+  assert.equal(item("Суцільний · AVL-08", { height: 600 }).costTotal, Math.round(1.56 * 2130));
+  // Комісія ТОВ і знижка рахуються вже з надбавкою.
+  p = item("Суцільний · AVL-01", { quantity: 60 });
+  const tov = P.avalonPriceItem({ construction: "Суцільний · AVL-01", pattern: "Інший", width: 800, height: 500, depth: 500, quantity: 60 }, { commissionPct: 30, discountPct: 5 });
+  assert.deepEqual([p.unitPrice, p.total, tov.unitPrice, tov.total], [2588, 2588 * 60, 2876, Math.round(2876 * 60 * 0.95)]);
+}
+
 testCopiesAreIdentical();
+testLamellaAndFourSidedModels();
+testCustomPattern();
 testItemSized();
 testIndividualPricing();
 testOwnerTovExample();

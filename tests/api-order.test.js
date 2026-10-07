@@ -195,7 +195,18 @@ async function testResilientSheetsWrite() {
   }
 }
 
+// Ламельні моделі: кришка типово є; якщо клієнт її прибрав — у сповіщенні власникові це видно.
+function testCoverRemovedIsVisible() {
+  const item = (extra) => Object.assign({ product_type: "basket", basket_model: "AVL-06", basket_model_name: "Суцільний ламельний кошик з кришкою",
+    construction_type: "Суцільний · AVL-06", size_w: 800, size_h: 600, size_d: 500, quantity: 1 }, extra);
+  const text = (it) => handler.formatTelegramMessage({ order_number: "ORD-071026-001", first_name: "Тест", phone: "+380000000000", items: [it] }).replace(/<[^>]+>/g, "");
+  assert.ok(text(item({ has_cover: false })).includes("• Верхня кришка: БЕЗ кришки"));
+  assert.ok(text(item({ has_cover: true })).includes("• Верхня кришка: Так"));
+  assert.ok(!text(item({ has_cover: false, basket_model: "AVL-01", basket_model_name: "Суцільний кошик", construction_type: "Суцільний · AVL-01" })).includes("кришка"));
+}
+
 async function run() {
+  testCoverRemovedIsVisible();
   testRemovableSidePanelMessage();
   testPartialTotalsAndColorFee();
   await testResilientSheetsWrite();

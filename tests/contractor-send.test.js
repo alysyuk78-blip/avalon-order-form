@@ -1582,6 +1582,138 @@ function testAuditFixes() {
   st = make([priced({ 13: 900 })]);
   sheetEdit(st, 14, 1, 1, 800);
   assert.deepEqual([st.raw.data[1][17], st.raw.data[1][19], st.raw.data[1][21]], [0.95, 1929, 2603], "0,95 м² × 2 030 = 1 929 ₴; × 1,35 = 2 603 ₴");
+
+  // 5. Правила власника від 07.10.2026: моделі AVL-06, 06/1, 08 і візерунок «Інший» — у таблиці
+  //    рахуються тією ж формулою, що в калькуляторі й картці.
+  const money3 = (tt) => [tt.raw.data[1][17], tt.raw.data[1][19], tt.raw.data[1][21]];
+  const sized = { size_w: 800, size_h: 600, size_d: 500, quantity: 1, product_kind: "Кошик", specs: "" };
+  // AVL-06: стінки 1,08 м² × 2 030 + 8 ламелей × 12 ₴ + кришка 0,4 м² × 1 920 = 3 056 ₴.
+  let nm = make([basket({ 9: "Сірий (RAL 7016)" })]);
+  nm.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, sized, { construction: "Суцільний · AVL-06 + кришка", basket_model: "Ламель з кришкою" }) });
+  assert.deepEqual(money3(nm), [1.48, 3056, 4126], "AVL-06 з кришкою");
+  // Кришку прибрали — мінус 768 ₴.
+  nm.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, sized, { construction: "Суцільний · AVL-06", basket_model: "Ламель з кришкою" }) });
+  assert.deepEqual(money3(nm), [1.08, 2288, 3089], "AVL-06 без кришки");
+  // AVL-06/1: ламельні всі три стінки — 24 ламелі.
+  nm.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, sized, { construction: "Суцільний · AVL-06/1 + кришка", basket_model: "Ламельний" }) });
+  assert.deepEqual(money3(nm), [1.48, 3248, 4385], "AVL-06/1 з кришкою");
+  // AVL-08: чотири стінки + кришка.
+  nm.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, sized, { construction: "Суцільний · AVL-08 + кришка", basket_model: "Горизонтальний монтаж" }) });
+  assert.deepEqual(money3(nm), [1.96, 3935, 5312], "AVL-08 з кришкою");
+  // Візерунок «Інший»: лише зміна візерунка — і ціна перераховується (+100 ₴/м²); назад — теж.
+  nm = make([basket({ 9: "Сірий (RAL 7016)", 10: "K1", 17: 0.9 })]);
+  nm.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { pattern: "Інший: дубове листя" }) });
+  assert.deepEqual(money3(nm), [0.9, 1917, 2588], "0,9 м² × (2 030 + 100)");
+  nm.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { pattern: "K2" }) });
+  assert.deepEqual(money3(nm), [0.9, 1827, 2466], "базовий візерунок — без надбавки");
+  nm.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { pattern: "K5" }) });
+  assert.deepEqual(money3(nm), [0.9, 1827, 2466], "заміна одного базового візерунка іншим суми не чіпає");
+  // Те саме правкою клітинки «Візерунок» прямо в таблиці.
+  nm = make([basket({ 9: "Сірий (RAL 7016)", 10: "Інший", 17: 0.9 })]);
+  sheetEdit(nm, 11, 1, 1, "K1");
+  assert.deepEqual(money3(nm), [0.9, 1917, 2588]);
+  nm.raw.data[1][10] = "K2";
+  sheetEdit(nm, 11, 1, 1, "Інший");
+  assert.deepEqual(money3(nm), [0.9, 1827, 2466]);
+  // Візерунок змінили вставкою діапазону (старі значення невідомі): перераховуються лише рядки,
+  // де суми пораховані формулою за протилежною ознакою «Інший»; своя ціна менеджера лишається.
+  nm = make([
+    basket({ 9: "Сірий (RAL 7016)", 10: "Інший", 17: 0.9 }),                              // був базовий (1 827) → став «Інший»
+    basket({ 9: "Сірий (RAL 7016)", 10: "Інший", 17: 0.9, 19: 3000, 21: 4500, 22: 1500 }), // своя ціна менеджера
+    basket({ 9: "Сірий (RAL 7016)", 10: "K2", 17: 0.9, 19: 1917, 21: 2588, 22: 671 }),     // був «Інший» (1 917) → став базовий
+    basket({ 9: "Сірий (RAL 7016)", 10: "K1", 17: 0.9 }),                                  // базовий і пораховано як базовий
+  ]);
+  nm.ctx.onEditDelivery({ range: { getSheet: () => Object.assign({ getName: () => "Замовлення" }, nm.sh), getRow: () => 2, getColumn: () => 10,
+    getNumRows: () => 4, getNumColumns: () => 2, getValue: () => "" } });
+  assert.deepEqual(nm.raw.data.slice(1).map((r) => [r[19], r[21]]), [[1917, 2588], [3000, 4500], [1827, 2466], [1827, 2466]]);
+
+  // Нове замовлення з кабінету: AVL-06/1 з кришкою, 50 шт — рівно за одиницю × кількість.
+  nm = make([orderRow("ORD-110926-002", "Нове")]);
+  nm.ctx.addDeliveryEvent = () => {};
+  nm.ctx.adminGetOrder_ = (d) => ({ status: "ok", order_number: d.order_number });
+  nm.ctx.appendOrderRow_ = (sh, row) => { const at = sh.getLastRow(); sh.insertRowsAfter(at, 1); sh.getRange(at + 1, 1, 1, row.length).setValues([row]); return at + 1; };
+  nm.ctx.adminCreateOrder_({ order: { client: "Петро", phone: "+380671234567", request_id: "req-lam", items: [
+    { product_type: "basket", basket_model: "AVL-06/1", basket_model_name: "Ламельний", construction_type: "Суцільний · AVL-06/1", has_cover: true,
+      color: "Сірий (RAL 7016)", size_w: 800, size_h: 600, size_d: 500, quantity: 50 }] } });
+  const lam = nm.raw.data[2];
+  assert.deepEqual([lam[8], lam[16], lam[19], lam[20], lam[21]], ["Суцільний · AVL-06/1 + кришка", 50, 162420, 4385, 219250], "3 248,40 × 50 і 4 385 × 50");
+  // Підряднику — рядки ламелей і надбавки за візерунок.
+  const pm = load({ Utilities: { formatDate: () => "07.10.2026, 12:00" }, Date, PropertiesService: { getScriptProperties: () => makeProps() } });
+  const lamMsg = pm.buildProductionMsg_({ order_number: ORD, items: [
+    { product_type: "basket", construction_type: "Суцільний · AVL-06 + кришка", basket_model: "AVL-06", pattern: "Інший", size_w: 800, size_h: 600, size_d: 500, quantity: 2, unit: "шт.", cost_total: 6233, revenue: 8414, profit: 2181 },
+  ] }, { finance: true }).replace(/<[^>]+>/g, "").replace(/\u00a0/g, " ");
+  ["1.08 м² × 2 030 ₴/м² × 2 шт. = 4 385 ₴", "Візерунок «Інший», надбавка: 0.6 м² × 100 ₴/м² × 2 шт. = 120 ₴", "Гнуття ламелей (8 шт × 12 ₴): 96 ₴ × 2 шт. = 192 ₴"]
+    .forEach((line) => assert.ok(lamMsg.includes(line), line + "\n---\n" + lamMsg));
+  assert.ok(!lamMsg.includes("БЕЗ кришки"), "кришка є (записана в конструкції)");
+  // Кришку з AVL-06 прибрали — підрядник бачить це прямо (модель зветься «…з кришкою»).
+  const noCoverMsg = pm.buildProductionMsg_({ order_number: ORD, items: [
+    { product_type: "basket", construction_type: "Суцільний · AVL-06", basket_model: "AVL-06", size_w: 800, size_h: 600, size_d: 500, quantity: 1, unit: "шт." },
+    { product_type: "basket", construction_type: "Суцільний · AVL-01", basket_model: "AVL-01", size_w: 800, size_h: 500, size_d: 500, quantity: 1, unit: "шт." },
+  ] }, {}).replace(/<[^>]+>/g, "");
+  assert.equal(noCoverMsg.split("БЕЗ кришки").length - 1, 1, "лише для моделі, де кришка типова; для AVL-01 рядка немає");
+
+  // 6. Доплата за колір зʼявляється, коли СТАЄ доречною, а не при будь-якій правці замовлення,
+  //    яке вже пораховане без неї (старе замовлення або менеджер доплату зняв).
+  const legacy = () => make([basket({}), orderRow("ORD-110926-002", "Нове")]);   // RAL 6005, з ціною, доплати немає
+  let cs = legacy();
+  cs.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 3 }) });
+  cs.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: { cost_total: 6000, list_price: 8000, discount_pct: 0, discount_uah: 0, revenue: 8000 } });
+  cs.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 3, color: "RAL 3000" }) });
+  assert.equal(surcharges(cs.raw).length, 0, "кількість, фінанси, інший небазовий колір — доплата сама не додається");
+  // Нова позиція небазового кольору в такому замовленні — теж ні.
+  const greenItem = (requestId) => ({ order_number: ORD, request_id: requestId, item: { product_type: "basket", basket_model: "AVL-01", basket_model_name: "Суцільний",
+    construction_type: "Суцільний · AVL-01", color: "RAL 6005", size_w: 800, size_h: 500, size_d: 500, quantity: 1 } });
+  cs.ctx.adminAddOrderItem_(greenItem("req-legacy-add"));
+  assert.equal(surcharges(cs.raw).length, 0);
+  // Колір став базовим, а потім знову небазовим — це вже нова ситуація: доплата зʼявляється.
+  cs = legacy();
+  cs.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { color: "Сірий (RAL 7016)" }) });
+  cs.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { color: "RAL 6005" }) });
+  assert.equal(surcharges(cs.raw).length, 1);
+  // Кошик небазового кольору ще без ціни: щойно менеджер її вписує — доплата додається.
+  cs = make([basket({ 19: "", 21: "", 22: "" })]);
+  cs.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 2 }) });
+  assert.equal(surcharges(cs.raw).length, 1, "формула порахувала позицію — доплата додалась разом із ціною");
+  // До замовлення з базовими кольорами додали кошик небазового — доплата додається.
+  cs = make([basket({ 9: "Сірий (RAL 7016)" })]);
+  cs.ctx.adminAddOrderItem_(greenItem("req-first-color"));
+  assert.equal(surcharges(cs.raw).length, 1);
+  // Менеджер у калькуляторі відмовився від доплати — вона не додається ні при створенні,
+  // ні при додаванні позиції, ні при збереженні розрахунку в позицію.
+  cs = make([basket({ 9: "Сірий (RAL 7016)" })]);
+  cs.ctx.adminAddOrderItem_(Object.assign(greenItem("req-waived-add"), { waive_color_surcharge: true }));
+  assert.deepEqual([surcharges(cs.raw).length, cs.props.getProperty("color_waived_" + ORD)], [0, "1"]);
+  cs = make([basket({ 19: "", 21: "", 22: "" })]);
+  cs.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 2, waive_color_surcharge: true }) });
+  assert.equal(surcharges(cs.raw).length, 0);
+  assert.equal(cs.raw.data[1].indexOf(true), -1, "службова позначка відмови в рядок не пишеться");
+  cs = make([orderRow("ORD-110926-002", "Нове")]);
+  cs.ctx.addDeliveryEvent = () => {};
+  cs.ctx.adminGetOrder_ = (d) => ({ status: "ok", order_number: d.order_number });
+  cs.ctx.appendOrderRow_ = (sh, row) => { const at = sh.getLastRow(); sh.insertRowsAfter(at, 1); sh.getRange(at + 1, 1, 1, row.length).setValues([row]); return at + 1; };
+  cs.ctx.adminCreateOrder_({ order: { client: "Петро", phone: "+380671234567", request_id: "req-waived-new", waive_color_surcharge: true, items: [greenItem("x").item] } });
+  assert.deepEqual([surcharges(cs.raw).length, cs.props.getProperty("color_waived_" + ORD)], [0, "1"]);
+  // Доплата в замовленні вже є, а менеджер зняв її в калькуляторі: рядок прибирається і не повертається.
+  cs = make([basket({})]);
+  cs.ctx.syncColorSurcharge_(cs.sh, ORD);
+  assert.equal(surcharges(cs.raw).length, 1);
+  cs.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: { cost_total: 1827, list_price: 2466, discount_pct: 0, discount_uah: 0, revenue: 2466, waive_color_surcharge: true } });
+  assert.deepEqual([surcharges(cs.raw).length, cs.raw.data.length], [0, 2], "доплату знято");
+  cs.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: Object.assign({}, same, { quantity: 2 }) });
+  assert.equal(surcharges(cs.raw).length, 0, "і за наступних правок вона не повертається");
+  // Змінену вручну доплату (ціна ≠ собівартість) відмова не чіпає — її веде менеджер.
+  cs = make([basket({})]);
+  cs.ctx.syncColorSurcharge_(cs.sh, ORD);
+  cs.raw.data[2][21] = 350;
+  cs.ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: { cost_total: 1827, list_price: 2466, discount_pct: 0, discount_uah: 0, revenue: 2466, waive_color_surcharge: true } });
+  assert.equal(surcharges(cs.raw).length, 1);
+  // Нова позиція з відмовою: доплата стояла над нею й зникла — номер рядка нової позиції правильний.
+  cs = make([basket({}), orderRow("ORD-110926-002", "Нове")]);
+  cs.ctx.syncColorSurcharge_(cs.sh, ORD);
+  cs.ctx.adminGetOrder_ = () => ({ status: "ok" });
+  const addedOut = cs.ctx.adminAddOrderItem_(Object.assign(greenItem("req-waive-existing"), { waive_color_surcharge: true }));
+  assert.equal(surcharges(cs.raw).length, 0);
+  assert.equal(cs.raw.data[addedOut.added_row - 1][44], "req-waive-existing", "added_row вказує на нову позицію після зсуву");
 }
 
 testMessageOptions();

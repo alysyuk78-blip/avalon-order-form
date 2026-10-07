@@ -586,15 +586,17 @@ function testSheetCommissionFormula() {
     }),
   };
   context.setCommissionFormulas_(sheet, 7);
-  // Зі ставкою в AT — % від валового прибутку (W); без неї — стара логіка дропшиперів.
+  // Y — усі комісії рядка: зі ставкою в AT — % від валового прибутку (W), ПЛЮС ставка партнера
+  // «за кошик» за кодом у «Джерелі». Замовлення може мати обидві (партнер + оплата на ТОВ).
   assert.ok(formulas[25].includes("N($AT7)>0"), "формула має дивитись на ставку в AT");
   assert.ok(formulas[25].includes("$W7*$AT7/100"), "комісія = валовий прибуток × ставка");
   assert.ok(formulas[25].includes("$W7>0"), "зі збиткової угоди комісії немає");
-  assert.ok(formulas[25].includes("VLOOKUP($D7;Дропшипери!$A:$E;5;0)"), "без ставки — як раніше");
   // Ставка партнера — «за кошик»: рядок-послуга (монтаж, доставка, доплата за колір) її не нараховує.
-  assert.ok(formulas[25].includes('IF($AP7="Послуга";0;$Q7*VLOOKUP('), formulas[25]);
+  assert.ok(formulas[25].includes('IF($AP7="Послуга";0;IFERROR($Q7*VLOOKUP($D7;Дропшипери!$A:$E;5;0);0))'), formulas[25]);
   assert.equal(formulas[25],
-    '=IFERROR(IF(N($AT7)>0;IF($W7>0;ROUND($W7*$AT7/100;2);0);IF($AP7="Послуга";0;$Q7*VLOOKUP($D7;Дропшипери!$A:$E;5;0)));0)');
+    '=IFERROR(IF(N($AT7)>0;IF($W7>0;ROUND($W7*$AT7/100;2);0);0);0)+IF($AP7="Послуга";0;IFERROR($Q7*VLOOKUP($D7;Дропшипери!$A:$E;5;0);0))');
+  // «Нараховано» партнерові — його ставка × продані кошики, а не сума колонки Y (там є й комісія ТОВ).
+  assert.equal(context.dropAccruedFormula_(), '=ARRAYFORMULA(IF(A2:A="";"";IFERROR(E2:E*F2:F;0)))');
   assert.ok(context.dropSoldFormula_().includes('Замовлення!AP:AP;"<>Послуга"'), "«Кошиків продано» не рахує послуги");
   // Підсумки партнера — окремо для кожного рядка (BYROW): SUMIFS у ARRAYFORMULA не розгортається
   // по рядках і давав усім партнерам цифри першого.
@@ -613,6 +615,30 @@ function testSheetCommissionFormula() {
   row[0] = "ORD-010126-001";
   row[45] = 30;
   assert.equal(context.mapOrderRow_(7, row).commission_pct, 30);
+
+  // Комісія з маржі (ТОВ) — окремо від ставки партнера, хоч у колонці Y вони сумою.
+  assert.equal(context.marginCommissionOf_(2895, 30), 868.5);
+  assert.equal(context.marginCommissionOf_(2895, 0), 0);
+  assert.equal(context.marginCommissionOf_(-500, 30), 0, "зі збиткової позиції комісії немає");
+  assert.equal(context.marginCommissionOf_(1000.33, 12.5), 125.04);
+  // Партнер + ТОВ: валовий 2 895, ставка 30 % → 868,50; партнерові 2 кошики × 150 = 300; у Y — 1 168,50.
+  row[16] = 2; row[21] = 8685; row[22] = 2895; row[24] = 1168.5; row[25] = 1726.5;
+  let both = context.mapOrderRow_(7, row);
+  assert.deepEqual([both.commission, both.margin_commission, both.partner_commission], [1168.5, 868.5, 300]);
+  // Лише ТОВ.
+  row[24] = 868.5;
+  both = context.mapOrderRow_(7, row);
+  assert.deepEqual([both.margin_commission, both.partner_commission], [868.5, 0]);
+  // Лише партнер (ставки в AT немає): уся Y — партнерська.
+  row[45] = ""; row[24] = 300;
+  both = context.mapOrderRow_(7, row);
+  assert.deepEqual([both.margin_commission, both.partner_commission], [0, 300]);
+  // Борг підрядника зменшує лише комісія з маржі.
+  const grouped = context.adminGroupOrders_([
+    Object.assign({}, both, { order_number: "ORD-1", status: "Виготовлення", commission_pct: 30, profit: 2895, revenue: 8685, commission: 1168.5, margin_commission: 868.5, partner_commission: 300 }),
+  ], []);
+  assert.deepEqual([grouped[0].commission, grouped[0].margin_commission, grouped[0].partner_commission, grouped[0].margin_due], [1168.5, 868.5, 300, 2026.5],
+    "до виплати від підрядника: 2 895 − 868,50; ставку партнера Avalon платить сама");
 }
 
 // Одноразове оновлення: формула Y лише в рядках-послугах, F2 «Дропшиперів» — лише стандартна стара.
@@ -666,6 +692,49 @@ function testCommissionFormulaMigration() {
   } finally { console.error = originalError; }
   // Власні формули власника лишаються як є.
   assert.deepEqual(run({ F2: "=SUM(Z:Z)", G2: "", H2: "=BYROW(A2:A;LAMBDA(c;SUMIFS(Замовлення!Y:Y;Замовлення!D:D;c)))" }).dropSet, {});
+
+  // Друге одноразове оновлення («партнер + ТОВ»): формула Y — у рядках зі ставкою в AT;
+  // «Нараховано» (H2) — зі стандартної суми колонки Y на «ставка × кошики».
+  const run3 = (h2, shown) => {
+    const props = {};
+    const set = {};
+    const dropSet = {};
+    const rates = [[""], [30], [0], ["30"], [""]];
+    const orders = {
+      getLastRow: () => 6, getMaxColumns: () => 50,
+      getRange: (row, column) => ({
+        getValues: () => rates,
+        setFormula(f) { (set[row] = set[row] || {})[column] = f; return this; },
+        setNumberFormat() { return this; },
+      }),
+    };
+    const drop = { getRange: (a1) => ({ getFormula: () => (a1 === "H2" ? h2 : ""), setFormula(f) { dropSet[a1] = f; return this; },
+      getDisplayValue: () => (shown && shown[a1]) || "300" }) };
+    const alerts = [];
+    const context = loadAppsScript({
+      PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] || null, setProperty: (k, v) => { props[k] = v; } }) },
+      SpreadsheetApp: { flush() {}, getActiveSpreadsheet: () => ({ getSheetByName: (name) => (name === "Дропшипери" ? drop : null) }) },
+    });
+    context.alertOwner_ = (m) => alerts.push(m);
+    context.ensureCommissionFormulaV3Once_(orders);
+    const first = { rows: Object.keys(set).map(Number), y: set[3] && set[3][25], dropSet: Object.assign({}, dropSet), flag: props.COMMISSION_FORMULA_V3_READY, alerts: alerts.length };
+    Object.keys(set).forEach((k) => delete set[k]); Object.keys(dropSet).forEach((k) => delete dropSet[k]);
+    context.ensureCommissionFormulaV3Once_(orders);
+    return Object.assign(first, { second: Object.keys(set).length + Object.keys(dropSet).length });
+  };
+  const V2_H2 = '=BYROW(A2:A;LAMBDA(partner;IF(partner="";"";SUMIFS(Замовлення!Y:Y;Замовлення!D:D;partner;Замовлення!C:C;"<>Скасовано"))))';
+  let m3 = run3(V2_H2);
+  assert.deepEqual(m3.rows, [3, 5], "формулу Y переставлено лише в рядках зі ставкою");
+  assert.ok(m3.y.includes('+IF($AP3="Послуга";0;IFERROR($Q3*VLOOKUP('), m3.y);
+  assert.deepEqual(m3.dropSet, { H2: '=ARRAYFORMULA(IF(A2:A="";"";IFERROR(E2:E*F2:F;0)))' });
+  assert.deepEqual([m3.flag, m3.second, m3.alerts], ["1", 0, 0]);
+  assert.deepEqual(Object.keys(run3(OLD.H2).dropSet), ["H2"], "стара стандартна формула — теж замінюється");
+  assert.deepEqual(run3("=SUM(Z:Z)").dropSet, {}, "власну формулу власника не чіпаємо");
+  console.error = () => {};
+  try {
+    m3 = run3(V2_H2, { H2: "#ERROR!" });
+    assert.deepEqual([m3.dropSet.H2, m3.flag, m3.alerts], [V2_H2, "rejected", 1], "таблиця не прийняла — повертаємо стару й сповіщаємо власника");
+  } finally { console.error = originalError; }
 }
 
 // Маржа після комісії буває з копійками (8 492,40), а платежі — цілі гривні: залишок 0,40 ₴
