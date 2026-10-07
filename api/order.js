@@ -304,6 +304,10 @@ function isRateLimited(ip) {
 // Telegram, поки клієнт не надішле заявку ще раз. Тому: кроки розділені, а вся спроба
 // повторюється з ТИМ САМИМ request_id — скрипт упізнає повтор і поверне той самий номер.
 const SHEETS_TIMING = { executeMs: 25000, resultMs: 12000, attempts: 3, budgetMs: 80000 };
+// Та сама заявка прийшла вдруге (той самий request_id): у таблиці вона вже була, дубля немає.
+// Чи дійшло перше сповіщення — невідомо (перша спроба могла обірватись до Telegram), тому
+// сповіщаємо ще раз і прямо кажемо, що це повтор, а не друге замовлення.
+const REPEAT_NOTE = "♻️ <b>Повторне сповіщення.</b> Ця заявка надійшла ще раз (клієнт натиснув удруге або відповідь до нього не дійшла). Замовлення одне — дубля в таблиці немає.\n\n";
 const REDIRECT_CODES = [301, 302, 303, 307, 308];
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -357,7 +361,9 @@ async function writeOrderToSheets(url, payload) {
         throw new Error(`Sheets HTTP ${first.res.status}`);
       }
       // Відповідь скрипта остаточна — і успіх, і відмова («Кількість мусить бути…»): не повторюємо.
-      if (data && typeof data === "object") return data;
+      // attempt — з якої нашої спроби вона прийшла (потрібно, щоб відрізнити повтор заявки
+      // клієнтом від нашого власного повтору в межах одного запиту).
+      if (data && typeof data === "object") return Object.assign(data, { attempt });
       lastError = new Error("Sheets: відповідь не дійшла");
     } catch (err) {
       lastError = err;
@@ -436,6 +442,7 @@ module.exports = async function handler(req, res) {
 
     // --- Google Sheets (першим: Apps Script присвоює послідовний № ORD-ДДММРР-NNN і повертає його) ---
     let orderNumber = null;
+    let repeatRequest = false;
     const requestId = (String(order.request_id || "").trim() || randomUUID()).slice(0, 120);
     try {
       // Сам файл візерунку таблиці не потрібен (йде власнику в Telegram) — лише його назва:
@@ -448,6 +455,9 @@ module.exports = async function handler(req, res) {
       }
       orderNumber = shData.order_number;
       results.push(shData.duplicate ? "gs:duplicate" : "gs:ok");
+      // «Уже записано» з першої ж нашої спроби — заявку записав попередній запит клієнта.
+      // Якщо ж так відповіла наша друга спроба, то записала перша — і це перше сповіщення.
+      repeatRequest = !!shData.duplicate && shData.attempt === 1;
     } catch (err) {
       console.error("Google Sheets error:", err);
       return res.status(502).json({
@@ -459,7 +469,7 @@ module.exports = async function handler(req, res) {
     // --- Telegram ---
     if (TG_TOKEN && TG_CHAT_ID) {
       try {
-        const text = formatTelegramMessage(orderWithNumber);
+        const text = (repeatRequest ? REPEAT_NOTE : "") + formatTelegramMessage(orderWithNumber);
         const tgRes = await fetchWithTimeout(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

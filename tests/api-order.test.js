@@ -126,9 +126,9 @@ async function testResilientSheetsWrite() {
 
     // 2. Перша спроба обірвалась, друга (той самий request_id) повернула номер як повтор.
     const posts = [];
-    let tg = 0;
+    let tg = 0, tgText = "";
     res = await submit(async (url, options) => {
-      if (String(url).includes("api.telegram.org")) { tg += 1; return okJson({ ok: true }); }
+      if (String(url).includes("api.telegram.org")) { tg += 1; tgText = JSON.parse(options.body).text; return okJson({ ok: true }); }
       posts.push(JSON.parse(options.body).request_id);
       if (posts.length === 1) throw Object.assign(new Error("aborted"), { name: "AbortError" });
       return okJson({ status: "ok", order_number: "ORD-010126-003", duplicate: true });
@@ -137,6 +137,17 @@ async function testResilientSheetsWrite() {
     assert.equal(res.body.order_number, "ORD-010126-003");
     assert.deepEqual(posts, ["order-request-1", "order-request-1"], "повтор — з тим самим ID запиту");
     assert.equal(tg, 1, "власник отримує одне сповіщення");
+    assert.ok(!tgText.includes("Повторне сповіщення"), "заявку записала наша ж перша спроба — це перше сповіщення, не повтор");
+
+    // 2а. Клієнт надіслав ту саму заявку вдруге (таблиця одразу каже «вже є»): сповіщаємо ще раз —
+    //     перше могло не дійти, — але з приміткою, що це повтор, а не друге замовлення.
+    res = await submit(async (url, options) => {
+      if (String(url).includes("api.telegram.org")) { tgText = JSON.parse(options.body).text; return okJson({ ok: true }); }
+      return okJson({ status: "ok", order_number: "ORD-010126-003", duplicate: true });
+    });
+    assert.equal(res.statusCode, 200);
+    assert.ok(tgText.startsWith("♻️ <b>Повторне сповіщення.</b>"), tgText.slice(0, 80));
+    assert.ok(tgText.includes("ORD-010126-003"));
 
     // 3. Результат першої спроби загубився (GET віддає 404) — повторюємо всю спробу.
     let postCount = 0;
