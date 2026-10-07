@@ -3288,6 +3288,7 @@ import pricing from '../../lib/avalon-pricing.js';
         ? calcPosition({
             construction: (form.construction_type || "") + (form.has_cover ? " + кришка" : ""),
             basket_model: model ? model.name + " " + model.id : form.basket_model, specs: form.specs,
+            pattern: form.pattern,   // візерунок «Інший» дає надбавку за м² — сервер порахує так само
             size_w: form.size_w, size_h: form.size_h, size_d: form.size_d, quantity: form.quantity,
             discount_pct: form.discount_pct, commission_pct: form.commission_pct,
           })
@@ -3478,7 +3479,8 @@ import pricing from '../../lib/avalon-pricing.js';
                 <input value={form.color} onChange={e => set("color", e.target.value)} placeholder="RAL 7016" /></div>
               {!isBracket && (
                 <div className="field"><label>Візерунок</label>
-                  <input value={form.pattern} onChange={e => set("pattern", e.target.value)} placeholder="K1 … K10" /></div>
+                  <input value={form.pattern} onChange={e => set("pattern", e.target.value)} placeholder="K1 … K10 або Інший" list="crm-patterns" />
+                  <datalist id="crm-patterns">{["K1", "K2", "K3", "K4", "K5", "K6", "K7", "K8", "K9", "K10", "Інший"].map(x => <option key={x} value={x} />)}</datalist></div>
               )}
               {isBracket && (
                 <div className="field"><label>Довжина кронштейнів</label>

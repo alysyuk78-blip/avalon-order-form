@@ -1079,6 +1079,15 @@ function onEditDelivery(e) {
     // Вставлений діапазон зачепив колонку, що завжди міняє ціну (конструкція, розміри,
     // кількість, модель) — перераховуємо, з якої б колонки він не починався (A:Q, G:Q…).
     var coversAlways = [9, 14, 15, 16, 17, 41].some(function (c) { return c >= col && c <= colEnd; });
+    // Вставлений діапазон зачепив «Візерунок» (K), а колонок, що завжди міняють ціну, — ні.
+    // Старі значення невідомі, тож перераховуємо лише рядки, де суми пораховані формулою за
+    // протилежною ознакою «Інший» (тобто візерунок щойно змінили); свої ціни менеджера не чіпаємо.
+    var isSingleCell = range.getNumRows() === 1 && range.getNumColumns() === 1;
+    if (!isSingleCell && !coversAlways && col <= 11 && colEnd >= 11) {
+      for (var pr = 0; pr < range.getNumRows(); pr++) {
+        if (patternFlipStale_(sh, range.getRow() + pr)) recalcRow_(sh, range.getRow() + pr, { wasSized: false });
+      }
+    }
     if (pricingStart || coversAlways) {
       var doRecalc = coversAlways;
       var single = range.getNumRows() === 1 && range.getNumColumns() === 1;
@@ -1225,6 +1234,28 @@ function setCommissionFormulas_(sheet, row) {
   );
   sheet.getRange(row, 26).setFormula("=IF(" + w + "=\"\";\"\";" + w + "-$Y" + row + ")");
   sheet.getRange(row, 25, 1, 2).setNumberFormat("#,##0 ₴");
+}
+
+/**
+ * Чи порахована позиція формулою за ІНШОЮ ознакою візерунка «Інший», ніж у рядку зараз:
+ * собівартість у T дорівнює формульній для протилежної ознаки, а для теперішньої — ні.
+ * Потрібно, коли «Візерунок» змінили вставкою діапазону (старі значення невідомі).
+ * Не кошик, індивідуальний розрахунок, без розмірів або без собівартості — завжди «ні».
+ */
+function patternFlipStale_(sh, row) {
+  if (row < 2) return false;
+  var v = sh.getRange(row, 1, 1, Math.min(sh.getMaxColumns(), COMMISSION_PCT_COL)).getValues()[0];
+  var kind = String(v[41] || "");
+  if (kind && kind.toLowerCase().indexOf("кошик") < 0) return false;
+  if (avalonIsIndividualPricing(v[7], v[10])) return false;
+  var item = { construction: v[8], model: v[40], specs: v[42], pattern: v[10], width: v[13], height: v[14], depth: v[15], quantity: v[16] };
+  if (!avalonItemSized(item)) return false;
+  var stored = cellNum_(v[19]) || 0;
+  if (!(stored > 0)) return false;
+  var now = avalonPriceItem(item, {}).costTotal;
+  item.pattern = avalonIsCustomPattern(v[10]) ? "" : "Інший";
+  var flipped = avalonPriceItem(item, {}).costTotal;
+  return Math.abs(stored - flipped) < 1 && Math.abs(stored - now) >= 1;
 }
 
 /**
