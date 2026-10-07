@@ -33,6 +33,7 @@ export {
   avalonMarkupFactor, avalonCostLines, avalonIsBaseColor, avalonColorSurcharge, AVALON_COLOR_SURCHARGE_NAME,
   avalonIsIndividualPricing, avalonIndividualReason, AVALON_COMPLEX_PATTERNS, avalonItemSized,
   avalonLamellaCount, avalonIsCustomPattern, AVALON_LAMELLA,
+  AVALON_RATE_FIELDS, avalonNormalizeRates, avalonRatesVersion, avalonRatesByKey,
 };
 `);
   console.log("калькулятор: src/lib/avalonPricing.mjs оновлено");

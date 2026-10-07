@@ -8,6 +8,7 @@ require(sheetsPath);
 require.cache[sheetsPath].exports = {
   callAdminSheets: async (action, payload) => {
     calls.push({ action, payload });
+    if (action === "rates_get") return { status: "ok", pricing: PRICING };
     return { status: "ok", action };
   },
   sendError: (res, err) => res.status(err.status || 500).json({ error: err.message }),
@@ -15,8 +16,22 @@ require.cache[sheetsPath].exports = {
 
 const authPath = require.resolve("../lib/admin-auth");
 require(authPath);
+// Ставки, як їх віддає Apps Script: з приміткою власника.
+const PRICING = {
+  versions: [{ from: "2026-11-01", rates: { solidRate: 2233, markupPct: 35 }, note: "лист підрядника", saved_at: "07.10.2026 12:00" }],
+  today: "2026-11-02", current_from: "2026-11-01",
+};
+let role = "owner";   // хто «увійшов»: owner | manager | "" (ніхто)
 require.cache[authPath].exports = {
-  requireAdmin: () => true,
+  requireAdmin: (req, res) => { if (role) return true; res.status(401).json({ error: "Unauthorized" }); return null; },
+  requireOwner: (req, res) => {
+    if (role === "owner") return true;
+    res.status(role ? 403 : 401).json({ error: role ? "Це може зробити лише власник" : "Unauthorized" });
+    return null;
+  },
+  roleOf: () => role,
+  managerLoginEnabled: () => true,
+  isAdmin: () => !!role,
   setAdminCors: () => {},
   handleOptions: (req, res) => res.status(204).end(),
 };
@@ -30,6 +45,7 @@ const withResource = (resource) => (req, res) =>
   order(Object.assign({}, req, { query: Object.assign({ resource }, req.query || {}) }), res);
 const files = withResource("files");
 const contractor = withResource("contractor");
+const rates = withResource("rates");
 
 // Vercel Hobby: не більше 12 серверних функцій на розгортання. 13-та ламає деплой
 // на «Deploying outputs» без тексту помилки — тож стежимо тут.
@@ -216,6 +232,75 @@ async function run() {
 
   r = await call(contractor, { method: "GET" });
   assert.equal(r.statusCode, 405);
+
+  // ── Ставки підрядника: /api/admin/order?resource=rates ──
+  // Без входу (калькулятор до входу в кабінет): числа й дати є, приміток власника немає.
+  role = "";
+  r = await call(rates, { method: "GET" });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.body, { status: "ok", pricing: {
+    versions: [{ from: "2026-11-01", rates: { solidRate: 2233, markupPct: 35 } }], today: "2026-11-02", current_from: "2026-11-01" } });
+  assert.equal(calls.pop().action, "rates_get");
+  // Потік запитів без входу з однієї адреси не доходить до Apps Script (квота Google не безмежна).
+  let limited = 0;
+  for (let i = 0; i < 60; i++) {
+    const hit = await call(rates, { method: "GET", headers: { "x-forwarded-for": "203.0.113.7" } });
+    if (hit.statusCode === 429) limited += 1; else calls.pop();
+  }
+  assert.equal(limited, 20, "40 запитів на хвилину проходять, решта — «спробуйте за хвилину»");
+  // Змінювати ставки без входу не можна — до Apps Script запит не доходить.
+  const before = calls.length;
+  r = await call(rates, { method: "POST", body: { from: "2026-12-01", rates: { solidRate: 2300 } } });
+  assert.equal(r.statusCode, 401);
+  r = await call(rates, { method: "DELETE", query: { from: "2026-11-01" } });
+  assert.equal(r.statusCode, 401);
+  assert.equal(calls.length, before);
+  // Менеджер ставки бачить (з примітками), але змінити не може — до Apps Script запит не доходить.
+  role = "manager";
+  r = await call(rates, { method: "GET" });
+  assert.equal(r.body.pricing.versions[0].note, "лист підрядника");
+  assert.deepEqual(r.body.access, { role: "manager", manager_login: true });
+  calls.pop();
+  r = await call(rates, { method: "POST", body: { from: "2026-12-01", rates: { solidRate: 2300 } } });
+  assert.equal(r.statusCode, 403);
+  r = await call(rates, { method: "DELETE", query: { from: "2026-11-01" } });
+  assert.equal(r.statusCode, 403);
+  assert.equal(calls.length, before);
+  // Власник: перегляд — з примітками; збереження — лише відомі ставки, дата РРРР-ММ-ДД.
+  role = "owner";
+  r = await call(rates, { method: "GET" });
+  assert.equal(r.body.pricing.versions[0].note, "лист підрядника");
+  assert.deepEqual(r.body.access, { role: "owner", manager_login: true });
+  calls.pop();
+  r = await call(rates, { method: "POST", body: { from: "01.12.2026", rates: { solidRate: 2300 } } });
+  assert.equal(r.statusCode, 400, "дата не у форматі РРРР-ММ-ДД");
+  assert.equal(calls.length, before);
+  r = await call(rates, { method: "POST", body: { from: "2026-12-01", note: "  метал подорожчав  ",
+    rates: { solidRate: " 2 300,5 ", sectionalRate: 2450, hack: 1, coverRate: { evil: 1 }, markupPct: "", lamellaBendPrice: NaN } } });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(calls.pop(), { action: "rates_save", payload: { rates_change: {
+    from: "2026-12-01", rates: { solidRate: "2 300,5", sectionalRate: 2450 }, note: "метал подорожчав" } } });
+  await call(rates, { method: "POST", body: { from: "2026-12-01", rates: { solidRate: 9999 }, confirm_large: "yes" } });
+  assert.equal(calls.pop().payload.rates_change.confirm_large, undefined, "підтвердження великої зміни — лише справжнє true");
+  await call(rates, { method: "POST", body: { from: "2026-12-01", rates: { solidRate: 9999 }, confirm_large: true } });
+  assert.equal(calls.pop().payload.rates_change.confirm_large, true);
+  r = await call(rates, { method: "DELETE", query: { from: "2026-12-01" } });
+  assert.deepEqual(calls.pop(), { action: "rates_delete", payload: { rates_change: { from: "2026-12-01" } } });
+  r = await call(rates, { method: "PATCH", body: { from: "2026-12-01" } });
+  assert.equal(r.statusCode, 405);
+  // Якими ставками клієнт порахував суми — доходить до Apps Script лише датою або "" (до першої зміни).
+  await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { revenue: 2713 }, priced_with_rates: "2026-11-01" } });
+  assert.deepEqual(calls.pop().payload, { order_number: ORD, row: 4, patch: { revenue: 2713 }, priced_with_rates: "2026-11-01" });
+  await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { revenue: 2466 }, priced_with_rates: "" } });
+  assert.equal(calls.pop().payload.priced_with_rates, "");
+  await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { revenue: 2466 }, priced_with_rates: "вчора" } });
+  assert.equal("priced_with_rates" in calls.pop().payload, false, "щось інше, ніж дата, не передаємо");
+  await call(order, { method: "POST", body: { action: "add_item", order_number: ORD, request_id: "r-1", item: { product_type: "basket", quantity: 1 }, priced_with_rates: "2026-11-01" } });
+  assert.equal(calls.pop().payload.priced_with_rates, "2026-11-01");
+  // Перерахунок замовлення за чинними ставками — дія картки.
+  r = await call(order, { method: "POST", body: { action: "reprice", order_number: " " + ORD + " " } });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(calls.pop(), { action: "order_reprice", payload: { order_number: ORD } });
 
   console.log("admin-files-api tests: OK");
 }

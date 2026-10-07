@@ -36,7 +36,8 @@ var CAL_KEY = "AVALON";
 // Дії кабінету, що ПИШУТЬ у таблицю — лише вони потребують блокування скрипта.
 var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "delete_order_item", "add_order_item", "upsert_partner",
   "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment",
-  "settlement_pdf", "settlement_send", "migrate_legacy_payments"];
+  "settlement_pdf", "settlement_send", "migrate_legacy_payments",
+  "rates_save", "rates_delete", "order_reprice"];
 
 function doPost(e) {
   // Тіло читаємо ДО блокування: кабінет робить кілька запитів паралельно, і якщо
@@ -74,7 +75,15 @@ function doPost(e) {
     // надішле замовлення підряднику (CRM або статус у таблиці). Так підрядник не бачить
     // попередніх/неопрацьованих запитів.
 
-    return jsonOut({ status: "ok", order_number: written.order_number, row: written.row, duplicate: !!written.duplicate });
+    // Ставки, якими пораховано заявку, — для сповіщення власнику (його складає сервер форми).
+    // Для повтору заявки (замовлення вже записане раніше) — ставки САМЕ цього замовлення, а не
+    // сьогоднішні: між першою спробою і повтором ставки могли змінитись.
+    var ratesOut = null;
+    try {
+      var ordersSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_ORDERS);
+      ratesOut = orderRatesForPricing_(ordersSheet, written.order_number, ordersSheet.getRange(written.row, 2).getValue()).rates;
+    } catch (ratesErr) { ratesOut = null; }
+    return jsonOut({ status: "ok", order_number: written.order_number, row: written.row, duplicate: !!written.duplicate, pricing_rates: ratesOut });
   } catch (error) {
     return jsonOut({ status: "error", message: error.toString() });
   } finally {
@@ -100,8 +109,27 @@ var AVALON_PRICING_DEFAULTS = {
   markupPct: 35,            // планова націнка, %
   colorSurcharge: 200,      // небазовий колір: доплата на ЗАМОВЛЕННЯ (не на виріб), ₴
   customPatternRate: 100,   // візерунок «Інший»: + до ставки за м² поверхонь із візерунком
-  lamellaBendPrice: 12      // AVL-06 і 06/1: гнуття однієї ламелі, ₴
+  lamellaBendPrice: 12,     // AVL-06 і 06/1: гнуття однієї ламелі, ₴
+  galvanizedSurcharge: 1400 // оцинкований метал: доплата до собівартості одного виробу, ₴
 };
+// Ставки називає підрядник, а власник вносить їх у кабінеті (екран «Ставки») разом із датою,
+// з якої вони діють. Перелік нижче — назви полів цього екрана, однакові в кабінеті,
+// калькуляторі й повідомленнях; числа вище — ставки, що діяли до першої зміни.
+// min — найменше допустиме значення (ставка за м² не може бути нульовою).
+var AVALON_RATE_FIELDS = [
+  { key: "solidRate", group: "area", label: "Стінки суцільні", unit: "₴/м²", min: 1 },
+  { key: "sectionalRate", group: "area", label: "Стінки розбірні", unit: "₴/м²", min: 1 },
+  { key: "coverRate", group: "area", label: "Кришка без візерунка", unit: "₴/м²", min: 1 },
+  { key: "coverPerfRate", group: "area", label: "Кришка з візерунком", unit: "₴/м²", min: 1 },
+  { key: "customPatternRate", group: "area", label: "Візерунок «Інший» — надбавка", unit: "₴/м²", min: 0 },
+  { key: "lamellaBendPrice", group: "unit", label: "Гнуття однієї ламелі (AVL-06, 06/1)", unit: "₴", min: 0 },
+  { key: "screenKitPrice", group: "unit", label: "Система кріплення екрана AVL-02", unit: "₴", min: 0 },
+  { key: "universalBracketPrice", group: "unit", label: "Кронштейни AVL-03 (еталон 1000×550×600)", unit: "₴", min: 0 },
+  { key: "galvanizedSurcharge", group: "unit", label: "Оцинкований метал — доплата за виріб", unit: "₴", min: 0 },
+  { key: "colorSurcharge", group: "unit", label: "Небазовий колір — доплата на замовлення", unit: "₴", min: 0 },
+  { key: "markupPct", group: "markup", label: "Націнка", unit: "%", min: 0, max: 500 }
+];
+var AVALON_RATE_MAX = 1000000;
 // Базові кольори (без доплати): сірий RAL 7016, чорний RAL 9005, білий RAL 9016.
 var AVALON_BASE_RAL = ["7016", "9005", "9016"];
 var AVALON_COLOR_SURCHARGE_NAME = "Доплата за колір";
@@ -137,6 +165,57 @@ function avalonSnap(value) { return Math.round(value * 1e6) / 1e6; }
 function avalonNum(value, fallback) {
   var n = Number(value);
   return isFinite(n) ? n : (fallback === undefined ? 0 : fallback);
+}
+
+/**
+ * Перевіряє й доповнює набір ставок. Пропущене (або порожнє) значення береться з base, а якщо
+ * й там немає — з типових. Число з комою («2 150,5») читається як звичайне. Повертає
+ * { rates: повний набір, errors: [«Стінки суцільні: …»] } — з помилками набір зберігати не можна.
+ */
+function avalonNormalizeRates(input, base) {
+  var src = input || {}, b = base || {}, rates = {}, errors = [];
+  for (var i = 0; i < AVALON_RATE_FIELDS.length; i++) {
+    var f = AVALON_RATE_FIELDS[i];
+    var fallback = avalonNum(b[f.key], AVALON_PRICING_DEFAULTS[f.key]);
+    var raw = src[f.key];
+    if (raw == null || String(raw).replace(/\s+/g, "") === "") { rates[f.key] = fallback; continue; }
+    var n = typeof raw === "number" ? raw : Number(String(raw).replace(/[\s\u00a0\u202f]/g, "").replace(",", "."));
+    var max = f.max == null ? AVALON_RATE_MAX : f.max;
+    if (!isFinite(n)) { errors.push(f.label + ": це не число"); rates[f.key] = fallback; continue; }
+    if (n < f.min) errors.push(f.label + ": не менше за " + f.min);
+    else if (n > max) errors.push(f.label + ": не більше за " + max);
+    rates[f.key] = Math.round(n * 100) / 100;
+  }
+  return { rates: rates, errors: errors };
+}
+
+/**
+ * Ставки, чинні на дату. versions — зміни ставок [{ from: "РРРР-ММ-ДД", rates: {…} }] у будь-якому
+ * порядку; dateIso — дата замовлення. До першої зміни (і коли дата невідома) діють типові —
+ * версія з from: "". Повертає { from, rates }, де rates — завжди повний набір.
+ */
+function avalonRatesVersion(versions, dateIso) {
+  var best = { from: "", rates: avalonNormalizeRates({}).rates };
+  var d = String(dateIso == null ? "" : dateIso).slice(0, 10);
+  var list = versions || [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return best;
+  for (var i = 0; i < list.length; i++) {
+    var from = list[i] ? String(list[i].from == null ? "" : list[i].from) : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) continue;
+    if (from <= d && from >= best.from) best = { from: from, rates: avalonNormalizeRates(list[i].rates).rates };
+  }
+  return best;
+}
+
+/** Версія ставок за її датою початку дії (from); "" — типові. Немає такої — null. */
+function avalonRatesByKey(versions, key) {
+  var k = String(key == null ? "" : key);
+  if (k === "") return { from: "", rates: avalonNormalizeRates({}).rates };
+  var list = versions || [];
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && String(list[i].from) === k) return { from: k, rates: avalonNormalizeRates(list[i].rates).rates };
+  }
+  return null;
 }
 
 /** Тип конструкції за текстом конструкції та назвою/кодом моделі (як вони лежать у замовленні). */
@@ -269,9 +348,9 @@ function avalonPrice(input, rates) {
   var blackBase = avalonSnap(wallsCost + removableSideCost + (topCoverCost + bottomCoverCost) + bracketsCost
     + lamellaCost + patternCost);
 
-  // Матеріал: оцинкований +1400 ₴, алюміній ×2 — до повної «чорної» бази.
+  // Матеріал: оцинкований — доплата за виріб (ставка), алюміній ×2 — до повної «чорної» бази.
   var material = input.material || "black_steel";
-  var materialAdjustment = material === "galvanized" ? 1400 : (material === "aluminium" ? blackBase : 0);
+  var materialAdjustment = material === "galvanized" ? rate("galvanizedSurcharge") : (material === "aluminium" ? blackBase : 0);
   var baseUnit = blackBase + materialAdjustment;
 
   // Націнка. З комісією з маржі — така, щоб після комісії лишалась планова націнка.
@@ -458,6 +537,320 @@ function pricingSignatureOfRow_(sh, row) {
     width: v[13], height: v[14], depth: v[15], quantity: v[16] });
 }
 
+// ===================== СТАВКИ ПІДРЯДНИКА =====================
+//
+// Ставки (₴ за м², за комплект, за ламель…) називає підрядник; власник вносить їх у кабінеті
+// на екрані «Ставки» разом із датою, з якої вони діють. Кожна зміна зберігається окремим
+// записом { from: "РРРР-ММ-ДД", rates: {повний набір}, note, saved_at } у властивостях скрипта
+// (PRICING_RATES_V1). До першої зміни діють типові ставки з єдиного алгоритму.
+//
+// Якими ставками рахується замовлення:
+//   1) тими, що діяли в день його створення (колонка B) — уже погоджена з клієнтом ціна не
+//      має мінятись від того, що ставки зросли пізніше;
+//   2) замовлення, яке ще НЕ має жодного порахованого кошика (лежало без розмірів), першу
+//      ціну отримує за чинними ставками — і лишається на них (властивість rates_<№>);
+//   3) власник може сам перевести замовлення на чинні ставки кнопкою «Перерахувати за
+//      чинними ставками» в картці (adminOrderReprice_).
+var PRICING_RATES_PROP = "PRICING_RATES_V1";
+var PRICING_RATES_CHUNK = 8000;   // властивість скрипта вміщує до 9 КБ
+var ORDER_RATES_PREFIX = "rates_";
+var pricingVersionsCache_ = null; // у межах одного виконання скрипта
+var orderRatesMemo_ = {};         // № замовлення → { from, rates, floating }
+
+/** Сьогодні за Києвом, РРРР-ММ-ДД. */
+function kyivToday_() {
+  try {
+    return toISODate(Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd")) || toISODate(new Date());
+  } catch (err) {
+    return toISODate(new Date());
+  }
+}
+function ratesUaDate_(iso) {
+  var m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? m[3] + "." + m[2] + "." + m[1] : String(iso || "");
+}
+function ratesAddDays_(iso, days) {
+  var m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return "";
+  var d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + days));
+  return d.getUTCFullYear() + "-" + ("0" + (d.getUTCMonth() + 1)).slice(-2) + "-" + ("0" + d.getUTCDate()).slice(-2);
+}
+
+/** Збережені зміни ставок, від найдавнішої: [{ from, rates, note, saved_at }]. */
+function pricingVersions_() {
+  if (pricingVersionsCache_) return pricingVersionsCache_;
+  var props = PropertiesService.getScriptProperties();
+  var raw = props.getProperty(PRICING_RATES_PROP);
+  var list = [];
+  if (raw) {
+    // Довгий перелік лежить частинами: «chunks:N» + PRICING_RATES_V1_1 … _N.
+    var parts = String(raw).match(/^chunks:(\d+)$/);
+    if (parts) {
+      raw = "";
+      for (var c = 1; c <= Number(parts[1]); c++) raw += String(props.getProperty(PRICING_RATES_PROP + "_" + c) || "");
+    }
+    var parsed = null;
+    try { parsed = JSON.parse(raw); } catch (err) { parsed = null; }
+    // Пошкоджений запис не замінюємо мовчки типовими ставками: ціни вийшли б хибними.
+    if (Object.prototype.toString.call(parsed) !== "[object Array]") {
+      throw new Error("Ставки пошкоджено — розрахунок зупинено, щоб не порахувати за хибними. Відкрийте «Ставки» в кабінеті або зверніться до розробника.");
+    }
+    for (var i = 0; i < parsed.length; i++) {
+      var v = parsed[i] || {};
+      var from = String(v.from || "");
+      var norm = avalonNormalizeRates(v.rates);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || norm.errors.length) {
+        throw new Error("Ставки пошкоджено (запис від «" + from + "») — розрахунок зупинено, щоб не порахувати за хибними.");
+      }
+      list.push({ from: from, rates: norm.rates, note: String(v.note || ""), saved_at: String(v.saved_at || "") });
+    }
+    list.sort(function (a, b) { return a.from < b.from ? -1 : (a.from > b.from ? 1 : 0); });
+  }
+  pricingVersionsCache_ = list;
+  return list;
+}
+function pricingVersionsSave_(list) {
+  var props = PropertiesService.getScriptProperties();
+  var text = JSON.stringify(list);
+  var old = String(props.getProperty(PRICING_RATES_PROP) || "").match(/^chunks:(\d+)$/);
+  var oldChunks = old ? Number(old[1]) : 0;
+  var chunks = 0;
+  if (text.length <= PRICING_RATES_CHUNK) {
+    props.setProperty(PRICING_RATES_PROP, text);
+  } else {
+    chunks = Math.ceil(text.length / PRICING_RATES_CHUNK);
+    for (var c = 1; c <= chunks; c++) {
+      props.setProperty(PRICING_RATES_PROP + "_" + c, text.substr((c - 1) * PRICING_RATES_CHUNK, PRICING_RATES_CHUNK));
+    }
+    props.setProperty(PRICING_RATES_PROP, "chunks:" + chunks);
+  }
+  for (var x = chunks + 1; x <= oldChunks; x++) props.deleteProperty(PRICING_RATES_PROP + "_" + x);
+  pricingVersionsCache_ = null;
+  orderRatesMemo_ = {};
+}
+/** Ставки, чинні сьогодні: { from, rates }. */
+function currentRates_() {
+  return avalonRatesVersion(pricingVersions_(), kyivToday_());
+}
+/** Дата створення замовлення (РРРР-ММ-ДД): колонка B, а якщо там порожньо — з номера ORD-ДДММРР-NNN. */
+function orderDateIso_(createdAt, orderNumber) {
+  var iso = toISODate(createdAt);
+  if (iso) return iso;
+  var m = String(orderNumber || "").match(/^ORD-(\d{2})(\d{2})(\d{2})-\d{3}$/);
+  return m ? "20" + m[3] + "-" + m[2] + "-" + m[1] : "";
+}
+/** Закріплені за замовленням ставки (значення властивості rates_<№>) → версія або null. */
+function orderRatesPinned_(stored, versions) {
+  if (stored == null || stored === "") return null;
+  return avalonRatesByKey(versions, stored === "base" ? "" : stored);
+}
+/** Чи має замовлення хоч один кошик із ціною. */
+function orderHasPricedBasket_(sh, orderNumber) {
+  var last = sh ? sh.getLastRow() : 0;
+  if (last < 2 || !orderNumber) return false;
+  var values = sh.getRange(2, 1, last - 1, Math.min(sh.getMaxColumns(), 42)).getValues();
+  for (var i = 0; i < values.length; i++) {
+    var v = values[i];
+    if (String(v[0] || "").trim() !== orderNumber) continue;
+    var kind = String(v[41] || "");
+    if (kind && kind.toLowerCase().indexOf("кошик") < 0) continue;
+    if ((cellNum_(v[21]) || 0) > 0) return true;
+  }
+  return false;
+}
+/**
+ * Ставки, якими рахуються позиції замовлення: { from, rates, floating }. Правила — в описі
+ * розділу. Сама нічого не записує: якщо замовлення вперше рахується за чинними ставками
+ * (floating), їх закріплює pinOrderRates_ — одразу після запису ціни.
+ */
+function orderRatesForPricing_(sh, orderNumber, createdAt) {
+  var num = String(orderNumber || "").trim();
+  if (num && orderRatesMemo_[num]) return orderRatesMemo_[num];
+  var versions = pricingVersions_();
+  var byDate = avalonRatesVersion(versions, orderDateIso_(createdAt, num));
+  var res = { from: byDate.from, rates: byDate.rates, floating: false };
+  if (versions.length && num) {
+    var pinned = orderRatesPinned_(PropertiesService.getScriptProperties().getProperty(ORDER_RATES_PREFIX + num), versions);
+    if (pinned) {
+      res = { from: pinned.from, rates: pinned.rates, floating: false };
+    } else {
+      var current = currentRates_();
+      if (current.from !== byDate.from && !orderHasPricedBasket_(sh, num)) {
+        res = { from: current.from, rates: current.rates, floating: true };
+      }
+    }
+  }
+  if (num) orderRatesMemo_[num] = res;
+  return res;
+}
+/** Після запису ціни: замовлення, вперше пораховане за чинними ставками, лишається на них. */
+function pinOrderRates_(orderNumber) {
+  var num = String(orderNumber || "").trim();
+  var m = num ? orderRatesMemo_[num] : null;
+  if (!m || !m.floating) return;
+  PropertiesService.getScriptProperties().setProperty(ORDER_RATES_PREFIX + num, m.from === "" ? "base" : m.from);
+  m.floating = false;
+}
+/**
+ * Калькулятор і кнопка «Застосувати розрахунок» рахують суми самі й кажуть, якими ставками:
+ * pricedWith — дата початку їх дії ("" — до першої зміни). Якщо замовлення рахується іншими
+ * (ставки змінили, поки сторінка була відкрита), суми не приймаємо — інакше в замовлення
+ * потрапила б ціна за застарілими ставками. Без pricedWith (ціну вписано вручну) не звіряємо.
+ */
+function assertPricedWithRates_(expectedFrom, pricedWith) {
+  if (pricedWith == null) return;
+  if (String(pricedWith) !== String(expectedFrom)) {
+    throw new Error("Ставки змінились, поки сторінка була відкрита. Оновіть сторінку — ціна перерахується — і збережіть ще раз.");
+  }
+}
+/** Ті самі правила для відповіді кабінету — без читання таблиці. Повертає дату початку дії ставок. */
+function orderRatesFromView_(orderNumber, createdAt, hasPriced, stored, versions, currentFrom) {
+  var pinned = orderRatesPinned_(stored, versions);
+  if (pinned) return pinned.from;
+  var byDate = avalonRatesVersion(versions, orderDateIso_(createdAt, orderNumber)).from;
+  return (!hasPriced && currentFrom !== byDate) ? currentFrom : byDate;
+}
+/** Ставки замовлення для повідомлень: за номером і датою з даних замовлення. */
+function orderRatesOfData_(data) {
+  var sh = null;
+  try { sh = adminOrdersSheet_(); } catch (err) { sh = null; }
+  return orderRatesForPricing_(sh, data && data.order_number, data && data.created_at).rates;
+}
+/** Ставки для кабінету й калькулятора: усі зміни, сьогоднішня дата, які чинні. */
+function pricingInfo_() {
+  var today = kyivToday_();
+  try {
+    var versions = pricingVersions_();
+    return { versions: versions, today: today, current_from: avalonRatesVersion(versions, today).from };
+  } catch (err) {
+    return { versions: [], today: today, current_from: "", error: String((err && err.message) || err) };
+  }
+}
+
+function adminRatesGet_() {
+  return { status: "ok", pricing: pricingInfo_() };
+}
+
+/**
+ * Нові ставки з дати початку дії. Дата — не раніше за останню зміну (та сама дата замінює
+ * останню: так виправляють помилку) і не раніше ніж 31 день тому: інакше вже пораховані
+ * замовлення масово «переїхали» б на інші ставки. Зміна будь-якої ставки понад 30 % або з нуля
+ * потребує підтвердження (confirm_large) — захист від зайвого нуля.
+ */
+function adminRatesSave_(data) {
+  var src = data.rates_change || data;
+  var fromRaw = String(src.from || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromRaw) || ratesAddDays_(fromRaw, 0) !== fromRaw) throw new Error("Вкажіть дату, з якої діють ставки");
+  var versions = pricingVersions_().slice();
+  var today = kyivToday_();
+  var last = versions.length ? versions[versions.length - 1] : null;
+  if (last && fromRaw < last.from) {
+    throw new Error("Уже є ставки від " + ratesUaDate_(last.from) + " — нові мають діяти з цієї дати або пізніше");
+  }
+  if (fromRaw < ratesAddDays_(today, -31)) throw new Error("Дата початку дії — не раніше ніж 31 день тому");
+  if (fromRaw > ratesAddDays_(today, 366)) throw new Error("Дата початку дії — не далі ніж на рік уперед");
+  var replacing = !!last && last.from === fromRaw;
+  // Попередні ставки — ті, що діяли ДО цієї зміни: з ними порівнюємо й ними доповнюємо пропуски.
+  var prevEntry = replacing ? (versions.length > 1 ? versions[versions.length - 2] : null) : last;
+  var prev = prevEntry ? prevEntry.rates : avalonNormalizeRates({}).rates;
+  var norm = avalonNormalizeRates(src.rates, prev);
+  if (norm.errors.length) throw new Error("Перевірте ставки — " + norm.errors.join("; "));
+  var changed = 0, large = [];
+  AVALON_RATE_FIELDS.forEach(function (f) {
+    var a = prev[f.key], b = norm.rates[f.key];
+    if (a === b) return;
+    changed++;
+    // «Велика» зміна — понад 30 % або з нуля (тут відсотка немає, а зайвий нуль так само можливий).
+    if (a > 0 ? Math.abs(b - a) / a > 0.3 : b > 0) large.push(f.label + ": " + a + " → " + b);
+  });
+  if (!changed) throw new Error("Ставки не відрізняються від попередніх — зберігати нічого");
+  if (large.length && !src.confirm_large) {
+    throw new Error("Велика зміна (понад 30 % або з нуля) — підтвердьте, що це не помилка. " + large.join("; "));
+  }
+  var entry = {
+    from: fromRaw, rates: norm.rates, note: String(src.note || "").trim().substring(0, 160),
+    saved_at: Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm")
+  };
+  if (replacing) versions[versions.length - 1] = entry; else versions.push(entry);
+  pricingVersionsSave_(versions);
+  return adminRatesGet_();
+}
+
+/** Скасувати ОСТАННЮ зміну ставок (помилилися). Давніші не видаляються: ними пораховані замовлення. */
+function adminRatesDelete_(data) {
+  var from = String((data.rates_change || data).from || "").trim();
+  var versions = pricingVersions_().slice();
+  var last = versions.length ? versions[versions.length - 1] : null;
+  if (!last) throw new Error("Змін ставок ще немає");
+  if (last.from !== from) throw new Error("Скасувати можна лише останню зміну — від " + ratesUaDate_(last.from));
+  versions.pop();
+  pricingVersionsSave_(versions);
+  return adminRatesGet_();
+}
+
+/**
+ * Перевести замовлення на чинні ставки й перерахувати його кошики. Перераховуються лише
+ * позиції, чиї суми досі дорівнюють формульним за попередніми ставками; ціну, яку менеджер
+ * вписав сам, не чіпаємо (kept_manual — скільки таких). Знижка % лишається. «Чиста» доплата
+ * за колір отримує нову суму.
+ */
+function adminOrderReprice_(data) {
+  var num = String(data.order_number || "").trim();
+  if (!num) throw new Error("order_number required");
+  var sh = adminOrdersSheet_();
+  var st = colorSurchargeState_(sh, num);
+  if (!st.rows.length) throw new Error("Замовлення не знайдено");
+  var status = canonStatus_(st.base[2]);
+  if (status === "Завершено" || status === "Скасовано") throw new Error("Замовлення «" + status + "» не перераховуємо");
+  var oldV = orderRatesForPricing_(sh, num, st.base[1]);
+  var cur = currentRates_();
+  if (oldV.from === cur.from) throw new Error("Замовлення вже рахується за чинними ставками");
+
+  var todo = [], manual = 0;
+  st.rows.forEach(function (r) {
+    var v = sh.getRange(r, 1, 1, ADMIN_ORDER_COLS).getValues()[0];
+    if (isColorSurchargeRow_(v)) return;
+    var kind = String(v[41] || "");
+    if (kind && kind.toLowerCase().indexOf("кошик") < 0) return;
+    var revenue = cellNum_(v[21]) || 0, cost = cellNum_(v[19]) || 0;
+    if (!(revenue > 0)) return;
+    var item = { construction: v[8], model: v[40], specs: v[42], pattern: v[10], width: v[13], height: v[14], depth: v[15], quantity: v[16] };
+    if (avalonIsIndividualPricing(v[7], v[10]) || !avalonItemSized(item)) { manual++; return; }
+    var oldList = cellNum_(v[34]) || 0, oldPct = cellNum_(v[35]) || 0, oldUah = cellNum_(v[36]) || 0;
+    var discountPct = oldPct > 0 ? oldPct : (oldList > 0 && oldUah > 0 ? Math.round(oldUah / oldList * 10000) / 100 : 0);
+    var was = avalonPriceItem(item, { discountPct: discountPct, commissionPct: cellNum_(v[COMMISSION_PCT_COL - 1]), rates: oldV.rates });
+    if (Math.abs(was.total - revenue) <= 1 && Math.abs(was.costTotal - cost) <= 1) todo.push(r); else manual++;
+  });
+
+  PropertiesService.getScriptProperties().setProperty(ORDER_RATES_PREFIX + num, cur.from === "" ? "base" : cur.from);
+  orderRatesMemo_[num] = { from: cur.from, rates: cur.rates, floating: false };
+  todo.forEach(function (r) { recalcRow_(sh, r, { wasSized: true }); });
+
+  // Доплата за колір — за новою ставкою. «Чисту» (собівартість = ціна = стара сума) оновлюємо;
+  // якщо нова ставка нульова — прибираємо (єдиний рядок замовлення не чіпаємо); якщо нульовою
+  // була стара — доплати ще немає, і її додає звичайне правило (небазовий колір, є ціна,
+  // менеджер від доплати не відмовлявся). Змінену вручну доплату не чіпаємо.
+  var oldFee = avalonNum(oldV.rates.colorSurcharge), newFee = avalonNum(cur.rates.colorSurcharge);
+  if (newFee !== oldFee) {
+    var clean = st.surcharges.filter(function (x) { return x.cost === oldFee && x.revenue === oldFee; });
+    if (newFee > 0) {
+      clean.forEach(function (x) {
+        applyFinanceToRow_(sh, x.row, { cost_total: newFee, list_price: newFee, discount_pct: 0, discount_uah: 0, revenue: newFee });
+      });
+      if (!st.surcharges.length) syncColorSurcharge_(sh, num, undefined, false);
+    } else if (st.rows.length > st.surcharges.length) {
+      // Знизу вгору, щоб номери рядків вище не зсувались.
+      clean.sort(function (a, b) { return b.row - a.row; }).forEach(function (x) { sh.deleteRow(x.row); });
+    }
+  }
+  try { syncOrderPaymentState_(num); } catch (syncErr) { /* не валимо перерахунок */ }
+  SpreadsheetApp.flush();
+  var out = adminGetOrder_({ order_number: num });
+  out.repriced = todo.length;
+  out.kept_manual = manual;
+  return out;
+}
+
 /**
  * Площа для колонки R — до сотих м², з «шкільним» округленням: 1,045 → 1,05.
  * (toFixed тут помилявся на половинках: 1.045 у двійковому поданні трохи менше за 1,045.)
@@ -554,7 +947,8 @@ function colorSurchargeState_(sh, orderNumber, ignoreRequestId) {
  * Дії кабінету знімають цю ознаку до своїх змін і передають у syncColorSurcharge_.
  */
 function colorSurchargeDue_(sh, orderNumber, ignoreRequestId) {
-  return avalonColorSurcharge(colorSurchargeState_(sh, orderNumber, ignoreRequestId).pricedColors) > 0;
+  var st = colorSurchargeState_(sh, orderNumber, ignoreRequestId);
+  return avalonColorSurcharge(st.pricedColors, orderRatesForPricing_(sh, orderNumber, st.base ? st.base[1] : "").rates) > 0;
 }
 
 function syncColorSurcharge_(sh, orderNumber, keepRow, dueBefore) {
@@ -566,9 +960,11 @@ function syncColorSurcharge_(sh, orderNumber, keepRow, dueBefore) {
 
   var props = PropertiesService.getScriptProperties();
   var waived = props.getProperty(colorWaivedKey_(orderNumber)) === "1";
+  // Сума доплати — зі ставок, якими рахується це замовлення.
+  var orderRates = orderRatesForPricing_(sh, orderNumber, base[1]).rates;
   // Небазових кольорів більше немає — відмова від доплати втрачає сенс: якщо колір знову
   // стане небазовим, це вже нова ситуація, і доплата зʼявиться знову.
-  if (waived && avalonColorSurcharge(allColors) === 0) { props.deleteProperty(colorWaivedKey_(orderNumber)); waived = false; }
+  if (waived && avalonColorSurcharge(allColors, orderRates) === 0) { props.deleteProperty(colorWaivedKey_(orderNumber)); waived = false; }
   // Від доплати відмовились (менеджер зняв її в калькуляторі), а її рядок ще є — прибираємо.
   // Лише «чисту» (собівартість = ціна): змінену вручну й єдиний рядок замовлення не чіпаємо.
   if (waived && surcharges.length && rows.length > surcharges.length) {
@@ -580,7 +976,7 @@ function syncColorSurcharge_(sh, orderNumber, keepRow, dueBefore) {
     }
     return dropped;
   }
-  var amount = avalonColorSurcharge(pricedColors);
+  var amount = avalonColorSurcharge(pricedColors, orderRates);
   // Доплата додається в ту мить, коли СТАЄ доречною (зʼявився перший порахований кошик
   // небазового кольору), а не щоразу, коли її просто немає. Інакше будь-яка правка
   // замовлення, порахованого ще без доплати (до появи цього правила або після того, як
@@ -608,7 +1004,7 @@ function syncColorSurcharge_(sh, orderNumber, keepRow, dueBefore) {
   }
   // Небазових кольорів не лишилось — прибираємо доплату. Лише «чисту» (собівартість = ціна):
   // змінену вручну, а також єдиний рядок замовлення не чіпаємо.
-  if (surcharges.length && avalonColorSurcharge(allColors) === 0 && rows.length > surcharges.length) {
+  if (surcharges.length && avalonColorSurcharge(allColors, orderRates) === 0 && rows.length > surcharges.length) {
     var removed = false;
     for (var k = surcharges.length - 1; k >= 0; k--) {
       if (surcharges[k].row === keepRow || surcharges[k].cost !== surcharges[k].revenue) continue;
@@ -680,8 +1076,6 @@ function writeOrderToSheet_(data) {
     // Ставка комісії партнера/ТОВ (% від маржі) — спільна для всіх позицій замовлення.
     var commissionPct = normalizeCommissionPct_(data.commission_pct);
 
-    // Множник «собівартість → ціна» за плановою націнкою (з комісією з маржі — більший).
-    var MARKUP = avalonMarkupFactor(commissionPct);
     var itemsIn = (Array.isArray(data.items) && data.items.length) ? data.items : [{
       basket_model: data.basket_model, basket_model_name: data.basket_model_name,
       unit: data.unit,
@@ -734,6 +1128,11 @@ function writeOrderToSheet_(data) {
       data.order_number = orderNumberValid_(reuseNumber) ? reuseNumber : nextOrderNumber();
     }
     var appendAfter = append ? Number(append.afterRow) : 0;
+    // Ставки замовлення: нове — чинні сьогодні; позиція до наявного — ті, якими воно рахується.
+    var orderRates = orderRatesForPricing_(sheet, data.order_number, append && append.base ? append.base[1] : dateStr);
+    var pricedBasket = false;
+    // Множник «собівартість → ціна» за плановою націнкою (з комісією з маржі — більший).
+    var MARKUP = avalonMarkupFactor(commissionPct, orderRates.rates.markupPct);
 
     itemsIn.forEach(function (it) {
       var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
@@ -747,7 +1146,7 @@ function writeOrderToSheet_(data) {
       var areaApplies = it.product_type !== "bracket" && it.product_type !== "other" && it.product_type !== "service";
       // Без повних розмірів (для кошика потрібна й глибина) формулу не застосовуємо.
       var calc = (areaApplies && avalonItemSized(pricingInput_(it)))
-        ? avalonPriceItem(pricingInput_(it), { commissionPct: commissionPct, discountPct: it.discount_pct })
+        ? avalonPriceItem(pricingInput_(it), { commissionPct: commissionPct, discountPct: it.discount_pct, rates: orderRates.rates })
         : null;
       var formulaPriced = false;
       if (calc) areaM2 = calc.area + calc.removableSideArea;
@@ -775,6 +1174,7 @@ function writeOrderToSheet_(data) {
         hasMoney = total > 0;
         formulaPriced = hasMoney;
       }
+      if (hasMoney && areaApplies) pricedBasket = true;
       var profit    = hasMoney ? total - costTotal : "";
       var costUnit  = costTotal ? Math.round(costTotal / qty) : "";
       var priceUnit = hasMoney ? Math.round(total / qty) : "";
@@ -891,6 +1291,7 @@ function writeOrderToSheet_(data) {
       // подію в календарі) — «готово» вона поставить сама через finishRequest_.
       if (requestId && !data._deferComplete) sheet.getRange(lastRow, 45).setValue(requestId);
     });
+  if (pricedBasket) pinOrderRates_(data.order_number);
   if (resumeRows.length) {
     return { order_number: data.order_number, row: resumeRows[0], rows: resumeRows.concat(writtenRows), completed: true };
   }
@@ -1252,9 +1653,10 @@ function patternFlipStale_(sh, row) {
   if (!avalonItemSized(item)) return false;
   var stored = cellNum_(v[19]) || 0;
   if (!(stored > 0)) return false;
-  var now = avalonPriceItem(item, {}).costTotal;
+  var rates = orderRatesForPricing_(sh, v[0], v[1]).rates;
+  var now = avalonPriceItem(item, { rates: rates }).costTotal;
   item.pattern = avalonIsCustomPattern(v[10]) ? "" : "Інший";
-  var flipped = avalonPriceItem(item, {}).costTotal;
+  var flipped = avalonPriceItem(item, { rates: rates }).costTotal;
   return Math.abs(stored - flipped) < 1 && Math.abs(stored - now) >= 1;
 }
 
@@ -1267,7 +1669,7 @@ function patternFlipStale_(sh, row) {
  *    скрипта, і такий рядок розмірів не втрачав. Виняток — колишній екран без бортів, який
  *    зробили кошиком: площа та сама, але собівартість екрана (з комплектом кріплення).
  */
-function areaFromOtherSizes_(v, w, h) {
+function areaFromOtherSizes_(v, w, h, rates) {
   var stored = cellNum_(v[17]) || 0;
   if (!(stored > 0)) return false;
   if (!(w > 0 && h > 0)) return true;
@@ -1278,7 +1680,7 @@ function areaFromOtherSizes_(v, w, h) {
   // Екран видає собівартість за одиницю: площа × ставка + комплект кріплення.
   var unitCost = cellNum_(v[18]) || 0;
   if (!(unitCost > 0)) return false;
-  var asScreen = avalonPriceItem({ construction: "AVL-02", model: "", specs: v[42], pattern: v[10], width: w, height: h, depth: 0, quantity: 1 }, {});
+  var asScreen = avalonPriceItem({ construction: "AVL-02", model: "", specs: v[42], pattern: v[10], width: w, height: h, depth: 0, quantity: 1 }, { rates: rates });
   return Math.abs(asScreen.costTotal - unitCost) <= 1;
 }
 
@@ -1307,7 +1709,8 @@ function recalcRow_(sh, row, opts) {
     // лишаємо. Позицію, що й раніше була без розмірів (ціну веде менеджер), не чіпаємо.
     // wasSized: true/false — попередній стан відомий точно (кабінет, одна клітинка таблиці);
     // null — невідомий (вставили чи стерли діапазон): тоді звіряємо площу з розмірами.
-    var lostSize = !!opts && (opts.wasSized === true || (opts.wasSized == null && areaFromOtherSizes_(v, w, h)));
+    var lostSize = !!opts && (opts.wasSized === true
+      || (opts.wasSized == null && areaFromOtherSizes_(v, w, h, orderRatesForPricing_(sh, v[0], v[1]).rates)));
     if (lostSize) {
       sh.getRange(row, 18, 1, 7).setValues([["", "", "", "", "", "", ""]]);
       sh.getRange(row, 35, 1, 3).setValues([["", cellNum_(v[35]) || "", ""]]);
@@ -1317,9 +1720,11 @@ function recalcRow_(sh, row, opts) {
   // Знижка клієнта лишається: відсоток із таблиці, а якщо записана лише сума — її частка в прайсі.
   var oldList = cellNum_(v[34]) || 0, oldPct = cellNum_(v[35]) || 0, oldUah = cellNum_(v[36]) || 0;
   var discountPct = oldPct > 0 ? oldPct : (oldList > 0 && oldUah > 0 ? Math.round(oldUah / oldList * 10000) / 100 : 0);
+  // Ставки — ті, якими рахується це замовлення (див. розділ «Ставки підрядника»).
+  var orderRates = orderRatesForPricing_(sh, v[0], v[1]);
   var p = avalonPriceItem(
     { construction: v[8], model: v[40], specs: v[42], pattern: v[10], width: w, height: h, depth: v[15], quantity: v[16] },
-    { discountPct: discountPct, commissionPct: cellNum_(v[COMMISSION_PCT_COL - 1]) }
+    { discountPct: discountPct, commissionPct: cellNum_(v[COMMISSION_PCT_COL - 1]), rates: orderRates.rates }
   );
   var margin = p.total ? Math.round((p.total - p.costTotal) / p.total * 1000) / 10 : "";
   // Один setValues на діапазон R..X — щоб не плодити зайвих спрацювань тригера.
@@ -1330,6 +1735,7 @@ function recalcRow_(sh, row, opts) {
   ]]);
   // Прайс до знижки, відсоток і сума знижки — ті самі, що покаже калькулятор.
   sh.getRange(row, 35, 1, 3).setValues([[p.listTotal, p.discountPct, p.discountAmount]]);
+  pinOrderRates_(v[0]);
 }
 
 function toISODate(v) {
@@ -1854,7 +2260,7 @@ function buildProductionMsg_(data, opts) {
     if (avalonIsIndividualPricing(it.basket_type, it.pattern)) return zero;
     var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
     if (!avalonItemSized(pricingInput_(it))) return zero;
-    var p = avalonPriceItem(pricingInput_(it));
+    var p = avalonPriceItem(pricingInput_(it), { rates: orderRatesOfData_(data) });
     var lines = avalonCostLines(p), sum = 0;
     lines.forEach(function (l) { sum += l.cost; });
     // Ціна рахується на розмірах, округлених угору до 10 мм, — показуємо їх, коли вони інші.
@@ -3797,6 +4203,11 @@ function handleAdminRequest_(data) {
     if (action === "contractor_send") return jsonOut(adminContractorSend_(data));
     if (action === "contractor_send_file") return jsonOut(adminContractorSendFile_(data));
     if (action === "add_payout") return jsonOut(adminAddPayout_(data.payout || data));
+    // Ставки підрядника: перегляд, зміна з дати, скасування останньої зміни, перерахунок замовлення.
+    if (action === "rates_get") return jsonOut(adminRatesGet_());
+    if (action === "rates_save") return jsonOut(adminRatesSave_(data));
+    if (action === "rates_delete") return jsonOut(adminRatesDelete_(data));
+    if (action === "order_reprice") return jsonOut(adminOrderReprice_(data));
     return jsonOut({ status: "error", message: "Unknown admin_action: " + action });
   } catch (err) {
     return jsonOut({ status: "error", message: String(err) });
@@ -3953,7 +4364,8 @@ function adminListOrders_(data) {
   return {
     status: "ok",
     orders: orders,
-    groups: adminGroupOrders_(orders, data && Array.isArray(data._payments) ? data._payments : readPayments_(""))
+    groups: adminGroupOrders_(orders, data && Array.isArray(data._payments) ? data._payments : readPayments_("")),
+    pricing: pricingInfo_()
   };
 }
 
@@ -3998,6 +4410,9 @@ function adminGroupOrders_(orders, payments) {
     }
     var g = byNum[o.order_number];
     g.items_count += 1;
+    // Чи є вже порахований кошик — від цього залежить, якими ставками рахується замовлення.
+    var kindOfItem = String(o.product_kind || "");
+    if ((!kindOfItem || kindOfItem.toLowerCase().indexOf("кошик") >= 0) && (Number(o.revenue) || 0) > 0) g.has_priced_basket = true;
     if (o.status !== "Скасовано") {
       g.quantity += Number(o.quantity) || 0;
       g.cost_total += Number(o.cost_total) || 0;
@@ -4024,8 +4439,12 @@ function adminGroupOrders_(orders, payments) {
   // Чи вже надсилали підряднику: thread_<ORD> ставиться при першому надсиланні.
   var sentProps = {};
   try { sentProps = PropertiesService.getScriptProperties().getProperties() || {}; } catch (propsErr) { sentProps = {}; }
+  var ratesInfo = pricingInfo_();
   var groups = Object.keys(byNum).map(function (k) {
     var g = byNum[k];
+    // Дата початку дії ставок, якими рахується замовлення ("" — ставки до першої зміни).
+    g.rates_from = orderRatesFromView_(k, g.created_at, !!g.has_priced_basket, sentProps[ORDER_RATES_PREFIX + k],
+      ratesInfo.versions, ratesInfo.current_from);
     g.contractor_sent = !!sentProps["thread_" + k];
     g.contractor_sent_at = sentProps["sent_" + k] || "";
     // Мета останнього надсилання: після «на опрацювання» наступне — «погоджено, у виробництво».
@@ -4079,6 +4498,7 @@ function adminGetOrder_(data) {
   var payTotals = paymentTotals_(pay);
   return {
     status: "ok", order: group, items: items,
+    pricing: pricingInfo_(),
     payments: pay,
     payment_summary: (function () {
       var rev = group ? (Number(group.revenue) || 0) : 0;
@@ -4117,6 +4537,7 @@ function adminBootstrap_(data) {
     status: "ok",
     orders: listed.orders,
     groups: listed.groups,
+    pricing: listed.pricing,
     expenses: expenses.expenses || [],
     payments: payments,
     payouts: payouts.payouts || []
@@ -4124,6 +4545,12 @@ function adminBootstrap_(data) {
 }
 
 function applyFinanceToRow_(sh, row, patch) {
+  // Перша ціна кошика (вписана вручну чи перенесена з калькулятора) закріплює за замовленням
+  // ставки, за якими її рахували, — так само, як перший розрахунок формулою.
+  var numOfRow = String(sh.getRange(row, 1).getValue() || "").trim();
+  var kindOfRow = String(sh.getRange(row, 42).getValue() || "");
+  var basketRow = !kindOfRow || kindOfRow.toLowerCase().indexOf("кошик") >= 0;
+  if (basketRow && numOfRow) orderRatesForPricing_(sh, numOfRow, sh.getRange(row, 2).getValue());
   var qty = Number(sh.getRange(row, 17).getValue()) || 1;
   var costTotal = patch.cost_total != null ? Math.round(Number(patch.cost_total)) : cellNum_(sh.getRange(row, 20).getValue());
   var listPrice = patch.list_price != null ? Math.round(Number(patch.list_price)) : cellNum_(sh.getRange(row, 35).getValue());
@@ -4175,6 +4602,7 @@ function applyFinanceToRow_(sh, row, patch) {
   // Комісія/чистий — завжди формули від свіжого валового прибутку. Заразом це
   // переводить старі рядки на нову формулу при першій же правці фінансів.
   setCommissionFormulas_(sh, row);
+  if (basketRow && revenue > 0) pinOrderRates_(numOfRow);
 }
 
 /**
@@ -4186,6 +4614,8 @@ function applyFinanceToRow_(sh, row, patch) {
  */
 function adminCreateOrder_(data) {
   var src = data.order || data;
+  // Нове замовлення рахується чинними ставками — калькулятор мав рахувати ними ж.
+  assertPricedWithRates_(currentRates_().from, src.priced_with_rates);
 
   var fullName = String(src.client || [src.first_name, src.last_name].filter(function (x) { return x; }).join(" ") || "").trim();
   if (!fullName) throw new Error("Вкажіть імʼя клієнта");
@@ -4328,6 +4758,7 @@ function adminAddOrderItem_(data) {
     }
     if (!rows.length) throw new Error("Order not found");
     var base = sh.getRange(rows[0], 1, 1, ADMIN_ORDER_COLS).getValues()[0];
+    assertPricedWithRates_(orderRatesForPricing_(sh, num, base[1]).from, data.priced_with_rates);
     // Чи була доплата за колір доречна ще ДО цієї позиції (замовлення вже пораховане без неї).
     var colorDueBefore = colorSurchargeDue_(sh, num, data.request_id);
     // Доплата за колір — одна на замовлення: якщо вона вже є (додана автоматично чи
@@ -4497,6 +4928,8 @@ function adminUpdateOrder_(data) {
   assertItemIdentity_(sh, row, data.expect);
   // Чи була доплата за колір доречна ще ДО цієї правки (замовлення вже пораховане без неї).
   var colorDueBefore = colorSurchargeDue_(sh, orderNumber);
+  // colorSurchargeDue_ щойно визначив ставки замовлення — звіряємо з тими, якими рахував клієнт.
+  assertPricedWithRates_(orderRatesForPricing_(sh, orderNumber, sh.getRange(row, 2).getValue()).from, data.priced_with_rates);
   var waiveColorSurcharge = !!patch.waive_color_surcharge;
   delete patch.waive_color_surcharge;
 

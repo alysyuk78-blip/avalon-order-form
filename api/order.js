@@ -22,7 +22,8 @@ const { avalonPriceItem, avalonCostLines, avalonIsIndividualPricing, avalonColor
 // Моделі, у яких верхня кришка типово є (AVL-06, 06/1, 07, 08): якщо її прибрали — пишемо це прямо.
 const COVER_TYPICAL_TYPES = ["lamella", "lamella_full", "closed", "four_sided"];
 
-function productionBreakdown(it) {
+// rates — ставки, якими таблиця порахувала цю заявку (приходять у відповіді скрипта).
+function productionBreakdown(it, rates) {
   const zero = { qty: 1, lines: [], sum: 0, total: 0, dims: "" };
   // Розкладка «м² × ₴/м²» чинна ЛИШЕ для кошиків. Кронштейни й довільні вироби
   // мають ціну від менеджера — рахувати їх за площею кошика означало б показати
@@ -41,7 +42,7 @@ function productionBreakdown(it) {
   };
   // Без повних розмірів (кошику потрібна й глибина) формула нічого не рахує.
   if (!avalonItemSized(input)) return zero;
-  const p = avalonPriceItem(input);
+  const p = avalonPriceItem(input, { rates });
   const lines = avalonCostLines(p);
   // Ціна рахується на розмірах, округлених угору до 10 мм, — показуємо їх, коли вони інші.
   const rounded = p.width !== w || p.height !== h || p.depth !== d;
@@ -161,7 +162,7 @@ function getCustomerContact(order) {
   return { method, label: labels[method], value: String(value || "").trim() };
 }
 
-function formatTelegramMessage(order) {
+function formatTelegramMessage(order, rates) {
   const e = (v) => escHtml(v);
   const num = (v) => Number(v || 0).toLocaleString("uk-UA");
   const contact = getCustomerContact(order);
@@ -234,17 +235,17 @@ function formatTelegramMessage(order) {
   // ── ФІНАНСИ (виробнича вартість + оплата) ──
   msg += `\n💰 <b>ФІНАНСИ</b>\n`;
   let grandCost = 0;
-  // Небазовий колір: +200 ₴ один раз на замовлення (лише коли є що рахувати за формулою).
+  // Небазовий колір: доплата один раз на замовлення (лише коли є що рахувати за формулою).
   const colorFee = avalonColorSurcharge(items
     .filter((it) => it.product_type !== "bracket" && it.product_type !== "other" && it.product_type !== "service")
     // Колір разом з уточненням — тим самим записом, що йде в таблицю («Інший: RAL 7016»):
     // інакше власнику показали б доплату, якої в замовленні не буде.
-    .map((it) => [it.color, it.color_custom].map((x) => String(x || "").trim()).filter(Boolean).join(": ")));
+    .map((it) => [it.color, it.color_custom].map((x) => String(x || "").trim()).filter(Boolean).join(": ")), rates);
   const colorFeeLine = `Доплата за небазовий колір (на замовлення): <b>${num(colorFee)} ₴</b>\n`;
   if (multi) {
     let pending = "";
     items.forEach((it, i) => {
-      const b = productionBreakdown(it), cost = Number(it.cost_total) || b.total;
+      const b = productionBreakdown(it, rates), cost = Number(it.cost_total) || b.total;
       const label = `${it.product_type === "bracket" ? "Кронштейни" : "Кошик"} ${i + 1}`;
       grandCost += cost;
       if (b.sum > 0) msg += costLines(b, `• ${label}`, "  ", false);
@@ -257,7 +258,7 @@ function formatTelegramMessage(order) {
     if (grandCost > 0) msg += pending;
     if (grandCost > 0) msg += `• <b>Разом виробнича${pending ? " (без позицій з індивідуальним прорахунком)" : ""}: ${num(grandCost)} ₴</b>\n`;
   } else {
-    const it = items[0], b = productionBreakdown(it), cost = Number(it.cost_total) || b.total;
+    const it = items[0], b = productionBreakdown(it, rates), cost = Number(it.cost_total) || b.total;
     grandCost = cost;
     if (b.sum > 0) msg += costLines(b, "• Кошик", "• ", true);
     if (cost > 0 && colorFee > 0) { msg += `• ${colorFeeLine}`; grandCost += colorFee; }
@@ -448,6 +449,7 @@ module.exports = async function handler(req, res) {
 
     // --- Google Sheets (першим: Apps Script присвоює послідовний № ORD-ДДММРР-NNN і повертає його) ---
     let orderNumber = null;
+    let pricingRates = null;
     let repeatRequest = false;
     const requestId = (String(order.request_id || "").trim() || randomUUID()).slice(0, 120);
     try {
@@ -460,6 +462,8 @@ module.exports = async function handler(req, res) {
         throw new Error(shData.message || "Sheets: заявку не записано");
       }
       orderNumber = shData.order_number;
+      // Ставки, якими таблиця порахувала заявку, — для розкладки в сповіщенні власнику.
+      if (shData.pricing_rates && typeof shData.pricing_rates === "object") pricingRates = shData.pricing_rates;
       results.push(shData.duplicate ? "gs:duplicate" : "gs:ok");
       // «Уже записано» з першої ж нашої спроби — заявку записав попередній запит клієнта.
       // Якщо ж так відповіла наша друга спроба, то записала перша — і це перше сповіщення.
@@ -475,7 +479,7 @@ module.exports = async function handler(req, res) {
     // --- Telegram ---
     if (TG_TOKEN && TG_CHAT_ID) {
       try {
-        const text = (repeatRequest ? REPEAT_NOTE : "") + formatTelegramMessage(orderWithNumber);
+        const text = (repeatRequest ? REPEAT_NOTE : "") + formatTelegramMessage(orderWithNumber, pricingRates);
         const tgRes = await fetchWithTimeout(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

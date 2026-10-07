@@ -574,6 +574,67 @@
     .pricing-check input { width: 16px; height: 16px; margin: 0; }
     .pricing-calc-link { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(0,0,0,.08); }
     .pricing-calc-link .margin-calc-note { margin-top: 6px; }
+    /* Якими ставками рахується замовлення (картка) */
+    .rates-note {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 8px;
+      font-size: 12px; line-height: 1.45; color: var(--muted);
+    }
+    .rates-note.old { padding: 8px 10px; border-radius: 8px; background: rgba(154,103,0,.10); color: var(--warn); font-weight: 650; }
+    .rates-note .btn { padding: 6px 10px; font-size: 12px; }
+    /* Екран «Ставки» */
+    .rates-view { max-width: 860px; }
+    .rates-lead { margin: 0 0 14px; font-size: 14px; line-height: 1.55; color: var(--muted); }
+    .rates-current, .rates-upcoming, .rates-form, .rates-summary {
+      margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: var(--control-bg);
+    }
+    .rates-upcoming { background: rgba(154,103,0,.10); }
+    .rates-form { background: rgba(143,115,64,.08); }
+    .rates-summary { margin-top: 12px; background: var(--panel); border: 1px solid rgba(0,0,0,.08); }
+    .rates-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px 28px; font-size: 13px; }
+    .rates-group-title { margin: 10px 0 6px; font-size: 12px; font-weight: 750; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); }
+    .rates-groups .rates-group-title { margin-top: 4px; }
+    .rates-was { color: var(--muted); font-weight: 500; margin-right: 4px; }
+    .rates-field-hint { margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+    .rates-field-error { margin-top: 3px; font-size: 11.5px; color: var(--danger); font-weight: 650; }
+    .rates-form input.rates-changed { box-shadow: inset 0 0 0 2px var(--accent); }
+    .rates-diff-line { font-size: 13px; line-height: 1.6; color: var(--ink); }
+    .rates-diff-line.large { color: var(--danger); font-weight: 700; }
+    .rates-confirm { margin-top: 10px; color: var(--danger); font-weight: 650; }
+    .rates-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .rates-access { margin: 12px 0 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+    .rates-access.warn { color: var(--warn); font-weight: 650; }
+    /* Інструкція для менеджера: розділ кабінету й спливні підказки «Як це зробити?» */
+    .guide-link {
+      display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 2px 8px;
+      border: 0; border-radius: 999px; background: rgba(143,115,64,.12); color: var(--accent);
+      font: inherit; font-size: 11.5px; font-weight: 700; letter-spacing: 0; text-transform: none;
+      cursor: pointer; vertical-align: middle; white-space: nowrap;
+    }
+    .guide-link:hover { background: rgba(143,115,64,.22); }
+    .drawer header .guide-link { margin: 8px 0 0; }
+    .guide-view { max-width: 860px; }
+    .guide-lead { margin: 0 0 12px; font-size: 14px; line-height: 1.55; color: var(--muted); }
+    .guide-toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; }
+    .guide-toc button {
+      border: 0; border-radius: 999px; padding: 7px 12px; background: var(--control-bg);
+      color: var(--ink); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer;
+    }
+    .guide-toc button:hover { background: rgba(143,115,64,.16); }
+    .guide-section { margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(0,0,0,.08); scroll-margin-top: calc(var(--app-header-height) + 12px); }
+    .guide-section h3 { margin: 0 0 4px; font-size: 17px; }
+    .guide-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .guide-steps li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; }
+    .guide-step-num {
+      width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+      background: var(--brand); color: #fff; font-size: 13px; font-weight: 750;
+    }
+    .guide-step-title { font-size: 14px; font-weight: 750; color: var(--ink); line-height: 1.35; padding-top: 3px; }
+    .guide-step-text { margin-top: 2px; font-size: 13.5px; line-height: 1.55; color: var(--muted); }
+    .guide-rules ul { margin: 6px 0 0; padding-left: 20px; font-size: 13.5px; line-height: 1.7; color: var(--ink); }
+    .guide-modal { width: min(640px, 100%); max-height: min(86vh, 900px); overflow: auto; text-align: left; }
+    .guide-modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+    .guide-modal-head h3 { margin: 0 0 4px; font-size: 18px; }
+    .guide-modal-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; }
 
     /* ── Файли замовлення ── */
     .files-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
