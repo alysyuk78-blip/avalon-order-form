@@ -1940,6 +1940,43 @@ function testContractorRates() {
   assert.throws(() => t12.ctx.adminAddOrderItem_({ order_number: OLD, request_id: "calc-stale", priced_with_rates: "2026-11-01",
     item: Object.assign({}, newItem, { cost_total: 2010, price_total: 2713 }) }), /Ставки змінились/);
   assert.equal(t12.raw.data.length, 3, "жодного рядка не додано");
+
+  // 13. Перерахунок, коли доплата за колір стає нульовою або перестає бути нульовою.
+  const zeroFee = JSON.stringify([{ from: "2026-11-01", rates: { solidRate: 2233, colorSurcharge: 0 } }]);
+  const t13 = make([
+    basket(OLD, { 9: "RAL 6005" }),
+    orderRow(OLD, "Нове", { 1: "07.10.2026 10:00", 16: 1, 19: 200, 21: 200, 22: 0, 40: "Доплата за колір", 41: "Послуга" }),
+  ], { PRICING_RATES_V1: zeroFee });
+  t13.ctx.adminOrderReprice_({ order_number: OLD });
+  assert.deepEqual(fee(t13.raw), [], "нова ставка доплати — 0: «чисту» доплату прибрано");
+  assert.deepEqual(money(t13.raw, 1), [2010, 2713]);
+  // Доплату, змінену менеджером (собівартість ≠ ціна), не чіпаємо.
+  const t13m = make([
+    basket(OLD, { 9: "RAL 6005" }),
+    orderRow(OLD, "Нове", { 1: "07.10.2026 10:00", 16: 1, 19: 150, 21: 300, 22: 150, 40: "Доплата за колір", 41: "Послуга" }),
+  ], { PRICING_RATES_V1: zeroFee });
+  t13m.ctx.adminOrderReprice_({ order_number: OLD });
+  assert.deepEqual(fee(t13m.raw), [300]);
+  // Навпаки: за попередніми ставками доплати не було (0), за чинними — 250: зʼявляється.
+  setToday("2026-12-02");
+  const fromZero = JSON.stringify([{ from: "2026-10-01", rates: { colorSurcharge: 0 } }, { from: "2026-12-01", rates: { colorSurcharge: 250 } }]);
+  const t13z = make([basket(OLD, { 9: "RAL 6005" })], { PRICING_RATES_V1: fromZero });
+  t13z.ctx.adminOrderReprice_({ order_number: OLD });
+  assert.deepEqual(fee(t13z.raw), [250]);
+  // …але не тоді, коли менеджер від доплати відмовився.
+  const t13w = make([basket(OLD, { 9: "RAL 6005" })], { PRICING_RATES_V1: fromZero, ["color_waived_" + OLD]: "1" });
+  t13w.ctx.adminOrderReprice_({ order_number: OLD });
+  assert.deepEqual(fee(t13w.raw), []);
+  setToday("2026-11-02");
+
+  // 14. Повтор заявки з сайту після зміни ставок: у відповіді — ставки САМОГО замовлення
+  //     (для сповіщення власникові), а не сьогоднішні.
+  const t14 = make([Object.assign(basket(OLD), { 44: "req-repeat" })], { PRICING_RATES_V1: RATES });
+  Object.assign(t14.ctx, { addDeliveryEvent: () => {}, jsonOut: (x) => x });
+  const again = t14.ctx.doPost({ postData: { contents: JSON.stringify({ first_name: "Тест", phone: "+380000000000", request_id: "req-repeat", items: [newItem] }) } });
+  assert.deepEqual([again.status, again.duplicate, again.order_number, again.pricing_rates.solidRate], ["ok", true, OLD, 2030]);
+  const fresh14 = t14.ctx.doPost({ postData: { contents: JSON.stringify({ first_name: "Тест", phone: "+380000000000", request_id: "req-new", items: [newItem] }) } });
+  assert.deepEqual([fresh14.duplicate, fresh14.pricing_rates.solidRate], [false, 2233]);
 }
 
 testMessageOptions();

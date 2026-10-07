@@ -76,8 +76,13 @@ function doPost(e) {
     // попередніх/неопрацьованих запитів.
 
     // Ставки, якими пораховано заявку, — для сповіщення власнику (його складає сервер форми).
+    // Для повтору заявки (замовлення вже записане раніше) — ставки САМЕ цього замовлення, а не
+    // сьогоднішні: між першою спробою і повтором ставки могли змінитись.
     var ratesOut = null;
-    try { ratesOut = (orderRatesMemo_[written.order_number] || currentRates_()).rates; } catch (ratesErr) { ratesOut = null; }
+    try {
+      var ordersSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_ORDERS);
+      ratesOut = orderRatesForPricing_(ordersSheet, written.order_number, ordersSheet.getRange(written.row, 2).getValue()).rates;
+    } catch (ratesErr) { ratesOut = null; }
     return jsonOut({ status: "ok", order_number: written.order_number, row: written.row, duplicate: !!written.duplicate, pricing_rates: ratesOut });
   } catch (error) {
     return jsonOut({ status: "error", message: error.toString() });
@@ -820,13 +825,22 @@ function adminOrderReprice_(data) {
   orderRatesMemo_[num] = { from: cur.from, rates: cur.rates, floating: false };
   todo.forEach(function (r) { recalcRow_(sh, r, { wasSized: true }); });
 
+  // Доплата за колір — за новою ставкою. «Чисту» (собівартість = ціна = стара сума) оновлюємо;
+  // якщо нова ставка нульова — прибираємо (єдиний рядок замовлення не чіпаємо); якщо нульовою
+  // була стара — доплати ще немає, і її додає звичайне правило (небазовий колір, є ціна,
+  // менеджер від доплати не відмовлявся). Змінену вручну доплату не чіпаємо.
   var oldFee = avalonNum(oldV.rates.colorSurcharge), newFee = avalonNum(cur.rates.colorSurcharge);
-  if (newFee > 0 && newFee !== oldFee) {
-    st.surcharges.forEach(function (x) {
-      if (x.cost === oldFee && x.revenue === oldFee) {
+  if (newFee !== oldFee) {
+    var clean = st.surcharges.filter(function (x) { return x.cost === oldFee && x.revenue === oldFee; });
+    if (newFee > 0) {
+      clean.forEach(function (x) {
         applyFinanceToRow_(sh, x.row, { cost_total: newFee, list_price: newFee, discount_pct: 0, discount_uah: 0, revenue: newFee });
-      }
-    });
+      });
+      if (!st.surcharges.length) syncColorSurcharge_(sh, num, undefined, false);
+    } else if (st.rows.length > st.surcharges.length) {
+      // Знизу вгору, щоб номери рядків вище не зсувались.
+      clean.sort(function (a, b) { return b.row - a.row; }).forEach(function (x) { sh.deleteRow(x.row); });
+    }
   }
   try { syncOrderPaymentState_(num); } catch (syncErr) { /* не валимо перерахунок */ }
   SpreadsheetApp.flush();
