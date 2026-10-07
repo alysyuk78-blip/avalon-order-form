@@ -234,6 +234,13 @@ async function run() {
   assert.deepEqual(r.body, { status: "ok", pricing: {
     versions: [{ from: "2026-11-01", rates: { solidRate: 2233, markupPct: 35 } }], today: "2026-11-02", current_from: "2026-11-01" } });
   assert.equal(calls.pop().action, "rates_get");
+  // Потік запитів без входу з однієї адреси не доходить до Apps Script (квота Google не безмежна).
+  let limited = 0;
+  for (let i = 0; i < 60; i++) {
+    const hit = await call(rates, { method: "GET", headers: { "x-forwarded-for": "203.0.113.7" } });
+    if (hit.statusCode === 429) limited += 1; else calls.pop();
+  }
+  assert.equal(limited, 20, "40 запитів на хвилину проходять, решта — «спробуйте за хвилину»");
   // Змінювати ставки без входу не можна — до Apps Script запит не доходить.
   const before = calls.length;
   r = await call(rates, { method: "POST", body: { from: "2026-12-01", rates: { solidRate: 2300 } } });
