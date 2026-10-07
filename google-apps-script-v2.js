@@ -480,6 +480,12 @@ function isColorSurchargeRow_(v) {
   return /послуг/i.test(String(v[41] || ""))
     && String(v[40] || "").replace(/^\s+/, "").toLowerCase().indexOf(AVALON_COLOR_SURCHARGE_NAME.toLowerCase()) === 0;
 }
+/** Чи це кошик моделі, у якої верхня кришка типово є: AVL-06, 06/1, 07, 08. */
+function coverTypicalFor_(it) {
+  if (!it || (it.product_type && it.product_type !== "basket")) return false;
+  var type = avalonModelType(it.construction_type, (it.basket_model_name || "") + " " + (it.basket_model || ""));
+  return ["lamella", "lamella_full", "closed", "four_sided"].indexOf(type) >= 0;
+}
 /** Те саме для позиції з форми/калькулятора/повідомлення. */
 function isColorSurchargeItem_(it) {
   return !!it && it.product_type === "service"
@@ -1901,6 +1907,9 @@ function buildProductionMsg_(data, opts) {
     }
     if (String(constrLine || "").trim()) m += "• Конструкція: <b>" + esc_(constrLine) + "</b>\n";
     if (it.has_cover) m += "• Верхня кришка: <b>Так</b>\n";
+    // У цих моделей кришка типово є (AVL-06 так і зветься «…з кришкою»). Якщо клієнт її
+    // прибрав — підрядник має бачити це прямо, а не здогадуватись із назви моделі.
+    else if (coverTypicalFor_(it) && String(it.construction_type || "").toLowerCase().indexOf("кришка") < 0) m += "• Верхня кришка: <b>БЕЗ кришки</b>\n";
     if (color) m += "• Колір: <b>" + color + "</b>\n";
     if (pattern) m += "• Візерунок: <b>" + pattern + "</b>\n";
     if (it.ac_brand || it.ac_model) m += "• Кондиціонер: <b>" + esc_([it.ac_brand, it.ac_model].filter(function (x) { return x; }).join(" ")) + "</b>\n";

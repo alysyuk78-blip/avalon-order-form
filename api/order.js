@@ -18,7 +18,9 @@ module.exports.config = config;
 // ВИРОБНИЧА ВАРТІСТЬ (для повідомлення власнику)
 // ============================================================
 // Рахує ТОЙ САМИЙ алгоритм, що й калькулятор, кабінет CRM і таблиця: lib/avalon-pricing.js.
-const { avalonPriceItem, avalonCostLines, avalonIsIndividualPricing, avalonColorSurcharge, avalonItemSized } = require("../lib/avalon-pricing");
+const { avalonPriceItem, avalonCostLines, avalonIsIndividualPricing, avalonColorSurcharge, avalonItemSized, avalonModelType } = require("../lib/avalon-pricing");
+// Моделі, у яких верхня кришка типово є (AVL-06, 06/1, 07, 08): якщо її прибрали — пишемо це прямо.
+const COVER_TYPICAL_TYPES = ["lamella", "lamella_full", "closed", "four_sided"];
 
 function productionBreakdown(it) {
   const zero = { qty: 1, lines: [], sum: 0, total: 0, dims: "" };
@@ -209,6 +211,10 @@ function formatTelegramMessage(order) {
     if (String(it.basket_type || "").trim()) msg += `• Тип: <b>${e(it.basket_type)}</b>\n`;
     if (String(it.construction_type || "").trim()) msg += `• Конструкція: <b>${e(it.construction_type)}</b>\n`;
     if (it.has_cover) msg += `• Верхня кришка: <b>Так</b>\n`;
+    else if (!/кришка/i.test(String(it.construction_type || ""))
+      && COVER_TYPICAL_TYPES.includes(avalonModelType(it.construction_type, `${it.basket_model_name || ""} ${it.basket_model || ""}`))) {
+      msg += `• Верхня кришка: <b>БЕЗ кришки</b>\n`;
+    }
     if (color) msg += `• Колір: <b>${color}</b>\n`;
     if (pattern) msg += `• Візерунок: <b>${pattern}</b>\n`;
     if (it.bracket_model_from || it.bracket_model_to) msg += `• Потужність кондиціонера: <b>${e(it.bracket_model_from)} — ${e(it.bracket_model_to)}</b>\n`;

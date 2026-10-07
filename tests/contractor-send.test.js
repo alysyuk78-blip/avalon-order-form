@@ -1632,6 +1632,13 @@ function testAuditFixes() {
   ] }, { finance: true }).replace(/<[^>]+>/g, "").replace(/\u00a0/g, " ");
   ["1.08 м² × 2 030 ₴/м² × 2 шт. = 4 385 ₴", "Візерунок «Інший», надбавка: 0.6 м² × 100 ₴/м² × 2 шт. = 120 ₴", "Гнуття ламелей (8 шт × 12 ₴): 96 ₴ × 2 шт. = 192 ₴"]
     .forEach((line) => assert.ok(lamMsg.includes(line), line + "\n---\n" + lamMsg));
+  assert.ok(!lamMsg.includes("БЕЗ кришки"), "кришка є (записана в конструкції)");
+  // Кришку з AVL-06 прибрали — підрядник бачить це прямо (модель зветься «…з кришкою»).
+  const noCoverMsg = pm.buildProductionMsg_({ order_number: ORD, items: [
+    { product_type: "basket", construction_type: "Суцільний · AVL-06", basket_model: "AVL-06", size_w: 800, size_h: 600, size_d: 500, quantity: 1, unit: "шт." },
+    { product_type: "basket", construction_type: "Суцільний · AVL-01", basket_model: "AVL-01", size_w: 800, size_h: 500, size_d: 500, quantity: 1, unit: "шт." },
+  ] }, {}).replace(/<[^>]+>/g, "");
+  assert.equal(noCoverMsg.split("БЕЗ кришки").length - 1, 1, "лише для моделі, де кришка типова; для AVL-01 рядка немає");
 
   // 6. Доплата за колір зʼявляється, коли СТАЄ доречною, а не при будь-якій правці замовлення,
   //    яке вже пораховане без неї (старе замовлення або менеджер доплату зняв).
