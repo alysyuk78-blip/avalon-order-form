@@ -16,7 +16,7 @@ function coreOf(file) {
 
 // Змінив формулу — онови всі копії (npm run sync:pricing) і цю суму. Та сама сума стоїть у
 // тесті калькулятора (test/avalonPricing.test.mjs): розбіжність = алгоритми розʼїхались.
-const CORE_SHA256 = "97beb50560a73f21961a800498ef3b08b63bcdb31722d5bbec1cea411c2f3fd0";
+const CORE_SHA256 = "53f1d0b07a5462b516d26906d33750e1a00f2990af151c298cdce42ba63ba970";
 
 function testCopiesAreIdentical() {
   const root = path.join(__dirname, "..");

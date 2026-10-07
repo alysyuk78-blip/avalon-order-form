@@ -76,7 +76,15 @@ function testPaymentMetrics() {
 
 function loadAppsScript(extra) {
   const code = fs.readFileSync(path.join(__dirname, "..", "google-apps-script-v2.js"), "utf8");
-  const context = vm.createContext(Object.assign({ console }, extra || {}));
+  // Властивості скрипта є завжди (зі ставками підрядника чи без) — типово порожні.
+  const store = {};
+  const props = {
+    getProperty: (k) => (k in store ? store[k] : null),
+    setProperty: (k, v) => { store[k] = String(v); },
+    deleteProperty: (k) => { delete store[k]; },
+    getProperties: () => Object.assign({}, store),
+  };
+  const context = vm.createContext(Object.assign({ console, PropertiesService: { getScriptProperties: () => props } }, extra || {}));
   vm.runInContext(code, context);
   return context;
 }
