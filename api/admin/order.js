@@ -70,6 +70,8 @@ module.exports = async function handler(req, res) {
           order_number: String(orderNumber).trim(),
           item,
           request_id: String(body.request_id || "").trim().slice(0, 120),
+          // Менеджер у калькуляторі відмовився від доплати за колір для цього замовлення.
+          ...(body.waive_color_surcharge === true ? { waive_color_surcharge: true } : {}),
         });
         return res.status(200).json(data);
       }

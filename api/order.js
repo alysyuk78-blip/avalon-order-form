@@ -35,7 +35,7 @@ function productionBreakdown(it) {
   const name = String(it.basket_model_name || "").trim(), code = String(it.basket_model || "").trim();
   const input = {
     construction, model: name && code && name !== code ? `${name} ${code}` : (name || code),
-    specs: it.specs, width: w, height: h, depth: d, quantity: it.quantity,
+    specs: it.specs, pattern: it.pattern, width: w, height: h, depth: d, quantity: it.quantity,
   };
   // Без повних розмірів (кошику потрібна й глибина) формула нічого не рахує.
   if (!avalonItemSized(input)) return zero;

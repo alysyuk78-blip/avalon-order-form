@@ -73,7 +73,7 @@ import pricing from '../../lib/avalon-pricing.js';
       { id: "AVL-04", name: "Зі знімною боковиною", construction: "Суцільний" },
       { id: "AVL-05", name: "Розбірний", construction: "Розбірний (з 3-х частин)" },
       { id: "AVL-06", name: "Ламель з кришкою", construction: "Суцільний", defaultCover: true },
-      { id: "AVL-06/1", name: "Ламельний", construction: "Суцільний" },
+      { id: "AVL-06/1", name: "Ламельний", construction: "Суцільний", defaultCover: true },
       { id: "AVL-07", name: "Закритий на підставці", construction: "Суцільний", defaultCover: true },
       { id: "AVL-08", name: "Горизонтальний монтаж", construction: "Суцільний", defaultCover: true },
       { id: "AVL-K-01", name: "Кронштейни декоративні (компл.)", construction: "Комплект кронштейнів", bracket: true },
@@ -2059,6 +2059,8 @@ import pricing from '../../lib/avalon-pricing.js';
     const PRICING_TYPE_LABELS = {
       solid: "суцільний", screen: "екран під утеплювач", universal: "універсальний",
       sectional_frame: "зі знімною боковиною", sectional: "розбірний", closed: "закритий на підставці",
+      lamella: "ламельний (лицьова — ламелі)", lamella_full: "ламельний (усі стінки — ламелі)",
+      four_sided: "горизонтальний монтаж (4 стінки)",
     };
     // Калькулятор під адресою кабінету. З картки відкривається з позицією: вона завантажується
     // в калькулятор, а розрахунок зберігається назад у неї.
@@ -2075,7 +2077,7 @@ import pricing from '../../lib/avalon-pricing.js';
       return list > 0 && uah > 0 ? Math.round(uah / list * 10000) / 100 : 0;
     }
     function calcPosition(form) {
-      const input = { construction: form.construction, model: form.basket_model, specs: form.specs,
+      const input = { construction: form.construction, model: form.basket_model, specs: form.specs, pattern: form.pattern,
         width: form.size_w, height: form.size_h, depth: form.size_d, quantity: form.quantity };
       // Кошику потрібні всі три розміри (екрану — ширина й висота): без глибини формула
       // порахувала б одну лицеву стінку.
@@ -2093,8 +2095,8 @@ import pricing from '../../lib/avalon-pricing.js';
         const next = pricing.applyOptionsToText(form.construction, form.specs, { ...opts, ...patch }, type);
         setForm(f => ({ ...f, construction: next.construction, specs: next.specs }));
       };
-      const code = ((form.construction || "") + " " + (form.basket_model || "")).toUpperCase().match(/AVL-\d{2}(?:\/\d)?/);
-      const notInCalculator = !!code && ["AVL-06", "AVL-06/1", "AVL-08"].includes(code[0]);
+      const code = ((form.construction || "") + " " + (form.basket_model || "")).toUpperCase().match(/AVL-\d{2}(?:[\/-]\d(?!\d))?/);
+      const customPattern = pricing.avalonIsCustomPattern(form.pattern);
       // Чи вже збережені в позиції рівно ці числа й ці вхідні дані.
       const num = v => Number(v) || 0;
       // Тип і візерунок теж тут: від них залежить, чи позиція рахується формулою взагалі.
@@ -2125,7 +2127,11 @@ import pricing from '../../lib/avalon-pricing.js';
           )}
           <p className="margin-calc-note" style={{ marginTop: 0 }}>
             Модель: <b>{(code ? code[0] + " · " : "") + PRICING_TYPE_LABELS[type]}</b>
-            {notInCalculator ? " — цієї моделі немає в калькуляторі: рахується за загальною формулою (стінки " + (type === "sectional" ? "розбірного" : "суцільного") + " кошика, кришка — якщо є); перевірте суму." : ""}
+            {type === "lamella" ? " Бокові стінки — з візерунком, лицьова — ламельна: до ставки стінки додається гнуття кожної ламелі." : ""}
+            {type === "lamella_full" ? " Ламельні всі три стінки: до ставки стінки додається гнуття кожної ламелі." : ""}
+            {type === "four_sided" ? " Чотири стінки: дві лицьові й дві бокові." : ""}
+            {["lamella", "lamella_full", "four_sided"].includes(type) ? " Виконання — у полі «Конструкція»: суцільне рахується за " + money(calc ? calc.solidRate : 2030) + "/м², розбірне — за ставкою розбірного." : ""}
+            {customPattern ? " Візерунок «Інший»: +" + money(pricing.AVALON_PRICING_DEFAULTS.customPatternRate) + " до ставки за м² поверхонь із візерунком." : ""}
             {type === "screen" ? " Висота — вже з рамкою (+40 мм), глибина — борти екрана." : ""}
           </p>
           <div className="grid2">
@@ -2225,7 +2231,7 @@ import pricing from '../../lib/avalon-pricing.js';
           )}
           {/* Калькулятор бере позицію такою, як вона ЗБЕРЕЖЕНА: якщо збережена рахується
               індивідуально, формульна ціна калькулятора затерла б суми менеджера. */}
-          {!notInCalculator && !individual && !pricing.avalonIsIndividualPricing(saved.basket_type, saved.pattern) && saved.row ? (
+          {!individual && !pricing.avalonIsIndividualPricing(saved.basket_type, saved.pattern) && saved.row ? (
             <div className="pricing-calc-link">
               <button className="btn secondary" type="button" disabled={disabled || !launchReady}
                 onClick={() => window.location.assign(calcUrlFor(orderNumber, saved.row))}>
@@ -2721,8 +2727,11 @@ import pricing from '../../lib/avalon-pricing.js';
       // Без ставки в AT комісія лишається старою — за ставкою дропшипера з таблиці.
       const currentItem = items[itemIdx] || {};
       const dropCommission = Number(currentItem.commission) || 0;
+      // Разом із комісією з маржі (ТОВ) позиція може мати ще й ставку партнера за джерелом:
+      // клієнт прийшов за посиланням партнера і платить на ТОВ. Її Avalon платить партнерові сама.
+      const partnerCommission = hasCommission ? (Number(currentItem.partner_commission) || 0) : 0;
       const shownCommission = hasCommission ? breakdown.commission : dropCommission;
-      const shownNet = breakdown.grossMargin - (breakdown.loss ? 0 : shownCommission);
+      const shownNet = breakdown.grossMargin - (breakdown.loss ? 0 : shownCommission) - partnerCommission;
       // Ціль НЕ підставляємо самі. Будь-яке автоматичне значення бралося б із поточної
       // маржі, тож після підняття ціни воно росло б разом із нею і кабінет пропонував би
       // підняти ціну ще раз, і ще раз. Скільки хочеться чистими — знає лише менеджер.
@@ -2732,7 +2741,8 @@ import pricing from '../../lib/avalon-pricing.js';
         ? finance.requiredPriceForNetMargin({
             cost: Number(form.cost_total) || 0,
             price: Number(form.revenue) || 0,
-            targetNetMargin: targetNet,
+            // Ставку партнера теж треба покрити, щоб чистими лишилась саме ціль.
+            targetNetMargin: targetNet + partnerCommission,
             commissionPct: commissionPctInput,
           })
         : null;
@@ -3102,6 +3112,12 @@ import pricing from '../../lib/avalon-pricing.js';
                   : (dropCommission ? " (ставка за джерелом)" : "")}</span>
                 <b>{shownCommission > 0 ? "− " : ""}{money2(shownCommission)}</b>
               </div>
+              {partnerCommission > 0 && (
+                <div className="margin-net-row">
+                  <span>Комісія партнера (ставка за джерелом)</span>
+                  <b>− {money2(partnerCommission)}</b>
+                </div>
+              )}
               <div className="margin-net-row margin-net-main">
                 <span>Маржа чиста</span>
                 <b>{money2(shownNet)}</b>
