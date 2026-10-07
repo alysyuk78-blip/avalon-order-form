@@ -514,6 +514,16 @@ import pricing from '../../lib/avalon-pricing.js';
         return "";
       }
     }
+    // Хто увійшов: власник чи менеджер (вхід за окремим паролем менеджера). Лише для того, що
+    // показувати; самі права перевіряє сервер. Вхід без ролі чи нерозбірливий — власник.
+    function tokenRole(token) {
+      try {
+        const body = String(token || "").split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
+        return JSON.parse(atob(body)).role === "manager" ? "manager" : "owner";
+      } catch (_) {
+        return "owner";
+      }
+    }
     function saveToken(token, remember) {
       try {
         clearToken();
@@ -4931,7 +4941,23 @@ import pricing from '../../lib/avalon-pricing.js';
           ["Якщо помилились", "«Історія змін» → «Скасувати зміну» (скасовується лише остання). Або збережіть правильні числа з тією самою датою — вони замінять помилкові."],
         ],
       },
+      {
+        id: "access",
+        title: "Вхід для менеджера",
+        lead: "Для власника. Менеджер працює в кабінеті під своїм паролем: приймає й веде замовлення, ставки бачить, але змінити їх не може. Свій пароль менеджерові не давайте — з ним можна змінювати ставки.",
+        steps: [
+          ["Придумайте окремий пароль для менеджера", "Не коротший за 8 символів і не такий, як ваш."],
+          ["Відкрийте налаштування сайту у Vercel", "vercel.com → проєкт «avalon-order-form» → Settings → Environment Variables."],
+          ["Додайте пароль менеджера", "Name: MANAGER_PASSWORD. Value: пароль менеджера. Environment: Production. Натисніть Save."],
+          ["Перевипустіть сайт", "Розділ Deployments → найновіший запис → три крапки → Redeploy. Без цього новий пароль не почне діяти. Можна попросити про це розробника."],
+          ["Перевірте", "У кабінеті, в розділі «Ставки», має зʼявитись напис «Окремий вхід менеджера налаштовано»."],
+          ["Передайте пароль менеджерові", "Він входить у кабінет цим паролем. Кнопок «Змінити ставки» і «Скасувати зміну» в нього немає, а сервер не прийме зміну ставок від нього за жодних умов."],
+          ["Щоб забрати доступ", "Змініть або видаліть MANAGER_PASSWORD у Vercel і знову натисніть Redeploy — усі входи менеджера одразу перестануть діяти. Ваш вхід лишиться."],
+        ],
+      },
     ];
+    // Розділи лише для власника — менеджерові їх не показуємо.
+    const GUIDE_OWNER_ONLY = ["rates", "access"];
     const GUIDE_RULES = [
       "Ціну кошика рахує формула. Змінити її можна лише знижкою у полі «Знижка %» — не вписуйте іншу ціну руками.",
       "Розміри — у міліметрах і лише готового кошика: ширина, висота, глибина.",
@@ -5001,12 +5027,13 @@ import pricing from '../../lib/avalon-pricing.js';
         document.body
       );
     }
-    function GuideView({ focus }) {
+    function GuideView({ focus, role }) {
       useEffect(() => {
         if (!focus) return;
         const el = document.getElementById("guide-" + focus);
         if (el) el.scrollIntoView({ block: "start" });
       }, [focus]);
+      const sections = GUIDE_SECTIONS.filter(sec => role !== "manager" || !GUIDE_OWNER_ONLY.includes(sec.id));
       return (
         <div className="panel guide-view">
           <h2>Інструкція для менеджера</h2>
@@ -5015,14 +5042,14 @@ import pricing from '../../lib/avalon-pricing.js';
             Кнопка «Як це зробити?» у картці замовлення показує потрібний розділ цієї інструкції на місці.
           </p>
           <nav className="guide-toc" aria-label="Зміст">
-            {GUIDE_SECTIONS.map(sec => (
+            {sections.map(sec => (
               <button type="button" key={sec.id}
                 onClick={() => { const el = document.getElementById("guide-" + sec.id); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }}>
                 {sec.title}
               </button>
             ))}
           </nav>
-          {GUIDE_SECTIONS.map(sec => (
+          {sections.map(sec => (
             <section className="guide-section" id={"guide-" + sec.id} key={sec.id}>
               <h3>{sec.title}</h3>
               <p className="guide-lead">{sec.lead}</p>
@@ -5079,10 +5106,15 @@ import pricing from '../../lib/avalon-pricing.js';
       const [busy, setBusy] = useState(false);
       const [form, setForm] = useState(null);   // null — форма закрита
       const [loaded, setLoaded] = useState(false);
+      // Хто увійшов і чи налаштовано окремий вхід менеджера — каже сервер; до його відповіді — з входу.
+      const [access, setAccess] = useState({ role: tokenRole(token), manager_login: null });
+      const isOwner = access.role !== "manager";
 
       useEffect(() => {
         // Свіжі ставки з таблиці — щойно екран відкрили.
-        api("/api/admin/order?resource=rates", { token }).then(() => setLoaded(true)).catch(e => { setError(e.message); setLoaded(true); });
+        api("/api/admin/order?resource=rates", { token })
+          .then(data => { if (data && data.access) setAccess(data.access); setLoaded(true); })
+          .catch(e => { setError(e.message); setLoaded(true); });
       }, [token]);
 
       const defaults = pricing.avalonRatesByKey([], "").rates;
@@ -5181,7 +5213,7 @@ import pricing from '../../lib/avalon-pricing.js';
 
       return (
         <div className="panel rates-view">
-          <h2>Ставки підрядника <GuideLink section="rates" /></h2>
+          <h2>Ставки підрядника {isOwner && <GuideLink section="rates" />}</h2>
           <p className="rates-lead">
             Ставки називає підрядник. Ви вносите їх тут один раз — і ними рахують калькулятор, кабінет і таблиця.
             Нові ставки діють для замовлень, створених від обраної дати. Замовлення, пораховані раніше, лишаються
@@ -5208,9 +5240,23 @@ import pricing from '../../lib/avalon-pricing.js';
                   {v.note && <p className="margin-calc-note">Примітка: {v.note}</p>}
                 </div>
               ))}
-              <button className="btn" type="button" disabled={busy || !loaded || !!info.error} onClick={openForm}>
-                {last && last.from > today ? "Виправити заплановані ставки" : "Змінити ставки"}
-              </button>
+              {isOwner ? (
+                <>
+                  <button className="btn" type="button" disabled={busy || !loaded || !!info.error} onClick={openForm}>
+                    {last && last.from > today ? "Виправити заплановані ставки" : "Змінити ставки"}
+                  </button>
+                  {access.manager_login != null && (
+                    <p className={"rates-access" + (access.manager_login ? "" : " warn")}>
+                      {access.manager_login
+                        ? "Окремий вхід менеджера налаштовано: менеджер бачить ставки, але змінити їх не може."
+                        : "Окремого входу менеджера ще немає. Не давайте менеджерові свій пароль — з ним можна змінювати ставки."}
+                      <GuideLink section="access" label="Як дати доступ менеджерові" />
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="rates-access">Змінювати ставки може лише власник. Ви бачите їх, щоб розуміти розрахунок.</p>
+              )}
             </>
           )}
 
@@ -5304,7 +5350,7 @@ import pricing from '../../lib/avalon-pricing.js';
                         <td>{changes.length ? changes.map(d => <div key={d.field.key}>{diffText(d)}</div>) : "—"}</td>
                         <td>{v.note || "—"}</td>
                         <td>{v.saved_at || "—"}</td>
-                        <td>{i === 0 && <button className="btn secondary" type="button" disabled={busy} style={{ padding: "4px 8px" }} onClick={removeLast}>Скасувати зміну</button>}</td>
+                        <td>{i === 0 && isOwner && <button className="btn secondary" type="button" disabled={busy} style={{ padding: "4px 8px" }} onClick={removeLast}>Скасувати зміну</button>}</td>
                       </tr>
                     );
                   })}
@@ -5952,7 +5998,7 @@ import pricing from '../../lib/avalon-pricing.js';
             {tab === "rates" && (
               <RatesView token={token} onSaved={() => { const r = refreshData({ direct: true }); if (r && r.catch) r.catch(() => {}); }} />
             )}
-            {tab === "guide" && <GuideView focus={guideFocus} />}
+            {tab === "guide" && <GuideView focus={guideFocus} role={tokenRole(token)} />}
           </main>
           {selectedOrder && (
             <OrderDrawer

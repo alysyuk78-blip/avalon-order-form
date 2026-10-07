@@ -1,4 +1,4 @@
-const { checkPassword, issueToken, setAdminCors, handleOptions, TOKEN_TTL_MS, REMEMBER_TTL_MS } = require("../../lib/admin-auth");
+const { roleForPassword, issueToken, setAdminCors, handleOptions, TOKEN_TTL_MS, REMEMBER_TTL_MS } = require("../../lib/admin-auth");
 
 const loginAttempts = new Map();
 const MAX_ATTEMPTS = 5;
@@ -47,7 +47,9 @@ module.exports = async function handler(req, res) {
   if (isRateLimited(key)) {
     return res.status(429).json({ error: "Забагато спроб. Спробуйте через 15 хвилин." });
   }
-  if (!checkPassword(password)) {
+  // Пароль власника чи менеджера (MANAGER_PASSWORD — якщо власник його задав).
+  const role = roleForPassword(password);
+  if (!role) {
     recordFailedAttempt(key);
     return res.status(401).json({ error: "Невірний пароль" });
   }
@@ -56,12 +58,12 @@ module.exports = async function handler(req, res) {
 
   // «Запамʼятати вхід» — довгий токен (30 днів) для власного компʼютера.
   const remember = !!(req.body && req.body.remember);
-  const token = issueToken(remember);
+  const token = issueToken(remember, role);
   const maxAge = Math.round((remember ? REMEMBER_TTL_MS : TOKEN_TTL_MS) / 1000);
   const secure = process.env.NODE_ENV === "production" || process.env.VERCEL ? "; Secure" : "";
   res.setHeader(
     "Set-Cookie",
     `avalon_admin=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`
   );
-  return res.status(200).json({ ok: true, token, expires_in: maxAge, remember });
+  return res.status(200).json({ ok: true, token, expires_in: maxAge, remember, role });
 };

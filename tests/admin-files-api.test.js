@@ -21,10 +21,17 @@ const PRICING = {
   versions: [{ from: "2026-11-01", rates: { solidRate: 2233, markupPct: 35 }, note: "лист підрядника", saved_at: "07.10.2026 12:00" }],
   today: "2026-11-02", current_from: "2026-11-01",
 };
-let signedIn = true;   // чи запит «із входом» — для того, що видно й без нього
+let role = "owner";   // хто «увійшов»: owner | manager | "" (ніхто)
 require.cache[authPath].exports = {
-  requireAdmin: (req, res) => { if (signedIn) return true; res.status(401).json({ error: "Unauthorized" }); return null; },
-  isAdmin: () => signedIn,
+  requireAdmin: (req, res) => { if (role) return true; res.status(401).json({ error: "Unauthorized" }); return null; },
+  requireOwner: (req, res) => {
+    if (role === "owner") return true;
+    res.status(role ? 403 : 401).json({ error: role ? "Це може зробити лише власник" : "Unauthorized" });
+    return null;
+  },
+  roleOf: () => role,
+  managerLoginEnabled: () => true,
+  isAdmin: () => !!role,
   setAdminCors: () => {},
   handleOptions: (req, res) => res.status(204).end(),
 };
@@ -228,7 +235,7 @@ async function run() {
 
   // ── Ставки підрядника: /api/admin/order?resource=rates ──
   // Без входу (калькулятор до входу в кабінет): числа й дати є, приміток власника немає.
-  signedIn = false;
+  role = "";
   r = await call(rates, { method: "GET" });
   assert.equal(r.statusCode, 200);
   assert.deepEqual(r.body, { status: "ok", pricing: {
@@ -248,10 +255,22 @@ async function run() {
   r = await call(rates, { method: "DELETE", query: { from: "2026-11-01" } });
   assert.equal(r.statusCode, 401);
   assert.equal(calls.length, before);
-  // Із входом: перегляд — з примітками; збереження — лише відомі ставки, дата РРРР-ММ-ДД.
-  signedIn = true;
+  // Менеджер ставки бачить (з примітками), але змінити не може — до Apps Script запит не доходить.
+  role = "manager";
   r = await call(rates, { method: "GET" });
   assert.equal(r.body.pricing.versions[0].note, "лист підрядника");
+  assert.deepEqual(r.body.access, { role: "manager", manager_login: true });
+  calls.pop();
+  r = await call(rates, { method: "POST", body: { from: "2026-12-01", rates: { solidRate: 2300 } } });
+  assert.equal(r.statusCode, 403);
+  r = await call(rates, { method: "DELETE", query: { from: "2026-11-01" } });
+  assert.equal(r.statusCode, 403);
+  assert.equal(calls.length, before);
+  // Власник: перегляд — з примітками; збереження — лише відомі ставки, дата РРРР-ММ-ДД.
+  role = "owner";
+  r = await call(rates, { method: "GET" });
+  assert.equal(r.body.pricing.versions[0].note, "лист підрядника");
+  assert.deepEqual(r.body.access, { role: "owner", manager_login: true });
   calls.pop();
   r = await call(rates, { method: "POST", body: { from: "01.12.2026", rates: { solidRate: 2300 } } });
   assert.equal(r.statusCode, 400, "дата не у форматі РРРР-ММ-ДД");
