@@ -904,22 +904,29 @@ function addDeliveryEvent(order) {
       var sameDay = cal.getEvents(start, end);
       for (var ei = 0; ei < sameDay.length; ei++) {
         if (String(sameDay[ei].getTitle() || "").indexOf(order.order_number) >= 0) {
+          // Та спроба могла обірватись і посеред нагадувань — виставляємо їх заново.
+          setDeliveryReminders_(sameDay[ei]);
           PropertiesService.getScriptProperties().setProperty("evt_" + order.order_number, sameDay[ei].getId());
           return;
         }
       }
     }
     var ev = cal.createEvent(title, start, end, { description: desc });
-    ev.removeAllReminders();
-    ev.addPopupReminder(0);          // у день події, о 08:30
-    ev.addPopupReminder(2 * 24 * 60); // за 2 дні, о 08:30
-    ev.addEmailReminder(0);
-    ev.addEmailReminder(2 * 24 * 60);
+    setDeliveryReminders_(ev);
     // Запамʼятовуємо ID події за номером замовлення — щоб оновлювати при зміні дати в таблиці
     PropertiesService.getScriptProperties().setProperty("evt_" + (order.order_number || ""), ev.getId());
   } catch (err) {
     console.error("Calendar error: " + err);
   }
+}
+
+/** Нагадування події доставки: у сам день і за 2 дні (о 08:30) — спливаюче й листом. */
+function setDeliveryReminders_(ev) {
+  ev.removeAllReminders();
+  ev.addPopupReminder(0);          // у день події, о 08:30
+  ev.addPopupReminder(2 * 24 * 60); // за 2 дні, о 08:30
+  ev.addEmailReminder(0);
+  ev.addEmailReminder(2 * 24 * 60);
 }
 
 /**
@@ -961,13 +968,20 @@ function onEditDelivery(e) {
         }
       }
       if (doRecalc) {
-        // Стерли один із розмірів однієї клітинки: старе значення відоме, тож бачимо, що
-        // позиція була з розмірами, — тоді суми зі старих розмірів прибираються.
-        var wasSizedBefore = false;
-        if (single && [14, 15, 16].indexOf(col) >= 0) {
+        // Чи мала позиція всі потрібні розміри ДО правки: якщо мала, а тепер розміру бракує —
+        // суми зі старих розмірів прибираються. Це залежить від самих розмірів (N, O, P) і від
+        // того, чи потрібна глибина, — тобто від конструкції (I) та моделі (AO).
+        //  • правка цих колонок не зачепила — стан розмірів той самий (false);
+        //  • одна клітинка, старе значення відоме — відновлюємо попередній стан точно;
+        //  • вставлений чи стертий діапазон (старі значення невідомі) — null: recalcRow_
+        //    звірить площу в колонці R з теперішніми розмірами.
+        var SIZE_FIELDS = { 9: "construction", 14: "width", 15: "height", 16: "depth", 41: "model" };
+        var touchesSize = [9, 14, 15, 16, 41].some(function (c) { return c >= col && c <= colEnd; });
+        var wasSizedBefore = touchesSize ? null : false;
+        if (touchesSize && single && e.oldValue !== undefined) {
           var sizeRow = sh.getRange(range.getRow(), 1, 1, 41).getValues()[0];
           var prev = { construction: sizeRow[8], model: sizeRow[40], width: sizeRow[13], height: sizeRow[14], depth: sizeRow[15] };
-          prev[col === 14 ? "width" : (col === 15 ? "height" : "depth")] = e.oldValue;
+          prev[SIZE_FIELDS[col]] = e.oldValue;
           wasSizedBefore = avalonItemSized(prev);
         }
         for (var ri = 0; ri < range.getNumRows(); ri++) recalcRow_(sh, range.getRow() + ri, { wasSized: wasSizedBefore });
@@ -1079,6 +1093,22 @@ function setCommissionFormulas_(sheet, row) {
 }
 
 /**
+ * Для рядка без потрібного розміру: чи порахована площа в колонці R з ІНШИХ розмірів, ніж у
+ * рядку зараз. Потрібно, коли старі значення невідомі (вставлений чи стертий діапазон).
+ *  • площі немає — суми вписав менеджер, а не формула: розмірів рядок не втрачав;
+ *  • немає ширини чи висоти — без них формула площу не рахувала ніколи, отже вона «стара»;
+ *  • бракує лише глибини — порівнюємо з площею без глибини: так рахувала попередня версія
+ *    скрипта, і такий рядок розмірів не втрачав.
+ */
+function areaFromOtherSizes_(v, w, h) {
+  var stored = cellNum_(v[17]) || 0;
+  if (!(stored > 0)) return false;
+  if (!(w > 0 && h > 0)) return true;
+  var flat = avalonPriceItem({ construction: v[8], model: v[40], specs: v[42], width: w, height: h, depth: 0, quantity: 1 }, {});
+  return Math.abs(areaCell_(flat.area + flat.removableSideArea) - stored) >= 0.005;
+}
+
+/**
  * Перераховує площу/собівартість/ціну/прибуток/маржу для одного рядка за ЄДИНИМ алгоритмом
  * (avalonPrice — той самий, що в калькуляторі). Викликається, коли змінилось те, від чого
  * залежить ціна: розміри, кількість, модель/конструкція, опції в характеристиках.
@@ -1101,7 +1131,10 @@ function recalcRow_(sh, row, opts) {
     // Позиція щойно ВТРАТИЛА потрібний розмір (була з розмірами — стала без): площа й суми,
     // пораховані зі старих розмірів, більше нічого не означають — прибираємо їх, знижку %
     // лишаємо. Позицію, що й раніше була без розмірів (ціну веде менеджер), не чіпаємо.
-    if (opts && opts.wasSized) {
+    // wasSized: true/false — попередній стан відомий точно (кабінет, одна клітинка таблиці);
+    // null — невідомий (вставили чи стерли діапазон): тоді звіряємо площу з розмірами.
+    var lostSize = !!opts && (opts.wasSized === true || (opts.wasSized == null && areaFromOtherSizes_(v, w, h)));
+    if (lostSize) {
       sh.getRange(row, 18, 1, 7).setValues([["", "", "", "", "", "", ""]]);
       sh.getRange(row, 35, 1, 3).setValues([["", cellNum_(v[35]) || "", ""]]);
     }

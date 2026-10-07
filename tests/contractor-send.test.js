@@ -1388,10 +1388,15 @@ function testAuditFixes() {
   cal.addDeliveryEvent({ order_number: "ORD-061026-777", delivery_date: "2026-10-20", first_name: "Тест" });
   assert.equal(created, 1);
   // Подію створено, але позначку записати не встигли: знаходимо її в календарі за номером.
-  inCalendar = [{ getTitle: () => "📦 ORD-061026-888 — Тест", getId: () => "ev-found" }];
+  // Та спроба могла обірватись і посеред нагадувань (лишилось одне з чотирьох) — виставляємо заново.
+  const foundEvent = { reminders: ["popup:0"], getTitle: () => "📦 ORD-061026-888 — Тест", getId: () => "ev-found",
+    removeAllReminders() { this.reminders = []; }, addPopupReminder(m) { this.reminders.push("popup:" + m); },
+    addEmailReminder(m) { this.reminders.push("email:" + m); } };
+  inCalendar = [foundEvent];
   cal.addDeliveryEvent({ order_number: "ORD-061026-888", delivery_date: "2026-10-20", first_name: "Тест" });
   assert.equal(created, 1, "другої події не створено");
   assert.equal(evProps.getProperty("evt_ORD-061026-888"), "ev-found");
+  assert.deepEqual(foundEvent.reminders, ["popup:0", "popup:2880", "email:0", "email:2880"], "на знайденій події — повний набір нагадувань");
 
   // 1в. Кошик без глибини формулою не рахується (була б одна лицева стінка); екрану глибина не обовʼязкова.
   t = make([]);
@@ -1491,6 +1496,51 @@ function testAuditFixes() {
   edit(43, 1, "", "Матеріал: Алюміній");
   edit(14, 1, 800, 900);
   assert.deepEqual(recalced, [2, 2, 2, 2]);
+
+  // 4а. Правка в таблиці, після якої позиції бракує розміру: суми зі старих розмірів прибираються.
+  //     Одна клітинка — попередній стан відомий точно; діапазон — звіряємо площу з розмірами.
+  const sheetEdit = (tt, col, cols, rows, oldValue) => tt.ctx.onEditDelivery({ oldValue, range: {
+    getSheet: () => Object.assign({ getName: () => "Замовлення" }, tt.sh), getRow: () => 2, getColumn: () => col,
+    getNumRows: () => rows, getNumColumns: () => cols, getValue: () => tt.raw.data[1][col - 1] } });
+  const sums = (tt, i) => tt.raw.data[i].slice(17, 24);
+  const CLEARED = ["", "", "", "", "", "", ""];
+  const priced = (extra) => basket(Object.assign({ 9: "Сірий (RAL 7016)", 17: 0.9 }, extra));
+  // Одна клітинка: стерли глибину (старе значення відоме).
+  let st = make([priced({ 15: "" })]);
+  sheetEdit(st, 16, 1, 1, 500);
+  assert.deepEqual(sums(st, 1), CLEARED, "стерли глибину — суми прибрано");
+  // Одна клітинка: екран (глибина не потрібна) став кошиком без глибини — через конструкцію чи модель.
+  const screenSums = { 14: 540, 15: "", 17: 0.43, 19: 2577, 21: 3479, 22: 902 };
+  st = make([priced(Object.assign({ 8: "Суцільний · AVL-01", 40: "Екран під утеплювач" }, screenSums))]);
+  sheetEdit(st, 9, 1, 1, "Розбірна · AVL-02");
+  assert.deepEqual(sums(st, 1), CLEARED, "екран став кошиком без глибини (колонка конструкції) — суми екрана прибрано");
+  st = make([priced(Object.assign({ 8: "Суцільний", 40: "Суцільний AVL-01" }, screenSums))]);
+  sheetEdit(st, 41, 1, 1, "Екран AVL-02");
+  assert.deepEqual(sums(st, 1), CLEARED, "те саме через колонку моделі");
+  // Одна клітинка, але старе значення невідоме (вставка): звіряємо площу з розмірами.
+  st = make([priced({ 15: "" })]);
+  sheetEdit(st, 16, 1, 1, undefined);
+  assert.deepEqual(sums(st, 1), CLEARED);
+  // Діапазон: глибину стерли одразу в кількох рядках.
+  st = make([priced({ 15: "" }), priced({ 15: "" })]);
+  sheetEdit(st, 16, 1, 2, undefined);
+  assert.deepEqual([sums(st, 1), sums(st, 2)], [CLEARED, CLEARED], "стерли глибину в кількох рядках — суми прибрано в усіх");
+  // Діапазон зачепив розміри, але позиція й була без розмірів, з ціною менеджера (площі немає).
+  st = make([basket({ 9: "Сірий (RAL 7016)", 15: "", 19: 3000, 21: 4500, 22: 1500 })]);
+  sheetEdit(st, 14, 3, 1, undefined);
+  assert.deepEqual([st.raw.data[1][19], st.raw.data[1][21]], [3000, 4500], "ціну менеджера для позиції без розмірів не чіпаємо");
+  // Рядок, який попередня версія порахувала без глибини (площа — одна лицева стінка), розмірів не втрачав.
+  st = make([basket({ 9: "Сірий (RAL 7016)", 15: "", 17: 0.4, 19: 812, 21: 1096, 22: 284 })]);
+  sheetEdit(st, 14, 3, 1, undefined);
+  assert.deepEqual([st.raw.data[1][17], st.raw.data[1][19], st.raw.data[1][21]], [0.4, 812, 1096], "давній рядок без глибини не чіпаємо");
+  // Правка лише кількості стан розмірів не міняє — нічого не прибирається.
+  st = make([priced({ 15: "" })]);
+  sheetEdit(st, 17, 1, 1, 1);
+  assert.deepEqual([st.raw.data[1][19], st.raw.data[1][21]], [1827, 2466]);
+  // Звичайна правка розміру рядка з усіма розмірами — формула рахує, як і раніше.
+  st = make([priced({ 13: 900 })]);
+  sheetEdit(st, 14, 1, 1, 800);
+  assert.deepEqual([st.raw.data[1][17], st.raw.data[1][19], st.raw.data[1][21]], [0.95, 1929, 2603], "0,95 м² × 2 030 = 1 929 ₴; × 1,35 = 2 603 ₴");
 }
 
 testMessageOptions();
