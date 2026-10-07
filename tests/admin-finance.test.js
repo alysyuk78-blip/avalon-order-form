@@ -591,6 +591,17 @@ function testSheetCommissionFormula() {
   assert.ok(formulas[25].includes("$W7*$AT7/100"), "комісія = валовий прибуток × ставка");
   assert.ok(formulas[25].includes("$W7>0"), "зі збиткової угоди комісії немає");
   assert.ok(formulas[25].includes("VLOOKUP($D7;Дропшипери!$A:$E;5;0)"), "без ставки — як раніше");
+  // Ставка партнера — «за кошик»: рядок-послуга (монтаж, доставка, доплата за колір) її не нараховує.
+  assert.ok(formulas[25].includes('IF($AP7="Послуга";0;$Q7*VLOOKUP('), formulas[25]);
+  assert.equal(formulas[25],
+    '=IFERROR(IF(N($AT7)>0;IF($W7>0;ROUND($W7*$AT7/100;2);0);IF($AP7="Послуга";0;$Q7*VLOOKUP($D7;Дропшипери!$A:$E;5;0)));0)');
+  assert.ok(context.dropSoldFormula_().includes('Замовлення!AP:AP;"<>Послуга"'), "«Кошиків продано» не рахує послуги");
+  // Підсумки партнера — окремо для кожного рядка (BYROW): SUMIFS у ARRAYFORMULA не розгортається
+  // по рядках і давав усім партнерам цифри першого.
+  assert.equal(context.dropSumFormula_("V", ""),
+    '=BYROW(A2:A;LAMBDA(partner;IF(partner="";"";SUMIFS(Замовлення!V:V;Замовлення!D:D;partner;Замовлення!C:C;"<>Скасовано"))))');
+  assert.equal(context.dropSoldFormula_(),
+    '=BYROW(A2:A;LAMBDA(partner;IF(partner="";"";SUMIFS(Замовлення!Q:Q;Замовлення!D:D;partner;Замовлення!C:C;"<>Скасовано";Замовлення!AP:AP;"<>Послуга"))))');
   assert.equal(formulas[26], '=IF($W7="";"";$W7-$Y7)', "чистий прибуток = валовий − комісія");
 
   // Схема таблиці розширена до AT (46) — інакше читання картки впаде.
@@ -604,10 +615,86 @@ function testSheetCommissionFormula() {
   assert.equal(context.mapOrderRow_(7, row).commission_pct, 30);
 }
 
+// Одноразове оновлення: формула Y лише в рядках-послугах, F2 «Дропшиперів» — лише стандартна стара.
+function testCommissionFormulaMigration() {
+  const OLD = {
+    F2: '=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(Замовлення!Q:Q;Замовлення!D:D;A2:A;Замовлення!C:C;"<>Скасовано")))',
+    G2: '=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(Замовлення!V:V;Замовлення!D:D;A2:A;Замовлення!C:C;"<>Скасовано")))',
+    H2: '=ARRAYFORMULA(IF(A2:A="";"";SUMIFS(Замовлення!Y:Y;Замовлення!D:D;A2:A;Замовлення!C:C;"<>Скасовано")))',
+    I2: '=ARRAYFORMULA(IF(A2:A="";"";SUMIF(Виплати!B:B;A2:A;Виплати!D:D)))',
+  };
+  const run = (dropFormulas, shown) => {
+    const props = {};
+    const set = {};
+    const dropSet = {};
+    const kinds = [["Кошик"], ["Послуга"], [""], ["Кронштейни"], ["Послуга"]];
+    const orders = {
+      getLastRow: () => 6, getMaxColumns: () => 50,
+      getRange: (row, column) => ({
+        getValues: () => kinds,
+        setFormula(f) { (set[row] = set[row] || {})[column] = f; return this; },
+        setNumberFormat() { return this; },
+      }),
+    };
+    const drop = { getRange: (a1) => ({ getFormula: () => dropFormulas[a1] || "", setFormula(f) { dropSet[a1] = f; return this; },
+      getDisplayValue: () => (shown && shown[a1]) || "12" }) };
+    const context = loadAppsScript({
+      PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] || null, setProperty: (k, v) => { props[k] = v; } }) },
+      SpreadsheetApp: { flush() {}, getActiveSpreadsheet: () => ({ getSheetByName: (name) => (name === "Дропшипери" ? drop : null) }) },
+    });
+    context.ensureCommissionFormulaV2Once_(orders);
+    const first = { rows: Object.keys(set).map(Number), dropSet: Object.assign({}, dropSet), flag: props.COMMISSION_FORMULA_V2_READY };
+    Object.keys(set).forEach((k) => delete set[k]); Object.keys(dropSet).forEach((k) => delete dropSet[k]);
+    context.ensureCommissionFormulaV2Once_(orders);
+    return Object.assign(first, { secondRows: Object.keys(set).length, secondDrop: Object.keys(dropSet).length });
+  };
+  const a = run(OLD);
+  assert.deepEqual(a.rows, [3, 6], "формулу Y переставлено лише в рядках-послугах");
+  assert.deepEqual(Object.keys(a.dropSet).sort(), ["F2", "G2", "H2"], "I2 (SUMIF) розгортається правильно — її не чіпаємо");
+  assert.ok(a.dropSet.F2.startsWith("=BYROW(A2:A;LAMBDA(partner;") && a.dropSet.F2.includes('AP:AP;"<>Послуга"'));
+  assert.ok(a.dropSet.G2.includes("Замовлення!V:V") && a.dropSet.H2.includes("Замовлення!Y:Y"));
+  assert.equal(a.flag, "1");
+  assert.deepEqual([a.secondRows, a.secondDrop], [0, 0], "удруге нічого не чіпаємо");
+  // Таблиця нову формулу не прийняла (помилка в клітинці) — повертаємо стару.
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const failed = run(OLD, { G2: "#ERROR!" });
+    assert.equal(failed.dropSet.G2, OLD.G2, "G2 повернуто до старої формули");
+    assert.equal(failed.flag, "rejected", "таблиця формулу не прийняла — фіксуємо це окремо й щокроку не повторюємо");
+    assert.ok(failed.dropSet.F2.startsWith("=BYROW(") && failed.dropSet.H2.startsWith("=BYROW("));
+  } finally { console.error = originalError; }
+  // Власні формули власника лишаються як є.
+  assert.deepEqual(run({ F2: "=SUM(Z:Z)", G2: "", H2: "=BYROW(A2:A;LAMBDA(c;SUMIFS(Замовлення!Y:Y;Замовлення!D:D;c)))" }).dropSet, {});
+}
+
+// Маржа після комісії буває з копійками (8 492,40), а платежі — цілі гривні: залишок 0,40 ₴
+// не має тримати замовлення в боржниках.
+function testMarginLeftIgnoresKopecks() {
+  const context = loadAppsScript();
+  assert.equal(context.marginLeft_(8492.4, 8492), 0);
+  assert.equal(context.marginLeft_(8492.4, 8493), 0);
+  assert.equal(context.marginLeft_(2000, 1000), 1000);
+  assert.equal(context.marginLeft_(8492.4, 8491), 1.4, "справжній залишок лишається");
+  const order = { order_number: "ORD-010126-001", status: "Виготовлення", quantity: 14, revenue: 46796, profit: 12132, commission: 3639.6, commission_pct: 30 };
+  const paid = (amount) => context.adminGroupOrders_([order], [{ order_number: order.order_number, type: "Маржа від підрядника", amount }])[0];
+  assert.equal(paid(8492).margin_due, 8492.4);
+  assert.equal(paid(8492).margin_left, 0, "8 492 з 8 492,40 — маржу отримано");
+  assert.equal(paid(5000).margin_left, 3492.4);
+  // Кабінет рахує так само.
+  const metrics = groupPaymentMetrics(Object.assign({}, order, { client_left: 0, margin_due: 8492.4, margin_received: 8492 }));
+  assert.equal(metrics.marginLeft, 0);
+  assert.equal(metrics.marginDebt, 0);
+  assert.equal(groupPaymentMetrics(Object.assign({}, order, { client_left: 0, margin_due: 8492.4, margin_received: 8492, margin_left: 0.4 })).marginDebt, 0);
+  assert.equal(groupPaymentMetrics(Object.assign({}, order, { client_left: 0, margin_due: 8492.4, margin_received: 5000 })).marginDebt, 3492.4);
+}
+
 testPaymentMetrics();
 testCommissionFromMargin();
 testContractorDebtIsNetOfCommission();
 testSheetCommissionFormula();
+testCommissionFormulaMigration();
+testMarginLeftIgnoresKopecks();
 testSheetMarginDue();
 testProductionMessageSkipsBasketRateForOtherProducts();
 testContractorMessageShowsMarginToPay();

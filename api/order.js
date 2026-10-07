@@ -18,7 +18,7 @@ module.exports.config = config;
 // ВИРОБНИЧА ВАРТІСТЬ (для повідомлення власнику)
 // ============================================================
 // Рахує ТОЙ САМИЙ алгоритм, що й калькулятор, кабінет CRM і таблиця: lib/avalon-pricing.js.
-const { avalonPriceItem, avalonCostLines, avalonIsIndividualPricing } = require("../lib/avalon-pricing");
+const { avalonPriceItem, avalonCostLines, avalonIsIndividualPricing, avalonColorSurcharge, avalonItemSized } = require("../lib/avalon-pricing");
 
 function productionBreakdown(it) {
   const zero = { qty: 1, lines: [], sum: 0, total: 0, dims: "" };
@@ -30,14 +30,16 @@ function productionBreakdown(it) {
   // до них не застосовується.
   if (avalonIsIndividualPricing(it.basket_type, it.pattern)) return zero;
   const w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
-  if (!w || !h) return zero;
   let construction = String(it.construction_type || "");
   if (it.has_cover && !construction.toLowerCase().includes("кришка")) construction += " + кришка";
   const name = String(it.basket_model_name || "").trim(), code = String(it.basket_model || "").trim();
-  const p = avalonPriceItem({
+  const input = {
     construction, model: name && code && name !== code ? `${name} ${code}` : (name || code),
     specs: it.specs, width: w, height: h, depth: d, quantity: it.quantity,
-  });
+  };
+  // Без повних розмірів (кошику потрібна й глибина) формула нічого не рахує.
+  if (!avalonItemSized(input)) return zero;
+  const p = avalonPriceItem(input);
   const lines = avalonCostLines(p);
   // Ціна рахується на розмірах, округлених угору до 10 мм, — показуємо їх, коли вони інші.
   const rounded = p.width !== w || p.height !== h || p.depth !== d;
@@ -203,8 +205,9 @@ function formatTelegramMessage(order) {
       return;
     }
     if (it.basket_model_name || it.basket_model) msg += `• Модель: <b>${e(it.basket_model_name || it.basket_model)}</b>\n`;
-    msg += `• Тип: <b>${e(it.basket_type)}</b>\n`;
-    msg += `• Конструкція: <b>${e(it.construction_type)}</b>\n`;
+    // Порожні «Тип:» і «Конструкція:» не друкуємо (форма тип більше не питає).
+    if (String(it.basket_type || "").trim()) msg += `• Тип: <b>${e(it.basket_type)}</b>\n`;
+    if (String(it.construction_type || "").trim()) msg += `• Конструкція: <b>${e(it.construction_type)}</b>\n`;
     if (it.has_cover) msg += `• Верхня кришка: <b>Так</b>\n`;
     if (color) msg += `• Колір: <b>${color}</b>\n`;
     if (pattern) msg += `• Візерунок: <b>${pattern}</b>\n`;
@@ -225,18 +228,34 @@ function formatTelegramMessage(order) {
   // ── ФІНАНСИ (виробнича вартість + оплата) ──
   msg += `\n💰 <b>ФІНАНСИ</b>\n`;
   let grandCost = 0;
+  // Небазовий колір: +200 ₴ один раз на замовлення (лише коли є що рахувати за формулою).
+  const colorFee = avalonColorSurcharge(items
+    .filter((it) => it.product_type !== "bracket" && it.product_type !== "other" && it.product_type !== "service")
+    // Колір разом з уточненням — тим самим записом, що йде в таблицю («Інший: RAL 7016»):
+    // інакше власнику показали б доплату, якої в замовленні не буде.
+    .map((it) => [it.color, it.color_custom].map((x) => String(x || "").trim()).filter(Boolean).join(": ")));
+  const colorFeeLine = `Доплата за небазовий колір (на замовлення): <b>${num(colorFee)} ₴</b>\n`;
   if (multi) {
+    let pending = "";
     items.forEach((it, i) => {
       const b = productionBreakdown(it), cost = Number(it.cost_total) || b.total;
+      const label = `${it.product_type === "bracket" ? "Кронштейни" : "Кошик"} ${i + 1}`;
       grandCost += cost;
-      if (b.sum > 0) msg += costLines(b, `• Кошик ${i + 1}`, "  ", false);
+      if (b.sum > 0) msg += costLines(b, `• ${label}`, "  ", false);
+      else if (cost > 0) msg += `• ${label}: <b>${num(cost)} ₴</b>\n`;
+      // Формула цю позицію не рахує (антивандальний, складний візерунок, кронштейни) —
+      // показуємо її явно, щоб «Разом» не читалось як вартість усієї заявки.
+      else pending += `• ${label}: <i>індивідуальний прорахунок</i>\n`;
     });
-    if (grandCost > 0) msg += `• <b>Разом виробнича: ${num(grandCost)} ₴</b>\n`;
+    if (grandCost > 0 && colorFee > 0) { msg += `• ${colorFeeLine}`; grandCost += colorFee; }
+    if (grandCost > 0) msg += pending;
+    if (grandCost > 0) msg += `• <b>Разом виробнича${pending ? " (без позицій з індивідуальним прорахунком)" : ""}: ${num(grandCost)} ₴</b>\n`;
   } else {
     const it = items[0], b = productionBreakdown(it), cost = Number(it.cost_total) || b.total;
     grandCost = cost;
     if (b.sum > 0) msg += costLines(b, "• Кошик", "• ", true);
-    if (cost > 0) msg += `• Вартість виробнича: <b>${num(cost)} ₴</b>\n`;
+    if (cost > 0 && colorFee > 0) { msg += `• ${colorFeeLine}`; grandCost += colorFee; }
+    if (grandCost > 0) msg += `• Вартість виробнича: <b>${num(grandCost)} ₴</b>\n`;
   }
   if (grandCost === 0) msg += `• <i>Потрібен індивідуальний прорахунок менеджера</i>\n`;
   if (order.payment_method) msg += `• Оплата: <b>${e(order.payment_method)}</b>\n`;
@@ -276,6 +295,81 @@ function isRateLimited(ip) {
   entry.count++;
   if (entry.count > RATE_LIMIT_MAX) return true;
   return false;
+}
+
+// ── Запис заявки в таблицю ──────────────────────────────────────────────────────────
+// Apps Script відповідає у два кроки: POST виконує скрипт і повертає переадресацію, GET за
+// нею віддає JSON. Google інколи «тримає» будь-який із кроків десятки секунд, хоча заявку
+// вже записано. Раніше форма тоді показувала помилку, а власник не отримував сповіщення в
+// Telegram, поки клієнт не надішле заявку ще раз. Тому: кроки розділені, а вся спроба
+// повторюється з ТИМ САМИМ request_id — скрипт упізнає повтор і поверне той самий номер.
+const SHEETS_TIMING = { executeMs: 25000, resultMs: 12000, attempts: 3, budgetMs: 80000 };
+// Та сама заявка прийшла вдруге (той самий request_id): у таблиці вона вже була, дубля немає.
+// Чи дійшло перше сповіщення — невідомо (перша спроба могла обірватись до Telegram), тому
+// сповіщаємо ще раз і прямо кажемо, що це повтор, а не друге замовлення.
+const REPEAT_NOTE = "♻️ <b>Повторне сповіщення.</b> Ця заявка надійшла ще раз (клієнт натиснув удруге або відповідь до нього не дійшла). Замовлення одне — дубля в таблиці немає.\n\n";
+const REDIRECT_CODES = [301, 302, 303, 307, 308];
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Запит із тайм-аутом, що охоплює й читання тіла (воно теж може зависнути).
+async function timedRequest(url, options, timeoutMs, wantBody) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    let data = null;
+    if (wantBody(res)) data = await res.json().catch(() => null);
+    return { res, data };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function writeOrderToSheets(url, payload) {
+  const body = JSON.stringify(payload);
+  const deadline = Date.now() + SHEETS_TIMING.budgetMs;
+  const left = () => deadline - Date.now();
+  let lastError = null;
+  for (let attempt = 1; attempt <= SHEETS_TIMING.attempts && left() > 5000; attempt += 1) {
+    if (attempt > 1) await pause(700);
+    try {
+      // Остання спроба — «по-старому»: запит сам проходить переадресацію. Це запасний шлях на
+      // випадок, якщо розділені кроки з якоїсь причини не спрацюють, — гірше, ніж було, не стане.
+      const classic = attempt === SHEETS_TIMING.attempts;
+      const first = await timedRequest(url, {
+        method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body,
+        ...(classic ? {} : { redirect: "manual" }),
+      }, Math.min(SHEETS_TIMING.executeMs, left()), (res) => !REDIRECT_CODES.includes(res.status));
+      let data = first.data;
+      if (REDIRECT_CODES.includes(first.res.status)) {
+        // Скрипт уже виконано — забираємо готову відповідь; завислий GET перепитуємо.
+        const location = first.res.headers && first.res.headers.get ? first.res.headers.get("location") : "";
+        if (!location) throw new Error("Sheets: немає адреси відповіді");
+        data = null;
+        for (let k = 0; k < 3 && !data && left() > 1000; k += 1) {
+          if (k > 0) await pause(400);
+          try {
+            const reply = await timedRequest(location, { method: "GET", redirect: "manual" },
+              Math.min(SHEETS_TIMING.resultMs, left()), (res) => res.ok);
+            if (reply.res.ok) data = reply.data;
+            else break;   // відповідь уже віддано або протермінувалась — повторимо всю спробу
+          } catch (err) {
+            lastError = err;
+          }
+        }
+      } else if (!first.res.ok && !data) {
+        throw new Error(`Sheets HTTP ${first.res.status}`);
+      }
+      // Відповідь скрипта остаточна — і успіх, і відмова («Кількість мусить бути…»): не повторюємо.
+      // attempt — з якої нашої спроби вона прийшла (потрібно, щоб відрізнити повтор заявки
+      // клієнтом від нашого власного повтору в межах одного запиту).
+      if (data && typeof data === "object") return Object.assign(data, { attempt });
+      lastError = new Error("Sheets: відповідь не дійшла");
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("Sheets: немає відповіді");
 }
 
 // Allowed origins (update with your actual domain)
@@ -348,19 +442,22 @@ module.exports = async function handler(req, res) {
 
     // --- Google Sheets (першим: Apps Script присвоює послідовний № ORD-ДДММРР-NNN і повертає його) ---
     let orderNumber = null;
+    let repeatRequest = false;
     const requestId = (String(order.request_id || "").trim() || randomUUID()).slice(0, 120);
     try {
-      const shRes = await fetchWithTimeout(SHEETS_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify({ timestamp: new Date().toISOString(), ...order, request_id: requestId, pattern_file_meta: patternFileMeta }),
-      }, 25000);
-      const shData = await shRes.json().catch(() => null);
-      if (!shRes.ok || !shData || shData.status !== "ok" || !shData.order_number) {
-        throw new Error((shData && shData.message) || `Sheets HTTP ${shRes.status}`);
+      // Сам файл візерунку таблиці не потрібен (йде власнику в Telegram) — лише його назва:
+      // без кількох мегабайтів у тілі запит до Google проходить швидше й рідше зависає.
+      const { pattern_file: _patternFile, ...orderForSheets } = order;
+      const shData = await writeOrderToSheets(SHEETS_URL,
+        { timestamp: new Date().toISOString(), ...orderForSheets, request_id: requestId, pattern_file_meta: patternFileMeta });
+      if (shData.status !== "ok" || !shData.order_number) {
+        throw new Error(shData.message || "Sheets: заявку не записано");
       }
       orderNumber = shData.order_number;
       results.push(shData.duplicate ? "gs:duplicate" : "gs:ok");
+      // «Уже записано» з першої ж нашої спроби — заявку записав попередній запит клієнта.
+      // Якщо ж так відповіла наша друга спроба, то записала перша — і це перше сповіщення.
+      repeatRequest = !!shData.duplicate && shData.attempt === 1;
     } catch (err) {
       console.error("Google Sheets error:", err);
       return res.status(502).json({
@@ -372,7 +469,7 @@ module.exports = async function handler(req, res) {
     // --- Telegram ---
     if (TG_TOKEN && TG_CHAT_ID) {
       try {
-        const text = formatTelegramMessage(orderWithNumber);
+        const text = (repeatRequest ? REPEAT_NOTE : "") + formatTelegramMessage(orderWithNumber);
         const tgRes = await fetchWithTimeout(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

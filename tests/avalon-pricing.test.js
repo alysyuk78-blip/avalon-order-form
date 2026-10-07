@@ -16,7 +16,7 @@ function coreOf(file) {
 
 // Змінив формулу — онови всі копії (npm run sync:pricing) і цю суму. Та сама сума стоїть у
 // тесті калькулятора (test/avalonPricing.test.mjs): розбіжність = алгоритми розʼїхались.
-const CORE_SHA256 = "8abb9c3139395fba4faceb21e309d6331c93b635c48044a80eaa5f83609568bb";
+const CORE_SHA256 = "bd41d8c4c4be71e61d9608bf45732b9f2b00faa38052e167ac1602d4ded4bcf8";
 
 function testCopiesAreIdentical() {
   const root = path.join(__dirname, "..");
@@ -79,6 +79,12 @@ function testOrderItemText() {
   assert.equal(type("Розбірний (з 3-х частин) · AVL-05", "Розбірний"), "sectional");
   assert.equal(type("Суцільний · AVL-07 + кришка", ""), "closed");
   assert.equal(type("Суцільний · AVL-06/1", "Ламельний"), "solid");
+  // Моделей AVL-06, 06/1, 08 у калькуляторі немає — ставку визначає текст конструкції, як і раніше.
+  assert.equal(type("Розбірний · AVL-06/1", "Ламельний кошик"), "sectional");
+  assert.equal(type("Суцільний · AVL-08", "Закритий кошик для монтажу на горизонтальну площу"), "solid");
+  assert.equal(type("Суцільний · AVL-06 + кришка", "Розбірний"), "solid", "з кодом моделі назва тип не визначає");
+  // Повна назва з форми без коду моделі.
+  assert.equal(type("Суцільний", "Суцільний кошик зі знімною боковою частиною"), "sectional_frame");
   assert.equal(type("Суцільний", "Розбірний AVL-05"), "sectional", "код моделі важливіший за текст конструкції");
   assert.equal(type("Розбірний (з 3-х частин)", ""), "sectional", "стара позиція без коду — за текстом конструкції");
   assert.equal(type("", ""), "solid");
@@ -151,6 +157,15 @@ function testColorSurcharge() {
   assert.equal(P.avalonColorSurcharge(["RAL 6005"], { colorSurcharge: 300 }), 300, "сума — з налаштувань");
 }
 
+// Кошик без глибини формула не рахує (вийшла б одна лицева стінка); екрану досить ширини й висоти.
+function testItemSized() {
+  const item = (extra) => Object.assign({ construction: "Суцільний · AVL-01", model: "Суцільний", width: 800, height: 500, depth: 500 }, extra);
+  assert.equal(P.avalonItemSized(item({})), true);
+  [{ depth: "" }, { depth: 0 }, { width: 0 }, { height: "" }, { depth: null }].forEach((x) => assert.equal(P.avalonItemSized(item(x)), false, JSON.stringify(x)));
+  assert.equal(P.avalonItemSized(item({ construction: "Розбірна · AVL-02", depth: 0 })), true, "екран: глибина — борти, може бути 0");
+  assert.equal(P.avalonItemSized(item({ construction: "Розбірна · AVL-02", width: 0 })), false);
+}
+
 // Антивандальне виконання і складний візерунок дорожчі, а на скільки — рахується індивідуально:
 // формула такі позиції не оцінює.
 function testIndividualPricing() {
@@ -164,6 +179,7 @@ function testIndividualPricing() {
 }
 
 testCopiesAreIdentical();
+testItemSized();
 testIndividualPricing();
 testOwnerTovExample();
 testColorSurcharge();
