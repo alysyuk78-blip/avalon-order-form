@@ -1779,7 +1779,7 @@ function testContractorRates() {
   assert.throws(() => save(t.ctx, { from: "2026-11-01", rates: { solidRate: 2030, markupPct: "35" } }), /не відрізняються/);
   assert.throws(() => save(t.ctx, { from: "2026-11-01", rates: { coverRate: 0 } }), /Кришка без візерунка: не менше за 1/);
   assert.throws(() => save(t.ctx, { from: "2026-11-01", rates: { solidRate: "дві тисячі" } }), /Стінки суцільні: це не число/);
-  assert.throws(() => save(t.ctx, { from: "2026-11-01", rates: { solidRate: 20300 } }), /Зміна понад 30 %.*Стінки суцільні: 2030 → 20300/);
+  assert.throws(() => save(t.ctx, { from: "2026-11-01", rates: { solidRate: 20300 } }), /Велика зміна \(понад 30 % або з нуля\).*Стінки суцільні: 2030 → 20300/);
   assert.equal(t.props.getProperty("PRICING_RATES_V1"), null, "жодна з хибних спроб нічого не зберегла");
   // Зайвий нуль із підтвердженням зберігається — рішення за власником.
   const typo = make([basket(OLD)]);
@@ -1968,6 +1968,12 @@ function testContractorRates() {
   t13w.ctx.adminOrderReprice_({ order_number: OLD });
   assert.deepEqual(fee(t13w.raw), []);
   setToday("2026-11-02");
+
+  // 13а. Ставку з нуля теж не підняти без підтвердження: відсотка тут немає, а зайвий нуль можливий.
+  const z = make([basket(OLD)], { PRICING_RATES_V1: zeroFee });
+  assert.throws(() => save(z.ctx, { from: "2026-11-02", rates: { colorSurcharge: 25000 } }),
+    /Велика зміна.*Небазовий колір — доплата на замовлення: 0 → 25000/);
+  assert.equal(save(z.ctx, { from: "2026-11-02", rates: { colorSurcharge: 250 }, confirm_large: true }).pricing.versions[1].rates.colorSurcharge, 250);
 
   // 14. Повтор заявки з сайту після зміни ставок: у відповіді — ставки САМОГО замовлення
   //     (для сповіщення власникові), а не сьогоднішні.

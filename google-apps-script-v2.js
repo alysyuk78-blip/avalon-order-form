@@ -734,8 +734,8 @@ function adminRatesGet_() {
 /**
  * Нові ставки з дати початку дії. Дата — не раніше за останню зміну (та сама дата замінює
  * останню: так виправляють помилку) і не раніше ніж 31 день тому: інакше вже пораховані
- * замовлення масово «переїхали» б на інші ставки. Зміна будь-якої ставки понад 30 % потребує
- * підтвердження (confirm_large) — захист від зайвого нуля.
+ * замовлення масово «переїхали» б на інші ставки. Зміна будь-якої ставки понад 30 % або з нуля
+ * потребує підтвердження (confirm_large) — захист від зайвого нуля.
  */
 function adminRatesSave_(data) {
   var src = data.rates_change || data;
@@ -760,11 +760,12 @@ function adminRatesSave_(data) {
     var a = prev[f.key], b = norm.rates[f.key];
     if (a === b) return;
     changed++;
-    if (a > 0 && Math.abs(b - a) / a > 0.3) large.push(f.label + ": " + a + " → " + b);
+    // «Велика» зміна — понад 30 % або з нуля (тут відсотка немає, а зайвий нуль так само можливий).
+    if (a > 0 ? Math.abs(b - a) / a > 0.3 : b > 0) large.push(f.label + ": " + a + " → " + b);
   });
   if (!changed) throw new Error("Ставки не відрізняються від попередніх — зберігати нічого");
   if (large.length && !src.confirm_large) {
-    throw new Error("Зміна понад 30 % — підтвердьте, що це не помилка. " + large.join("; "));
+    throw new Error("Велика зміна (понад 30 % або з нуля) — підтвердьте, що це не помилка. " + large.join("; "));
   }
   var entry = {
     from: fromRaw, rates: norm.rates, note: String(src.note || "").trim().substring(0, 160),
