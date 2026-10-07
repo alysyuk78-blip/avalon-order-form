@@ -1912,6 +1912,34 @@ function testContractorRates() {
   save(t11.ctx, { from: "2026-11-01", rates: { solidRate: 2240 } });
   assert.equal(t11.props.getProperty("PRICING_RATES_V1").charAt(0), "[");
   assert.deepEqual([t11.props.getProperty("PRICING_RATES_V1_1"), t11.props.getProperty("PRICING_RATES_V1_2")], [null, null], "зайві частини прибрано");
+
+  // 12. Суми, пораховані за застарілими ставками (сторінку відкрили до зміни ставок), сервер
+  //     не приймає. Сьогодні 02.11, чинні — від 01.11; priced_with_rates — якими рахував клієнт.
+  const fin = (cost, price) => ({ cost_total: cost, list_price: price, discount_pct: 0, discount_uah: 0, revenue: price });
+  const t12 = make([basket(OLD), basket(LEAD, noMoney)], { PRICING_RATES_V1: RATES });
+  // Старе пораховане замовлення рахується попередніми ставками ("") — так каже і свіжа сторінка.
+  t12.ctx.adminUpdateOrder_({ order_number: OLD, row: 2, priced_with_rates: "", patch: fin(1900, 2565) });
+  assert.deepEqual(money(t12.raw, 1), [1900, 2565]);
+  // Заявка без ціни вже рахується чинними, а застаріла сторінка надсилає суми за попередніми.
+  t12.fresh();
+  assert.throws(() => t12.ctx.adminUpdateOrder_({ order_number: LEAD, row: 3, priced_with_rates: "", patch: fin(1827, 2466) }),
+    /Ставки змінились, поки сторінка була відкрита/);
+  assert.deepEqual(money(t12.raw, 2), ["", ""], "відхилені суми в таблицю не потрапили");
+  assert.equal(t12.props.getProperty("rates_" + LEAD), null);
+  t12.fresh();
+  t12.ctx.adminUpdateOrder_({ order_number: LEAD, row: 3, priced_with_rates: "2026-11-01", patch: fin(2010, 2713) });
+  assert.deepEqual(money(t12.raw, 2), [2010, 2713]);
+  // Ціну вписано вручну (без priced_with_rates) — не звіряємо.
+  t12.fresh();
+  t12.ctx.adminUpdateOrder_({ order_number: OLD, row: 2, patch: fin(2000, 2700) });
+  assert.deepEqual(money(t12.raw, 1), [2000, 2700]);
+  // Нове замовлення й нова позиція з калькулятора — те саме правило.
+  t12.fresh();
+  assert.throws(() => t12.ctx.adminCreateOrder_({ order: { client: "Тест", phone: "+380000000000", priced_with_rates: "",
+    items: [Object.assign({}, newItem, { cost_total: 1827, price_total: 2466 })] } }), /Ставки змінились/);
+  assert.throws(() => t12.ctx.adminAddOrderItem_({ order_number: OLD, request_id: "calc-stale", priced_with_rates: "2026-11-01",
+    item: Object.assign({}, newItem, { cost_total: 2010, price_total: 2713 }) }), /Ставки змінились/);
+  assert.equal(t12.raw.data.length, 3, "жодного рядка не додано");
 }
 
 testMessageOptions();

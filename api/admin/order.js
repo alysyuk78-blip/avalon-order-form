@@ -38,6 +38,13 @@ function cleanItem(raw) {
   return out;
 }
 
+// Якими ставками клієнт порахував суми: дата початку їх дії або "" (до першої зміни).
+// Скрипт звірить її зі ставками замовлення й не прийме суми за застарілими.
+function pricedWith(body) {
+  const value = body && body.priced_with_rates;
+  return typeof value === "string" && /^(\d{4}-\d{2}-\d{2})?$/.test(value) ? { priced_with_rates: value } : {};
+}
+
 function resourceOf(req) {
   return String((req.query && req.query.resource) || (req.body && req.body.resource) || "");
 }
@@ -74,6 +81,7 @@ module.exports = async function handler(req, res) {
           request_id: String(body.request_id || "").trim().slice(0, 120),
           // Менеджер у калькуляторі відмовився від доплати за колір для цього замовлення.
           ...(body.waive_color_surcharge === true ? { waive_color_surcharge: true } : {}),
+          ...pricedWith(body),
         });
         return res.status(200).json(data);
       }
@@ -88,6 +96,7 @@ module.exports = async function handler(req, res) {
         patch: body.patch || body,
         // Що кабінет бачить у цій позиції — щоб не правити сусідню після зсуву рядків.
         ...(body.expect && typeof body.expect === "object" ? { expect: cleanExpect(body.expect) } : {}),
+        ...pricedWith(body),
       });
       return res.status(200).json(data);
     }

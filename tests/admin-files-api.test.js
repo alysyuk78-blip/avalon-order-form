@@ -269,6 +269,15 @@ async function run() {
   assert.deepEqual(calls.pop(), { action: "rates_delete", payload: { rates_change: { from: "2026-12-01" } } });
   r = await call(rates, { method: "PATCH", body: { from: "2026-12-01" } });
   assert.equal(r.statusCode, 405);
+  // Якими ставками клієнт порахував суми — доходить до Apps Script лише датою або "" (до першої зміни).
+  await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { revenue: 2713 }, priced_with_rates: "2026-11-01" } });
+  assert.deepEqual(calls.pop().payload, { order_number: ORD, row: 4, patch: { revenue: 2713 }, priced_with_rates: "2026-11-01" });
+  await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { revenue: 2466 }, priced_with_rates: "" } });
+  assert.equal(calls.pop().payload.priced_with_rates, "");
+  await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { revenue: 2466 }, priced_with_rates: "вчора" } });
+  assert.equal("priced_with_rates" in calls.pop().payload, false, "щось інше, ніж дата, не передаємо");
+  await call(order, { method: "POST", body: { action: "add_item", order_number: ORD, request_id: "r-1", item: { product_type: "basket", quantity: 1 }, priced_with_rates: "2026-11-01" } });
+  assert.equal(calls.pop().payload.priced_with_rates, "2026-11-01");
   // Перерахунок замовлення за чинними ставками — дія картки.
   r = await call(order, { method: "POST", body: { action: "reprice", order_number: " " + ORD + " " } });
   assert.equal(r.statusCode, 200);

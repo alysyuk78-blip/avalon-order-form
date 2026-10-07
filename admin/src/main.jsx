@@ -569,9 +569,12 @@ import pricing from '../../lib/avalon-pricing.js';
       if (!p || !Array.isArray(p.versions)) return;
       const fromSnapshot = !!(data.snapshot && data.snapshot.source === "snapshot");
       if (fromSnapshot && pricingStore.fresh) return;   // свіжіші вже є — знімок їх не затирає
-      pricingStore.info = { versions: p.versions, today: p.today || "", current_from: p.current_from || "", error: p.error || "" };
+      const next = { versions: p.versions, today: p.today || "", current_from: p.current_from || "", error: p.error || "" };
       if (!fromSnapshot) pricingStore.fresh = true;
-      writeAdminCache({ pricing: pricingStore.info });
+      // Ставки приходять у кожній відповіді — оновлюємо екран і кеш браузера лише коли вони інші.
+      if (JSON.stringify(next) === JSON.stringify(pricingStore.info)) return;
+      pricingStore.info = next;
+      writeAdminCache({ pricing: next });
       pricingStore.listeners.forEach(fn => fn());
     }
     function usePricingInfo() {
@@ -2647,14 +2650,17 @@ import pricing from '../../lib/avalon-pricing.js';
         load().catch(e => setError(e.message));
       }, [orderNumber, initialData, snapshotLoading, snapshotFresh]);
 
-      async function save(patch) {
+      // extra.pricedWith — якими ставками пораховані суми в patch (лише для «Застосувати розрахунок»):
+      // сервер звірить їх зі ставками замовлення й не прийме суми за застарілими.
+      async function save(patch, extra) {
         if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return; }
         setBusy(true); setError("");
         try {
           const res = await api("/api/admin/order", {
             method: "PATCH",
             token,
-            body: { order_number: orderNumber, row: form.row, patch, expect: itemExpect(data && data.items && data.items[itemIdx]) },
+            body: { order_number: orderNumber, row: form.row, patch, expect: itemExpect(data && data.items && data.items[itemIdx]),
+              ...(extra && typeof extra.pricedWith === "string" ? { priced_with_rates: extra.pricedWith } : {}) },
           });
           setData(res);
           applyItemToForm(res, itemIdx);
@@ -2807,7 +2813,7 @@ import pricing from '../../lib/avalon-pricing.js';
           cost_total: calc.costTotal, list_price: calc.listTotal,
           discount_pct: calc.discountPct, discount_uah: calc.discountAmount, revenue: calc.total,
           commission_pct: form.commission_pct === "" ? null : Number(form.commission_pct),
-        });
+        }, { pricedWith: (data && data.order && data.order.rates_from != null) ? String(data.order.rates_from) : pricingStore.info.current_from });
       }
 
       // Комісія партнера/ТОВ береться з МАРЖІ, а не з ціни: 30% — це 30% від

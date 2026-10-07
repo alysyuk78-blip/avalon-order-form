@@ -686,6 +686,18 @@ function pinOrderRates_(orderNumber) {
   PropertiesService.getScriptProperties().setProperty(ORDER_RATES_PREFIX + num, m.from === "" ? "base" : m.from);
   m.floating = false;
 }
+/**
+ * Калькулятор і кнопка «Застосувати розрахунок» рахують суми самі й кажуть, якими ставками:
+ * pricedWith — дата початку їх дії ("" — до першої зміни). Якщо замовлення рахується іншими
+ * (ставки змінили, поки сторінка була відкрита), суми не приймаємо — інакше в замовлення
+ * потрапила б ціна за застарілими ставками. Без pricedWith (ціну вписано вручну) не звіряємо.
+ */
+function assertPricedWithRates_(expectedFrom, pricedWith) {
+  if (pricedWith == null) return;
+  if (String(pricedWith) !== String(expectedFrom)) {
+    throw new Error("Ставки змінились, поки сторінка була відкрита. Оновіть сторінку — ціна перерахується — і збережіть ще раз.");
+  }
+}
 /** Ті самі правила для відповіді кабінету — без читання таблиці. Повертає дату початку дії ставок. */
 function orderRatesFromView_(orderNumber, createdAt, hasPriced, stored, versions, currentFrom) {
   var pinned = orderRatesPinned_(stored, versions);
@@ -4587,6 +4599,8 @@ function applyFinanceToRow_(sh, row, patch) {
  */
 function adminCreateOrder_(data) {
   var src = data.order || data;
+  // Нове замовлення рахується чинними ставками — калькулятор мав рахувати ними ж.
+  assertPricedWithRates_(currentRates_().from, src.priced_with_rates);
 
   var fullName = String(src.client || [src.first_name, src.last_name].filter(function (x) { return x; }).join(" ") || "").trim();
   if (!fullName) throw new Error("Вкажіть імʼя клієнта");
@@ -4729,6 +4743,7 @@ function adminAddOrderItem_(data) {
     }
     if (!rows.length) throw new Error("Order not found");
     var base = sh.getRange(rows[0], 1, 1, ADMIN_ORDER_COLS).getValues()[0];
+    assertPricedWithRates_(orderRatesForPricing_(sh, num, base[1]).from, data.priced_with_rates);
     // Чи була доплата за колір доречна ще ДО цієї позиції (замовлення вже пораховане без неї).
     var colorDueBefore = colorSurchargeDue_(sh, num, data.request_id);
     // Доплата за колір — одна на замовлення: якщо вона вже є (додана автоматично чи
@@ -4898,6 +4913,8 @@ function adminUpdateOrder_(data) {
   assertItemIdentity_(sh, row, data.expect);
   // Чи була доплата за колір доречна ще ДО цієї правки (замовлення вже пораховане без неї).
   var colorDueBefore = colorSurchargeDue_(sh, orderNumber);
+  // colorSurchargeDue_ щойно визначив ставки замовлення — звіряємо з тими, якими рахував клієнт.
+  assertPricedWithRates_(orderRatesForPricing_(sh, orderNumber, sh.getRange(row, 2).getValue()).from, data.priced_with_rates);
   var waiveColorSurcharge = !!patch.waive_color_surcharge;
   delete patch.waive_color_surcharge;
 
