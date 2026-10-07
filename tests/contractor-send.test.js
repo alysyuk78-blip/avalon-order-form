@@ -1376,6 +1376,42 @@ function testAuditFixes() {
   const snapshot = JSON.stringify(t.raw.data);
   t.ctx.adminCreateOrder_({ order: JSON.parse(JSON.stringify(calcOrder)) });
   assert.equal(JSON.stringify(t.raw.data), snapshot);
+  // Доплата за колір не додалась через збій таблиці. Разовий збій — пробуємо ще раз одразу;
+  // якщо й удруге ні — дія НЕ завершена (рядок «у роботі»), а повтор запиту робить усе заново.
+  const colorCase = (failures) => {
+    const c = make([orderRow("ORD-110926-002", "Нове")]);
+    c.ctx.addDeliveryEvent = () => {};
+    c.ctx.adminGetOrder_ = (d) => ({ status: "ok", order_number: d.order_number });
+    c.ctx.appendOrderRow_ = (sh, row) => { const at = sh.getLastRow(); sh.insertRowsAfter(at, 1); sh.getRange(at + 1, 1, 1, row.length).setValues([row]); return at + 1; };
+    const realSync = c.ctx.syncColorSurcharge_;
+    c.failures = failures;
+    c.ctx.syncColorSurcharge_ = (...args) => { if (c.failures > 0) { c.failures -= 1; throw new Error("Service Spreadsheets failed"); } return realSync(...args); };
+    return c;
+  };
+  const colored = (requestId) => ({ order: { client: "Петро", phone: "+380671234567", request_id: requestId, items: [
+    { product_type: "basket", basket_model: "AVL-01", basket_model_name: "Суцільний", construction_type: "Суцільний · AVL-01", color: "RAL 6005",
+      size_w: 800, size_h: 500, size_d: 500, quantity: 1 }] } });
+  const basketMarkers = (c) => c.raw.data.slice(1).filter((r) => r[0] === ORD && r[40] === "Суцільний").map((r) => r[44]);
+  let cc = colorCase(1);
+  cc.ctx.adminCreateOrder_(colored("req-color"));
+  assert.equal(surcharges(cc.raw).length, 1, "разовий збій: доплату додано з другої спроби");
+  assert.deepEqual(basketMarkers(cc), ["req-color"], "дію завершено");
+  cc = colorCase(2);
+  assert.throws(() => cc.ctx.adminCreateOrder_(colored("req-color-2")), /Service Spreadsheets failed/);
+  assert.deepEqual([surcharges(cc.raw).length, basketMarkers(cc)], [0, ["~req-color-2"]], "доплати немає — дія не завершена, рядок лишається «у роботі»");
+  cc.ctx.adminCreateOrder_(colored("req-color-2"));
+  assert.deepEqual([surcharges(cc.raw).length, basketMarkers(cc)], [1, ["req-color-2"]], "повтор того самого запиту: кошик — один, доплата — на місці");
+  // Те саме для додавання позиції до наявного замовлення.
+  cc = colorCase(2);
+  cc.raw.data.push(basket({ 9: "Сірий (RAL 7016)" }));
+  const addColored = { order_number: ORD, request_id: "req-add-color", item: { product_type: "basket", basket_model: "AVL-01", basket_model_name: "Суцільний (другий)",
+    construction_type: "Суцільний · AVL-01", color: "RAL 6005", size_w: 800, size_h: 500, size_d: 500, quantity: 1 } };
+  assert.throws(() => cc.ctx.adminAddOrderItem_(JSON.parse(JSON.stringify(addColored))), /Service Spreadsheets failed/);
+  assert.equal(surcharges(cc.raw).length, 0);
+  cc.ctx.adminAddOrderItem_(JSON.parse(JSON.stringify(addColored)));
+  assert.deepEqual([surcharges(cc.raw).length, cc.raw.data.filter((r) => r[40] === "Суцільний (другий)").map((r) => r[44])], [1, ["req-add-color"]],
+    "повтор: позиція одна, доплата додана, запит завершено");
+
   // Подія в календарі — одна на замовлення.
   const evProps = makeProps({ ["evt_" + ORD]: "ev1" });
   let created = 0;
@@ -1525,12 +1561,17 @@ function testAuditFixes() {
   st = make([priced({ 15: "" }), priced({ 15: "" })]);
   sheetEdit(st, 16, 1, 2, undefined);
   assert.deepEqual([sums(st, 1), sums(st, 2)], [CLEARED, CLEARED], "стерли глибину в кількох рядках — суми прибрано в усіх");
+  // Діапазон: екран без бортів вставкою зробили кошиком. Площа та сама (лицева стінка), але
+  // собівартість — екрана (з комплектом кріплення): суми прибираються.
+  st = make([priced(Object.assign({ 8: "Суцільний · AVL-01", 40: "Суцільний" }, screenSums, { 18: 2577 }))]);
+  sheetEdit(st, 8, 3, 1, undefined);
+  assert.deepEqual(sums(st, 1), CLEARED, "екран став кошиком у вставленому діапазоні — суми екрана прибрано");
   // Діапазон зачепив розміри, але позиція й була без розмірів, з ціною менеджера (площі немає).
   st = make([basket({ 9: "Сірий (RAL 7016)", 15: "", 19: 3000, 21: 4500, 22: 1500 })]);
   sheetEdit(st, 14, 3, 1, undefined);
   assert.deepEqual([st.raw.data[1][19], st.raw.data[1][21]], [3000, 4500], "ціну менеджера для позиції без розмірів не чіпаємо");
   // Рядок, який попередня версія порахувала без глибини (площа — одна лицева стінка), розмірів не втрачав.
-  st = make([basket({ 9: "Сірий (RAL 7016)", 15: "", 17: 0.4, 19: 812, 21: 1096, 22: 284 })]);
+  st = make([basket({ 9: "Сірий (RAL 7016)", 15: "", 17: 0.4, 18: 812, 19: 812, 21: 1096, 22: 284 })]);
   sheetEdit(st, 14, 3, 1, undefined);
   assert.deepEqual([st.raw.data[1][17], st.raw.data[1][19], st.raw.data[1][21]], [0.4, 812, 1096], "давній рядок без глибини не чіпаємо");
   // Правка лише кількості стан розмірів не міняє — нічого не прибирається.

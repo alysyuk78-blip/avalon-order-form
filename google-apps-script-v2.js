@@ -439,6 +439,22 @@ function isColorSurchargeItem_(it) {
  * Повертає true, якщо позиції замовлення змінились.
  */
 function colorWaivedKey_(orderNumber) { return "color_waived_" + orderNumber; }
+/**
+ * Доплата за колір у діях кабінету з ID запиту (створення замовлення, додавання позиції).
+ * Разовий збій таблиці пробуємо ще раз одразу. Якщо не вийшло й удруге — помилку НЕ ковтаємо:
+ * дія не завершена, рядки лишаються «у роботі», і повтор того самого запиту зробить усе
+ * заново. Раніше помилка лише писалась у журнал, запит позначався готовим, а його повтор
+ * повертав «уже зроблено» — замовлення з небазовим кольором лишалось без доплати.
+ */
+function syncColorSurchargeStrict_(sh, orderNumber, keepRow) {
+  try {
+    return syncColorSurcharge_(sh, orderNumber, keepRow);
+  } catch (firstErr) {
+    console.error("Доплата за колір, пробую ще раз: " + firstErr);
+  }
+  return syncColorSurcharge_(sh, orderNumber, keepRow);
+}
+
 function syncColorSurcharge_(sh, orderNumber, keepRow) {
   var last = sh.getLastRow();
   if (last < 2) return false;
@@ -1098,14 +1114,22 @@ function setCommissionFormulas_(sheet, row) {
  *  • площі немає — суми вписав менеджер, а не формула: розмірів рядок не втрачав;
  *  • немає ширини чи висоти — без них формула площу не рахувала ніколи, отже вона «стара»;
  *  • бракує лише глибини — порівнюємо з площею без глибини: так рахувала попередня версія
- *    скрипта, і такий рядок розмірів не втрачав.
+ *    скрипта, і такий рядок розмірів не втрачав. Виняток — колишній екран без бортів, який
+ *    зробили кошиком: площа та сама, але собівартість екрана (з комплектом кріплення).
  */
 function areaFromOtherSizes_(v, w, h) {
   var stored = cellNum_(v[17]) || 0;
   if (!(stored > 0)) return false;
   if (!(w > 0 && h > 0)) return true;
   var flat = avalonPriceItem({ construction: v[8], model: v[40], specs: v[42], width: w, height: h, depth: 0, quantity: 1 }, {});
-  return Math.abs(areaCell_(flat.area + flat.removableSideArea) - stored) >= 0.005;
+  if (Math.abs(areaCell_(flat.area + flat.removableSideArea) - stored) >= 0.005) return true;
+  // Площа збігається з лицевою стінкою. Так виглядає давній рядок без глибини — але й колишній
+  // екран AVL-02 без бортів, який вставкою зробили кошиком (глибини екрану не треба було).
+  // Екран видає собівартість за одиницю: площа × ставка + комплект кріплення.
+  var unitCost = cellNum_(v[18]) || 0;
+  if (!(unitCost > 0)) return false;
+  var asScreen = avalonPriceItem({ construction: "AVL-02", model: "", specs: v[42], width: w, height: h, depth: 0, quantity: 1 }, {});
+  return Math.abs(asScreen.costTotal - unitCost) <= 1;
 }
 
 /**
@@ -4005,7 +4029,7 @@ function adminCreateOrder_(data) {
   });
 
   // Небазовий колір → одна доплата на замовлення окремою позицією.
-  try { syncColorSurcharge_(sheetForFin, written.order_number); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
+  syncColorSurchargeStrict_(sheetForFin, written.order_number);
 
   addDeliveryEvent(order); // подія в календарі + нагадування (як для онлайн-заявок)
 
@@ -4131,7 +4155,7 @@ function adminAddOrderItem_(data) {
     if (fin.list_price != null || fin.discount_pct != null || fin.discount_uah != null) {
       applyFinanceToRow_(sh, row, fin);
     }
-    try { syncColorSurcharge_(sh, num, row); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
+    syncColorSurchargeStrict_(sh, num, row);
     try { syncOrderPaymentState_(num); } catch (syncErr) { /* не валимо додавання */ }
     // Позицію додано повністю — вона стає «готовою» (рядок шукаємо за позначкою: він міг зсунутись).
     finishRequest_(sh, data.request_id);

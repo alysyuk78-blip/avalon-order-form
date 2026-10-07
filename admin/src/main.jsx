@@ -2098,7 +2098,11 @@ import pricing from '../../lib/avalon-pricing.js';
       // Чи вже збережені в позиції рівно ці числа й ці вхідні дані.
       const num = v => Number(v) || 0;
       // Тип і візерунок теж тут: від них залежить, чи позиція рахується формулою взагалі.
-      const inputsSaved = ["construction", "basket_model", "specs", "basket_type", "pattern"].every(k => String(form[k] || "") === String(saved[k] || ""))
+      // І вид: блок видно, коли у формі «Кошик», але калькулятор відкриє ЗБЕРЕЖЕНУ позицію —
+      // якщо там досі послуга чи інший виріб, спершу треба зберегти.
+      const isBasketKind = v => !String(v || "") || String(v) === "Кошик";
+      const inputsSaved = isBasketKind(saved.product_kind) && isBasketKind(form.product_kind)
+        && ["construction", "basket_model", "specs", "basket_type", "pattern"].every(k => String(form[k] || "") === String(saved[k] || ""))
         && ["size_w", "size_h", "size_d"].every(k => num(form[k]) === num(saved[k]))
         && (num(form.quantity) || 1) === (num(saved.quantity) || 1);
       // Калькулятор відкриває позицію такою, як вона ЗБЕРЕЖЕНА. Тому до збереження не пускаємо
