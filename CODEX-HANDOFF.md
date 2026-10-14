@@ -1,5 +1,13 @@
 # CODEX HANDOFF — avalon-order-form
 
+## 14.10.2026 · Claude Code: сторінка відкриття Viber (`public/viber.html`)
+
+- Статична сторінка `https://avalon-order-form.vercel.app/viber.html?n=380XXXXXXXXX` відкриває
+  чат Viber з номером (`viber://chat?number=+380…`). Потрібна месенджер-черзі КП (артефакт
+  Claude): з артефакту схема `viber://` заблокована, а звичайне https-посилання відкривається.
+- Приймає лише українські номери `380` + 9 цифр, інакше показує помилку — не є відкритим
+  редиректом. Код, `api/*`, Apps Script, `vercel.json`, env і Telegram не змінювались.
+
 ## 13.10.2026 · Claude Code: статичні PDF КП для розсилки (`public/kp/`)
 
 - Додано 9 PDF затверджених власником сегментних КП кошиків: `public/kp/01-montazhnyky.pdf` …
