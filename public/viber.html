@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Відкрити Viber — AVALON</title>
+<style>
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f3f4f2;color:#1c2420;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px;box-sizing:border-box}
+  .box{max-width:360px;width:100%;text-align:center}
+  a.btn{display:block;background:#7360f2;color:#fff;text-decoration:none;font-size:18px;font-weight:600;padding:16px;border-radius:12px;margin:16px 0}
+  .num{font-family:ui-monospace,Menlo,monospace;font-size:20px;user-select:all}
+  p{color:#5f6a64;font-size:14px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="num" id="num">—</div>
+  <a class="btn" id="go" href="#">Відкрити чат у Viber</a>
+  <p id="hint">Текст повідомлення вже скопійовано. У чаті затисніть поле вводу і оберіть «Вставити».</p>
+</div>
+<script>
+  // Opens a Viber chat for a phone number passed as ?n=380XXXXXXXXX (digits only).
+  var n = (new URLSearchParams(location.search).get('n') || '').replace(/\D/g, '');
+  var ok = /^380\d{9}$/.test(n);
+  var go = document.getElementById('go');
+  if (ok) {
+    var url = 'viber://chat?number=%2B' + n;
+    go.href = url;
+    document.getElementById('num').textContent = '+' + n;
+    location.href = url;
+  } else {
+    go.hidden = true;
+    document.getElementById('hint').textContent = 'Некоректний номер телефону.';
+  }
+</script>
+</body>
+</html>
