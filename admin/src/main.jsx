@@ -21,6 +21,7 @@ import {
   Info,
   List,
   ListFilter,
+  MessageCircle,
   LogOut,
   PanelTopClose,
   PanelTopOpen,
@@ -128,6 +129,7 @@ import pricing from '../../lib/avalon-pricing.js';
       rates: BadgePercent,
       guide: BookOpen,
       clients: UsersRound,
+      chats: MessageCircle,
       dashboard: (props) => <MaskIcon src="/admin/icons/dashboard.png" size={props.size} className={props.className} />,
       // Шлях АБСОЛЮТНИЙ: кабінет відкривається і як /admin, і як /admin/ — відносний
       // "icons/..." у першому випадку резолвиться в корінь сайту і дає 404.
@@ -147,6 +149,7 @@ import pricing from '../../lib/avalon-pricing.js';
     const NAV_ITEMS = [
       { id: "orders", label: "Замовлення", icon: "orders" },
       { id: "clients", label: "Клієнти", icon: "clients" },
+      { id: "chats", label: "Чати", icon: "chats" },
       { id: "dash", label: "Зведення", icon: "dashboard" },
       { id: "partners", label: "Партнери", icon: "partners" },
       { id: "expenses", label: "Витрати", icon: "expenses" },
@@ -1102,6 +1105,450 @@ import pricing from '../../lib/avalon-pricing.js';
         </div>
       );
     }
+    // ===== Чати з клієнтами (Telegram Business) =====
+    // Повідомлення з особистих акаунтів власника приходять через бота й лежать на аркуші «Чати».
+    // Скрипт таблиці відповідає повільно (до пів хвилини), тож переписку підтягуємо у фоні й
+    // оновлюємо раз на хвилину, поки її видно. Відповідати з кабінету Telegram дозволяє лише
+    // протягом 24 годин після останнього повідомлення клієнта.
+    const CHAT_API = "/api/admin/order?resource=chat";
+    const CHAT_SEEN_KEY = "avalon_chat_seen_v1";
+    const CHAT_POLL_MS = 60 * 1000;
+    const CHAT_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+    function readChatSeen() {
+      try { return JSON.parse(localStorage.getItem(CHAT_SEEN_KEY) || "{}") || {}; } catch (_) { return {}; }
+    }
+    function markChatSeen(chatId, iso) {
+      try {
+        const seen = readChatSeen();
+        if (!seen[chatId] || seen[chatId] < iso) {
+          seen[chatId] = iso;
+          localStorage.setItem(CHAT_SEEN_KEY, JSON.stringify(seen));
+        }
+      } catch (_) { /* сховище недоступне — непрочитані просто не запамʼятаються */ }
+    }
+    function chatUnread(c, seen) {
+      return !!(c.last && !c.last.out && c.last.at > (seen[c.chat_id] || ""));
+    }
+    function chatTime(iso) {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return "";
+      const hm = d.toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
+      const today = new Date();
+      if (d.toDateString() === today.toDateString()) return hm;
+      return d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit" }) + " " + hm;
+    }
+    function chatTitle(c) {
+      return (c && (c.name || (c.username ? "@" + c.username : ""))) || "Клієнт";
+    }
+    function chatTelegramHref(c) {
+      return c && c.username ? "https://t.me/" + encodeURIComponent(c.username) : "tg://user?id=" + encodeURIComponent((c && c.chat_id) || "");
+    }
+    function chatCanReply(c) {
+      const at = Date.parse((c && c.last_in_at) || "");
+      return !!(c && c.connection_id) && Number.isFinite(at) && Date.now() - at < CHAT_REPLY_WINDOW_MS;
+    }
+    // Повторює запит, поки компонент на екрані й вкладку видно.
+    function usePolling(fn, deps, everyMs) {
+      useEffect(() => {
+        let alive = true;
+        let timer = null;
+        async function tick() {
+          if (!alive) return;
+          if (document.visibilityState !== "hidden") {
+            try { await fn(() => alive); } catch (_) { /* помилку показує сам fn */ }
+          }
+          if (alive) timer = setTimeout(tick, everyMs);
+        }
+        tick();
+        function onVisible() {
+          if (document.visibilityState === "visible") { clearTimeout(timer); tick(); }
+        }
+        document.addEventListener("visibilitychange", onVisible);
+        return () => { alive = false; clearTimeout(timer); document.removeEventListener("visibilitychange", onVisible); };
+      }, deps);
+    }
+
+    const chatPhotoCache = new Map();
+    function ChatPhoto({ token, fileId }) {
+      const [url, setUrl] = useState(() => chatPhotoCache.get(fileId) || "");
+      const [failed, setFailed] = useState("");
+      useEffect(() => {
+        if (url || !fileId) return;
+        let alive = true;
+        fetch(CHAT_API + "&view=file&file_id=" + encodeURIComponent(fileId), { headers: { Authorization: "Bearer " + token } })
+          .then(async r => {
+            if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Фото недоступне");
+            return r.blob();
+          })
+          .then(b => { const u = URL.createObjectURL(b); chatPhotoCache.set(fileId, u); if (alive) setUrl(u); })
+          .catch(e => { if (alive) setFailed(e.message || "Фото недоступне"); });
+        return () => { alive = false; };
+      }, [fileId]);
+      if (failed) return <div className="chat-photo-missing">📷 {failed}</div>;
+      if (!url) return <div className="chat-photo-missing">📷 Завантажую фото…</div>;
+      return <a href={url} target="_blank" rel="noopener noreferrer"><img className="chat-photo" src={url} alt="Фото від клієнта"
+        onLoad={e => { const box = e.currentTarget.closest(".chat-messages"); if (box) box.scrollTop = box.scrollHeight; }} /></a>;
+    }
+
+    function ChatMessages({ token, messages, showAccount }) {
+      const boxRef = useRef(null);
+      const lastKey = messages.length ? messages[messages.length - 1].key : "";
+      useEffect(() => {
+        const box = boxRef.current;
+        if (box) box.scrollTop = box.scrollHeight;
+      }, [lastKey]);
+      if (!messages.length) return <p className="chat-empty">Повідомлень ще немає.</p>;
+      let prevDay = "";
+      return (
+        <div className="chat-messages" ref={boxRef}>
+          {messages.map(m => {
+            const day = new Date(m.at).toLocaleDateString("uk-UA", { day: "numeric", month: "long" });
+            const sep = day !== prevDay ? day : "";
+            prevDay = day;
+            return (
+              <React.Fragment key={m.key}>
+                {sep && <div className="chat-day">{sep}</div>}
+                <div className={"chat-msg" + (m.out ? " out" : "") + (m.mark === "видалено" ? " deleted" : "")}>
+                  {m.kind === "фото" && m.file_id && <ChatPhoto token={token} fileId={m.file_id} />}
+                  {m.text && <div className="chat-text">{m.text}</div>}
+                  <div className="chat-meta">
+                    {showAccount && m.account ? m.account + " · " : ""}
+                    {chatTime(m.at)}
+                    {m.mark ? " · " + m.mark : ""}
+                  </div>
+                </div>
+              </React.Fragment>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function ChatComposer({ token, chat, onSent }) {
+      const [text, setText] = useState("");
+      const [busy, setBusy] = useState(false);
+      const [msg, setMsg] = useState(null);
+      useEffect(() => { setText(""); setMsg(null); }, [chat && chat.chat_id]);
+      if (!chat) return null;
+      const canReply = chatCanReply(chat);
+      async function send() {
+        const value = text.trim();
+        if (!value || busy) return;
+        setBusy(true); setMsg(null);
+        try {
+          const res = await api(CHAT_API, { method: "POST", token, body: { action: "send", chat_id: chat.chat_id, connection_id: chat.connection_id, text: value } });
+          setText("");
+          setMsg(res.logged ? null : { ok: true, text: "Надіслано. У переписці зʼявиться за хвилину — таблиця відповіла із запізненням." });
+          onSent && onSent({ key: "local-" + Date.now(), at: new Date().toISOString(), out: true, text: value, kind: "текст", mark: "з кабінету", chat_id: chat.chat_id }, !!res.logged);
+        } catch (e) {
+          setMsg({ ok: false, text: e.message });
+        } finally {
+          setBusy(false);
+        }
+      }
+      if (!canReply) {
+        return (
+          <div className="chat-composer chat-composer--closed">
+            <span>Клієнт не писав понад 24 години — Telegram не дозволяє відповісти з кабінету.</span>
+            <a className="btn secondary" href={chatTelegramHref(chat)} target="_blank" rel="noopener noreferrer">Написати в Telegram</a>
+          </div>
+        );
+      }
+      return (
+        <div className="chat-composer">
+          <textarea rows={2} value={text} placeholder="Відповідь клієнту… (Ctrl+Enter — надіслати)" disabled={busy}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }} />
+          <button type="button" className="btn" disabled={busy || !text.trim()} onClick={send}>
+            {busy ? "Надсилаю…" : "Надіслати"}
+          </button>
+          {msg && <p className={"send-hint" + (msg.ok ? " ok" : " err")}>{msg.text}</p>}
+        </div>
+      );
+    }
+
+    /** Переписка в картці замовлення: чати, привʼязані до замовлення або знайдені за ніком Telegram. */
+    function OrderChatSection({ token, orderNumber }) {
+      const [data, setData] = useState(null);
+      const [error, setError] = useState("");
+      const [extra, setExtra] = useState([]);
+      const [picking, setPicking] = useState(false);
+      const [list, setList] = useState(null);
+      const [busy, setBusy] = useState(false);
+      async function load(isAlive) {
+        try {
+          const res = await api(CHAT_API + "&view=messages&order_number=" + encodeURIComponent(orderNumber), { token });
+          if (isAlive && !isAlive()) return;
+          setData(res); setError(""); setExtra([]);
+          const last = res.messages && res.messages.length ? res.messages[res.messages.length - 1] : null;
+          if (last) (res.chats || []).forEach(c => markChatSeen(c.chat_id, last.at));
+        } catch (e) {
+          if (!isAlive || isAlive()) setError(e.message);
+        }
+      }
+      usePolling(load, [orderNumber], CHAT_POLL_MS);
+      async function openPicker() {
+        setPicking(true);
+        if (list) return;
+        try { setList((await api(CHAT_API + "&view=list", { token })).chats || []); } catch (e) { setError(e.message); setPicking(false); }
+      }
+      async function link(chatId, remove) {
+        setBusy(true);
+        try {
+          await api(CHAT_API, { method: "POST", token, body: { action: "link", chat_id: chatId, order_number: orderNumber, ...(remove ? { remove: true } : {}) } });
+          setPicking(false);
+          await load();
+        } catch (e) { setError(e.message); } finally { setBusy(false); }
+      }
+      if (data && data.configured === false) return null;   // бот чатів ще не підключений
+      const chats = (data && data.chats) || [];
+      const messages = ((data && data.messages) || []).concat(extra);
+      const replyChat = chats.slice().sort((a, b) => (b.last_in_at || "").localeCompare(a.last_in_at || ""))[0] || null;
+      const linkedIds = chats.filter(c => (c.orders || []).indexOf(orderNumber) >= 0).map(c => c.chat_id);
+      return (
+        <section className="order-chat">
+          <div className="section-title">Переписка в Telegram <GuideLink section="chats" /></div>
+          {error && <ErrorBar text={error} onRetry={() => load()} />}
+          {!data && !error && <p className="chat-empty">Завантажую переписку…</p>}
+          {data && (
+            <>
+              {chats.length > 0 && (
+                <div className="chat-who">
+                  {chats.map(c => (
+                    <span key={c.chat_id} className="chat-who-item">
+                      {chatTitle(c)}{c.username && c.name ? " · @" + c.username : ""}
+                      {linkedIds.indexOf(c.chat_id) >= 0 && (
+                        <button type="button" className="link-btn" disabled={busy} onClick={() => link(c.chat_id, true)}>відвʼязати</button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {chats.length > 0 ? (
+                <>
+                  <ChatMessages token={token} messages={messages} showAccount={new Set(messages.map(m => m.account).filter(Boolean)).size > 1} />
+                  <ChatComposer token={token} chat={replyChat} onSent={(m, logged) => { setExtra(x => x.concat(m)); if (logged) load(); }} />
+                </>
+              ) : (
+                <p className="chat-empty">Переписки з цим клієнтом у кабінеті немає. Якщо він пише в Telegram — привʼяжіть його чат.</p>
+              )}
+              {!picking && (
+                <button type="button" className="btn secondary" style={{ marginTop: 8 }} onClick={openPicker}>{chats.length ? "Привʼязати ще один чат" : "Привʼязати чат Telegram"}</button>
+              )}
+              {picking && (
+                <div className="chat-picker">
+                  {!list && <p className="chat-empty">Завантажую чати…</p>}
+                  {list && !list.length && <p className="chat-empty">Чатів ще немає.</p>}
+                  {list && list.filter(c => chats.every(x => x.chat_id !== c.chat_id)).slice(0, 30).map(c => (
+                    <button key={c.chat_id} type="button" className="chat-pick" disabled={busy} onClick={() => link(c.chat_id)}>
+                      <strong>{chatTitle(c)}</strong>
+                      {c.username && c.name ? <span> @{c.username}</span> : null}
+                      <span className="chat-pick-last">{c.last ? chatTime(c.last.at) + " — " + (c.last.text || c.last.kind) : ""}</span>
+                    </button>
+                  ))}
+                  <button type="button" className="btn secondary" onClick={() => setPicking(false)}>Скасувати</button>
+                </div>
+              )}
+            </>
+          )}
+        </section>
+      );
+    }
+
+    /** Для власника: чи підключено бота, які акаунти під ним, кнопка «Підключити». */
+    function ChatSetupPanel({ token }) {
+      const [st, setSt] = useState(null);
+      const [error, setError] = useState("");
+      const [busy, setBusy] = useState(false);
+      async function load() {
+        try { setSt(await api(CHAT_API + "&view=status", { token })); setError(""); } catch (e) { setError(e.message); }
+      }
+      useEffect(() => { load(); }, []);
+      async function setup() {
+        setBusy(true); setError("");
+        try { await api(CHAT_API, { method: "POST", token, body: { action: "setup" } }); await load(); }
+        catch (e) { setError(e.message); } finally { setBusy(false); }
+      }
+      const bot = st && st.bot;
+      const conns = st ? Object.values(st.connections || {}) : [];
+      return (
+        <div className="panel chat-setup">
+          <div className="panel-head"><h2>Підключення Telegram</h2><GuideLink section="chats_setup" label="Як підключити" /></div>
+          {error && <ErrorBar text={error} onRetry={load} />}
+          {!st && !error && <p className="chat-empty">Перевіряю…</p>}
+          {st && !bot.configured && (
+            <p>Бота ще не підключено: у Vercel немає змінної <code>TELEGRAM_BUSINESS_BOT_TOKEN</code>. Кроки — «Як підключити».</p>
+          )}
+          {st && bot.configured && (
+            <ul className="chat-setup-list">
+              <li>{bot.bot ? <>Бот: <strong>@{bot.bot.username}</strong>{bot.bot.business ? "" : " — у @BotFather не ввімкнено Business Mode"}</> : <>Токен бота не підходить: {bot.bot_error}</>}</li>
+              <li>
+                {bot.webhook_ok ? "Повідомлення надходять у кабінет." : bot.webhook_foreign ? "У бота вже є інше підключення — для чатів потрібен окремий, новий бот." : "Бот ще не підключений до кабінету."}
+                {!bot.webhook_ok && !bot.webhook_foreign && bot.bot && (
+                  <button type="button" className="btn" style={{ marginLeft: 8 }} disabled={busy} onClick={setup}>{busy ? "Підключаю…" : "Підключити бота"}</button>
+                )}
+              </li>
+              {bot.last_error && <li className="chat-setup-warn">Остання помилка доставки: {bot.last_error}{bot.pending ? ` (у черзі ${bot.pending})` : ""}</li>}
+              <li>
+                Акаунти: {conns.length ? conns.map(c => (
+                  <span key={c.id} className="chat-acc">{c.name || "@" + c.username}{!c.enabled ? " — вимкнено" : !c.can_reply ? " — без права відповідати" : ""}</span>
+                )) : "жоден ще не підключив бота (Telegram → Налаштування → Telegram для бізнесу → Чат-боти)."}
+              </li>
+              <li>Збережено повідомлень: {st.messages}{st.last_at ? ", останнє — " + chatTime(st.last_at) : ""}.</li>
+            </ul>
+          )}
+        </div>
+      );
+    }
+
+    function ChatsView({ token, role, groups, active, onOpenOrder, onUnread }) {
+      const [data, setData] = useState(null);
+      const [error, setError] = useState("");
+      const [q, setQ] = useState("");
+      const [selected, setSelected] = useState("");
+      const [conv, setConv] = useState(null);
+      const [convError, setConvError] = useState("");
+      const [extra, setExtra] = useState([]);
+      const [seen, setSeen] = useState(readChatSeen);
+      const [linkTo, setLinkTo] = useState("");
+      const [busy, setBusy] = useState(false);
+      const isOwner = role !== "manager";
+      // Стан підключення (звернення до Telegram і таблиці) — лише коли розділ уперше відкрили.
+      const [opened, setOpened] = useState(active);
+      useEffect(() => { if (active) setOpened(true); }, [active]);
+
+      async function loadList(isAlive) {
+        try {
+          const res = await api(CHAT_API + "&view=list", { token });
+          if (isAlive && !isAlive()) return;
+          setData(res); setError("");
+        } catch (e) { if (!isAlive || isAlive()) setError(e.message); }
+      }
+      usePolling(loadList, [token], CHAT_POLL_MS);
+
+      async function loadConv(isAlive) {
+        if (!selected) return;
+        try {
+          const res = await api(CHAT_API + "&view=messages&chat_id=" + encodeURIComponent(selected), { token });
+          if (isAlive && !isAlive()) return;
+          setConv(res); setConvError(""); setExtra([]);
+        } catch (e) { if (!isAlive || isAlive()) setConvError(e.message); }
+      }
+      usePolling(loadConv, [selected], CHAT_POLL_MS);
+
+      const chats = (data && data.chats) || [];
+      const unread = chats.filter(c => chatUnread(c, seen)).length;
+      useEffect(() => { onUnread && onUnread(unread); }, [unread]);
+      // Відкрита переписка на видному екрані — прочитана.
+      const current = chats.find(c => c.chat_id === selected) || null;
+      useEffect(() => {
+        if (active && current && current.last) { markChatSeen(current.chat_id, current.last.at); setSeen(readChatSeen()); }
+      }, [active, selected, current && current.last && current.last.at]);
+
+      const orderOptions = useMemo(() => (groups || []).slice(0, 400).map(g => ({ num: g.order_number, label: g.order_number + " — " + (g.client || "") })), [groups]);
+      const filtered = useMemo(() => {
+        const needle = q.trim().toLowerCase();
+        if (!needle) return chats;
+        return chats.filter(c => (c.name + " " + c.username + " " + (c.orders || []).join(" ") + " " + (c.last ? c.last.text : "")).toLowerCase().indexOf(needle) >= 0);
+      }, [chats, q]);
+
+      async function link(orderNumber, remove) {
+        if (!selected || !orderNumber) return;
+        setBusy(true);
+        try {
+          await api(CHAT_API, { method: "POST", token, body: { action: "link", chat_id: selected, order_number: orderNumber, ...(remove ? { remove: true } : {}) } });
+          setLinkTo("");
+          await loadList();
+        } catch (e) { setConvError(e.message); } finally { setBusy(false); }
+      }
+      async function forget() {
+        if (!current || !window.confirm("Прибрати переписку з «" + chatTitle(current) + "» з кабінету?\n\nЇї рядки буде видалено з аркуша «Чати», і нові повідомлення цієї людини більше не зберігатимуться. У Telegram нічого не зміниться.")) return;
+        setBusy(true);
+        try {
+          await api(CHAT_API, { method: "POST", token, body: { action: "forget", chat_id: current.chat_id } });
+          setSelected(""); setConv(null);
+          await loadList();
+        } catch (e) { setConvError(e.message); } finally { setBusy(false); }
+      }
+
+      const configured = !data || data.configured !== false;
+      const convMessages = ((conv && conv.messages) || []).concat(extra);
+      const convChat = (conv && conv.chats && conv.chats[0]) || current;
+      return (
+        <div>
+          {isOwner && opened && <ChatSetupPanel token={token} />}
+          {!configured && !isOwner && <div className="panel"><p>Чати Telegram ще не підключені — це робить власник.</p></div>}
+          {configured && (
+            <div className={"panel chats" + (selected ? " has-selected" : "")}>
+              <div className="chats-list">
+                <div className="panel-head">
+                  <h2>Чати{unread ? <span className="chat-badge">{unread}</span> : null}</h2>
+                  <GuideLink section="chats" />
+                </div>
+                <input className="chats-search" type="search" placeholder="Імʼя, нік, № замовлення…" value={q} onChange={e => setQ(e.target.value)} />
+                {error && <ErrorBar text={error} onRetry={() => loadList()} />}
+                {!data && !error && <p className="chat-empty">Завантажую чати… (таблиця відповідає до пів хвилини)</p>}
+                {data && !chats.length && <p className="chat-empty">Повідомлень ще немає. Вони зʼявляться, щойно клієнт напише на підключений акаунт.</p>}
+                {filtered.map(c => (
+                  <button key={c.chat_id} type="button" className={"chat-row" + (c.chat_id === selected ? " active" : "") + (chatUnread(c, seen) ? " unread" : "")}
+                    onClick={() => { setSelected(c.chat_id); setConv(null); setConvError(""); }}>
+                    <span className="chat-row-top">
+                      <strong>{chatTitle(c)}</strong>
+                      <span>{c.last ? chatTime(c.last.at) : ""}</span>
+                    </span>
+                    <span className="chat-row-last">{c.last ? (c.last.out ? "Ви: " : "") + (c.last.text || c.last.kind) : ""}</span>
+                    <span className="chat-row-orders">
+                      {(c.orders || []).length ? c.orders.join(", ") : c.suggested && c.suggested.length ? "можливо: " + c.suggested[c.suggested.length - 1] : "без замовлення"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className="chats-conv">
+                {!selected && <p className="chat-empty">Оберіть чат ліворуч.</p>}
+                {selected && (
+                  <>
+                    <div className="chats-conv-head">
+                      <button type="button" className="ghost chats-back" onClick={() => setSelected("")}>← Чати</button>
+                      <div className="chats-conv-title">
+                        <strong>{chatTitle(convChat)}</strong>
+                        {convChat && convChat.username ? <span> @{convChat.username}</span> : null}
+                        {current && current.accounts && current.accounts.length ? <span className="chat-acc-note"> · пише на: {current.accounts.join(", ")}</span> : null}
+                      </div>
+                      <a className="btn secondary" href={chatTelegramHref(convChat || current)} target="_blank" rel="noopener noreferrer">У Telegram</a>
+                    </div>
+                    <div className="chats-orders">
+                      {current && (current.orders || []).map(n => (
+                        <span key={n} className="chat-order-chip">
+                          <button type="button" className="link-btn" onClick={() => onOpenOrder(n)}>{n}</button>
+                          <button type="button" className="link-btn muted" disabled={busy} title="Відвʼязати" onClick={() => link(n, true)}>×</button>
+                        </span>
+                      ))}
+                      {current && (current.suggested || []).map(n => (
+                        <button key={n} type="button" className="btn secondary small" disabled={busy} onClick={() => link(n)}>Привʼязати {n}</button>
+                      ))}
+                      <input list="chat-order-options" className="chat-link-input" placeholder="№ замовлення" value={linkTo} onChange={e => setLinkTo(e.target.value)} />
+                      <datalist id="chat-order-options">
+                        {orderOptions.map(o => <option key={o.num} value={o.num}>{o.label}</option>)}
+                      </datalist>
+                      <button type="button" className="btn secondary small" disabled={busy || !linkTo.trim()} onClick={() => link(linkTo.trim())}>Привʼязати</button>
+                    </div>
+                    {convError && <ErrorBar text={convError} onRetry={() => loadConv()} />}
+                    {!conv && !convError && <p className="chat-empty">Завантажую переписку…</p>}
+                    {conv && <ChatMessages token={token} messages={convMessages} showAccount={!!(current && current.accounts && current.accounts.length > 1)} />}
+                    {conv && conv.truncated && <p className="margin-calc-note">Показано останні повідомлення; усю історію видно на аркуші «Чати» в таблиці.</p>}
+                    {conv && <ChatComposer token={token} chat={convChat} onSent={(m, logged) => { setExtra(x => x.concat(m)); if (logged) { loadConv(); loadList(); } }} />}
+                    {isOwner && (
+                      <button type="button" className="link-btn muted chat-forget" disabled={busy} onClick={forget}>Особиста розмова? Прибрати з кабінету</button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     /** Збирає довідник: 1 телефон → основне імʼя (з найранішого замовлення) + інші варіанти. */
     function buildClientsDirectory(groups) {
       const byPhone = {};
@@ -3040,6 +3487,8 @@ import pricing from '../../lib/avalon-pricing.js';
               <ClientReminder order={order} items={items} disabled={busy || stale}
                 onReminded={() => save({ client_reminded: true })} />
             )}
+
+            <OrderChatSection token={token} orderNumber={orderNumber} />
 
             <PaymentsSection
               token={token}
@@ -5061,6 +5510,33 @@ import pricing from '../../lib/avalon-pricing.js';
         ],
       },
       {
+        id: "chats",
+        title: "Чати з клієнтами",
+        lead: "Переписка з особистих Telegram-акаунтів власника — у розділі «Чати» і в картці кожного замовлення. Viber і WhatsApp у кабінет не потрапляють: для них — кнопки звʼязку в картці.",
+        steps: [
+          ["Де дивитись", "Розділ «Чати»: ліворуч усі розмови (нові — з червоною крапкою, число на значку меню — скільки чатів із непрочитаним), праворуч — переписка. У картці замовлення — блок «Переписка в Telegram» саме з цим клієнтом. Повідомлення зʼявляються із запізненням до хвилини."],
+          ["Звʼяжіть чат із замовленням", "Якщо в замовленні вказано нік Telegram клієнта, чат знайдеться сам. Інакше в розділі «Чати» оберіть розмову й впишіть № замовлення в поле біля «Привʼязати» (або натисніть запропоноване «Привʼязати ORD-…»). З картки — кнопка «Привʼязати чат Telegram» і вибір зі списку. Помилились — «відвʼязати» або «×»."],
+          ["Відповідайте", "Напишіть текст унизу переписки й натисніть «Надіслати» (або Ctrl+Enter). Клієнт отримає його від імені акаунта власника, як звичайне повідомлення. У Telegram на телефоні воно теж буде видно."],
+          ["Якщо клієнт мовчить понад добу", "Telegram дозволяє відповідати з кабінету лише протягом 24 годин після останнього повідомлення клієнта. Далі замість поля відповіді — кнопка «Написати в Telegram»: пишіть з телефону. Щойно клієнт відповість — кабінет знову дозволить."],
+          ["Фото й файли", "Фото від клієнта видно прямо в переписці — натисніть, щоб відкрити більшим. Документи, голосові й відео кабінет лише позначає: відкривайте їх у Telegram. Корисні фото збережіть у «Файли замовлення»."],
+          ["Історія", "Кабінет зберігає повідомлення від дня підключення бота; давніших Telegram не віддає. Повна історія — на аркуші «Чати» в таблиці."],
+        ],
+      },
+      {
+        id: "chats_setup",
+        title: "Підключити Telegram до кабінету",
+        lead: "Для власника, один раз. Потрібні Telegram Premium на кожному акаунті (уже є) і окремий новий бот. Бота заявок @avalon_order_bot не використовуйте — він працює з Make.com.",
+        steps: [
+          ["Створіть бота", "У Telegram відкрийте @BotFather → /newbot → назва (наприклад, «Avalon чати») → імʼя, що закінчується на bot. BotFather надішле токен — довгий рядок із двокрапкою. Нікому його не пересилайте."],
+          ["Увімкніть Business Mode", "У @BotFather: /mybots → ваш новий бот → Bot Settings → Business Mode → Turn on."],
+          ["Внесіть токен у Vercel", "vercel.com → проєкт «avalon-order-form» → Settings → Environment Variables → Name: TELEGRAM_BUSINESS_BOT_TOKEN, Value: токен, Environment: Production → Save. Потім Deployments → найновіший запис → три крапки → Redeploy."],
+          ["Підключіть бота до кабінету", "Кабінет → «Чати» → блок «Підключення Telegram» → «Підключити бота». Має зʼявитись «Повідомлення надходять у кабінет»."],
+          ["Додайте бота в кожен акаунт", "На телефоні з першого акаунта: Налаштування → Telegram для бізнесу → Чат-боти → впишіть імʼя бота → оберіть, до яких чатів у нього доступ, → увімкніть «Відповідати на повідомлення» → Готово. Повторіть у другому акаунті."],
+          ["Не пускайте особисті розмови", "Там же, у «Чат-боти», доступ краще дати так: «Усі чати, крім…» → виключити «Контакти» (родину й знайомих) — або «Лише вибрані» → «Нові чати» і «Не контакти». Особиста розмова все ж потрапила в кабінет — відкрийте її в «Чатах» і натисніть «Особиста розмова? Прибрати з кабінету»: її буде видалено й більше не збережено."],
+          ["Перевірте", "Попросіть когось написати на акаунт. За хвилину повідомлення зʼявиться в «Чатах», а в блоці «Підключення Telegram» — імʼя акаунта. Менеджер бачить і веде чати, але підключення й «Прибрати з кабінету» — лише у вас."],
+        ],
+      },
+      {
         id: "rates",
         title: "Змінити ставки підрядника",
         lead: "Для власника. Ставки називає підрядник; тут їх вносять один раз — і ними рахують калькулятор, кабінет і таблиця.",
@@ -5090,7 +5566,7 @@ import pricing from '../../lib/avalon-pricing.js';
       },
     ];
     // Розділи лише для власника — менеджерові їх не показуємо.
-    const GUIDE_OWNER_ONLY = ["rates", "access"];
+    const GUIDE_OWNER_ONLY = ["rates", "access", "chats_setup"];
     const GUIDE_RULES = [
       "Ціну кошика рахує формула. Змінити її можна лише знижкою у полі «Знижка %» — не вписуйте іншу ціну руками.",
       "Розміри — у міліметрах і лише готового кошика: ширина, висота, глибина.",
@@ -5673,6 +6149,7 @@ import pricing from '../../lib/avalon-pricing.js';
     function App() {
       const [token, setToken] = useState(() => readToken());
       const [tab, setTab] = useState("orders");
+      const [chatUnreadCount, setChatUnreadCount] = useState(0);
       const [groups, setGroups] = useState(() => {
         const cached = readAdminCache();
         return Array.isArray(cached.groups) ? cached.groups : [];
@@ -6063,14 +6540,16 @@ import pricing from '../../lib/avalon-pricing.js';
             </div>
             <nav className="nav" aria-label="Розділи CRM">
               {NAV_ITEMS.map(item => (
-                <IconButton
-                  key={item.id}
-                  icon={item.icon}
-                  label={item.label}
-                  active={tab === item.id}
-                  aria-current={tab === item.id ? "page" : undefined}
-                  onClick={() => setTab(item.id)}
-                />
+                <span key={item.id} className="nav-item">
+                  <IconButton
+                    icon={item.icon}
+                    label={item.id === "chats" && chatUnreadCount ? `Чати — нових: ${chatUnreadCount}` : item.label}
+                    active={tab === item.id}
+                    aria-current={tab === item.id ? "page" : undefined}
+                    onClick={() => setTab(item.id)}
+                  />
+                  {item.id === "chats" && chatUnreadCount > 0 && <span className="nav-badge" aria-hidden="true">{chatUnreadCount}</span>}
+                </span>
               ))}
             </nav>
             <div className="top-actions">
@@ -6104,6 +6583,16 @@ import pricing from '../../lib/avalon-pricing.js';
                 refreshOrders={refreshOrders}
                 onRetry={() => refreshData().catch(() => {})}
                 onOpenOrder={openOrder}
+              />
+            </div>
+            <div style={{ display: tab === "chats" ? "block" : "none" }}>
+              <ChatsView
+                token={token}
+                role={tokenRole(token)}
+                groups={groups}
+                active={tab === "chats"}
+                onOpenOrder={openOrder}
+                onUnread={setChatUnreadCount}
               />
             </div>
             <div style={{ display: tab === "dash" ? "block" : "none" }}>
