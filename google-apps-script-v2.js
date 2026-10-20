@@ -5955,6 +5955,7 @@ var CHAT_MARK_CRM = "з кабінету";
 var CHAT_MESSAGES_LIMIT = 400;
 var CHAT_LIST_LIMIT = 300;
 var CHAT_TEXT_MAX = 4000;
+var CHAT_UNREAD_MAX = 100;   // більше кабінет однаково покаже як «99+»
 
 function setupChats(ss) {
   ss = ss || SpreadsheetApp.getActiveSpreadsheet();
@@ -6196,19 +6197,22 @@ function adminChatList_() {
     var id = String(r[3] || "");
     if (!id) return;
     var m = chatRowToMessage_(r);
-    var c = byChat[id] || (byChat[id] = { chat_id: id, name: "", username: "", count: 0, accounts: [], last: null, last_in_at: "", connection_id: "" });
+    var c = byChat[id] || (byChat[id] = { chat_id: id, name: "", username: "", count: 0, accounts: [], last: null, last_in_at: "", connection_id: "", recent_in: [] });
     c.count++;
     if (r[4]) c.name = String(r[4]);
     if (r[5]) c.username = String(r[5]).replace(/^@/, "");
     if (m.account && c.accounts.indexOf(m.account) < 0) c.accounts.push(m.account);
     if (!c.last || m.at >= c.last.at) c.last = m;
     if (!m.out && m.at >= c.last_in_at) { c.last_in_at = m.at; c.connection_id = m.connection_id; }
+    if (!m.out && m.mark !== CHAT_MARK_DELETED) c.recent_in.push(m.at);
   });
   var nicks = chatOrdersByNick_();
   var list = Object.keys(byChat).map(function (id) {
     var c = byChat[id];
     if (!c.connection_id && c.last) c.connection_id = c.last.connection_id;
     c.orders = chatLinks_(id);
+    // Час останніх вхідних — кабінет рахує, скільки з них ще не прочитано (як лічильник в iOS).
+    c.recent_in = c.recent_in.sort().slice(-CHAT_UNREAD_MAX);
     c.suggested = (nicks[chatNick_(c.username)] || []).filter(function (n) { return c.orders.indexOf(n) < 0; });
     return c;
   });
