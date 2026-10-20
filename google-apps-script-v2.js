@@ -4216,6 +4216,14 @@ function handleAdminRequest_(data) {
     if (action === "rates_save") return jsonOut(adminRatesSave_(data));
     if (action === "rates_delete") return jsonOut(adminRatesDelete_(data));
     if (action === "order_reprice") return jsonOut(adminOrderReprice_(data));
+    // Чати з клієнтами (Telegram Business). Аркуш «Чати» пишуть під власним блокуванням.
+    if (action === "chat_ingest") return jsonOut(adminChatIngest_(data));
+    if (action === "chat_log_out") return jsonOut(adminChatLogOut_(data));
+    if (action === "chat_list") return jsonOut(adminChatList_());
+    if (action === "chat_messages") return jsonOut(adminChatMessages_(data));
+    if (action === "chat_status") return jsonOut(adminChatStatus_());
+    if (action === "chat_link") return jsonOut(adminChatLink_(data));
+    if (action === "chat_forget") return jsonOut(adminChatForget_(data));
     return jsonOut({ status: "error", message: "Unknown admin_action: " + action });
   } catch (err) {
     return jsonOut({ status: "error", message: String(err) });
@@ -5915,6 +5923,376 @@ function adminContractorSendFile_(data) {
     }
     file.setDescription(SENT_TAG + nowIsoKyiv_() + (how === "link" ? " link" : ""));
     return { status: "ok", how: how, file: fileToJson_(file) };
+  });
+}
+
+// ===================== ЧАТИ З КЛІЄНТАМИ (Telegram Business) =====================
+// Особисті акаунти власника (Telegram Premium) підключають бота в «Налаштування → Telegram
+// для бізнесу → Чат-боти». Telegram надсилає серверу кабінету кожне повідомлення з чатів,
+// доступних боту (вхідні й вихідні), сервер передає їх сюди (chat_ingest), а ми зберігаємо
+// їх на аркуші «Чати». Історії до підключення бота Telegram не дає.
+//
+//   • повідомлення — рядок аркуша; ключ «звʼязок:чат:№ повідомлення» не дає записати двічі
+//     (Telegram повторює доставку, якщо сервер не встиг відповісти);
+//   • чат клієнта (його id у Telegram) привʼязується до замовлень: властивість
+//     chatlink_<чат> = «ORD-1,ORD-2». Без привʼязки картка замовлення знаходить чат за ніком
+//     Telegram клієнта (колонка AM або «Telegram: @нік» у примітках);
+//   • «Прибрати з CRM» (лише власник) видаляє рядки чату й більше його не зберігає
+//     (chatignore_<чат>) — для особистих розмов, що випадково потрапили до бота.
+// Аркуш пишемо під блокуванням документа, а не скрипта: нові повідомлення не чекають, поки
+// кабінет зберігає замовлення.
+var SHEET_CHATS = "Чати";
+var CHAT_HEADERS = ["Ключ", "Час", "Акаунт", "Чат", "Клієнт", "Нік", "Напрям", "Текст", "Тип", "Файл", "Звʼязок", "Позначка"];
+var CHAT_COLS = CHAT_HEADERS.length;
+var CHAT_LINK_PREFIX = "chatlink_";
+var CHAT_IGNORE_PREFIX = "chatignore_";
+var CHAT_CONNS_KEY = "TG_BUSINESS_CONNECTIONS";
+var CHAT_DIR_IN = "Вхідне";
+var CHAT_DIR_OUT = "Вихідне";
+var CHAT_MARK_EDITED = "змінено";
+var CHAT_MARK_DELETED = "видалено";
+var CHAT_MARK_CRM = "з кабінету";
+var CHAT_MESSAGES_LIMIT = 400;
+var CHAT_LIST_LIMIT = 300;
+var CHAT_TEXT_MAX = 4000;
+
+function setupChats(ss) {
+  ss = ss || SpreadsheetApp.getActiveSpreadsheet();
+  var existing = ss.getSheetByName(SHEET_CHATS);
+  if (existing) return existing;
+  var sh = ss.insertSheet(SHEET_CHATS);
+  sh.getRange(1, 1, 1, CHAT_COLS).setValues([CHAT_HEADERS]);
+  headerStyle(sh, CHAT_COLS);
+  [150, 130, 120, 110, 160, 120, 90, 420, 90, 120, 120, 100].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  // Ключ і id чату — текстом: інакше таблиця перетворить довгі числа на «1,23E+09».
+  sh.getRange("A2:A").setNumberFormat("@");
+  sh.getRange("D2:D").setNumberFormat("@");
+  sh.getRange("K2:K").setNumberFormat("@");
+  sh.getRange("B2:B").setNumberFormat("dd.MM.yyyy HH:mm");
+  sh.getRange("H2:H").setWrap(true);
+  return sh;
+}
+function chatsSheet_() { return setupChats(SpreadsheetApp.getActiveSpreadsheet()); }
+
+/** Блокування для аркуша «Чати»: документа (окреме від кабінету), у тестах — скрипта. */
+function chatWithLock_(fn) {
+  var lock = null;
+  try { lock = LockService.getDocumentLock(); } catch (e) { lock = null; }
+  if (!lock) lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try { return fn(); } finally { try { lock.releaseLock(); } catch (e2) {} }
+}
+
+function chatProps_() { return PropertiesService.getScriptProperties(); }
+function chatIdStr_(v) {
+  var s = String(v == null ? "" : v).trim();
+  return /^-?\d{1,20}$/.test(s) ? s : "";
+}
+function chatPersonName_(u) {
+  if (!u) return "";
+  return [u.first_name, u.last_name].filter(function (x) { return x; }).join(" ").trim();
+}
+function chatNick_(v) { return String(v || "").replace(/^@/, "").trim().toLowerCase(); }
+
+// --- підключені акаунти ---
+function chatConnections_() {
+  try { return JSON.parse(chatProps_().getProperty(CHAT_CONNS_KEY) || "{}") || {}; } catch (e) { return {}; }
+}
+function chatNoteConnection_(c) {
+  var id = String(c && c.id || "");
+  if (!id) return { status: "ok", skipped: true };
+  var all = chatConnections_();
+  var rights = c.rights || {};
+  all[id] = {
+    id: id,
+    name: chatPersonName_(c.user) || String(c.user && c.user.username || ""),
+    username: String(c.user && c.user.username || ""),
+    user_id: String(c.user && c.user.id || ""),
+    enabled: c.is_enabled !== false,
+    can_reply: !!(rights.can_reply || c.can_reply),
+    since: c.date ? new Date(Number(c.date) * 1000).toISOString() : "",
+  };
+  chatProps_().setProperty(CHAT_CONNS_KEY, JSON.stringify(all));
+  return { status: "ok", connection: all[id] };
+}
+function chatAccountLabel_(connectionId) {
+  var c = chatConnections_()[String(connectionId || "")];
+  return c ? (c.name || (c.username ? "@" + c.username : "")) : "";
+}
+
+// --- що в повідомленні ---
+/** Текст і вкладення повідомлення Telegram → { kind, text, file }. */
+function chatMessageContent_(m) {
+  var caption = String(m.caption || "");
+  if (m.text != null) return { kind: "текст", text: String(m.text), file: "" };
+  if (m.photo && m.photo.length) {
+    // Найбільше фото, що вміщується у відповідь сервера кабінету (до 4 МБ).
+    var pick = m.photo[0];
+    m.photo.forEach(function (p) { if (!p.file_size || p.file_size <= 4000000) pick = p; });
+    return { kind: "фото", text: caption, file: String(pick.file_id || "") };
+  }
+  if (m.document) {
+    var dn = String(m.document.file_name || "файл");
+    return { kind: "документ", text: (caption ? caption + "\n" : "") + "📎 " + dn, file: String(m.document.file_id || "") };
+  }
+  if (m.voice) return { kind: "голосове", text: "🎤 Голосове, " + (m.voice.duration || 0) + " с", file: "" };
+  if (m.video_note) return { kind: "відео", text: "🎥 Відеоповідомлення, " + (m.video_note.duration || 0) + " с", file: "" };
+  if (m.video) return { kind: "відео", text: (caption ? caption + "\n" : "") + "🎥 Відео, " + (m.video.duration || 0) + " с", file: "" };
+  if (m.audio) return { kind: "аудіо", text: (caption ? caption + "\n" : "") + "🎵 " + String(m.audio.title || m.audio.file_name || "Аудіо"), file: "" };
+  if (m.animation) return { kind: "відео", text: (caption ? caption + "\n" : "") + "GIF", file: "" };
+  if (m.sticker) return { kind: "стікер", text: String(m.sticker.emoji || "🙂") + " (стікер)", file: "" };
+  if (m.contact) {
+    return { kind: "контакт", text: "👤 Контакт: " + chatPersonName_(m.contact) + " " + String(m.contact.phone_number || ""), file: "" };
+  }
+  if (m.location) return { kind: "місце", text: "📍 https://maps.google.com/?q=" + m.location.latitude + "," + m.location.longitude, file: "" };
+  return { kind: "інше", text: caption || "(повідомлення, яке кабінет не показує — відкрийте в Telegram)", file: "" };
+}
+
+function chatFindRow_(sh, key) {
+  var last = sh.getLastRow();
+  if (last < 2) return 0;
+  var found = sh.getRange(2, 1, last - 1, 1).createTextFinder(key).matchEntireCell(true).findAll();
+  return found && found.length ? found[0].getRow() : 0;
+}
+
+/** Нове або змінене повідомлення з бізнес-чату. mark — позначка для нового рядка. */
+function chatUpsertMessage_(m, edited, mark) {
+  var chat = m && m.chat;
+  var chatId = chatIdStr_(chat && chat.id);
+  if (!chatId || (chat.type && chat.type !== "private")) return { status: "ok", skipped: true };
+  if (chatProps_().getProperty(CHAT_IGNORE_PREFIX + chatId)) return { status: "ok", skipped: true, ignored: true };
+  var conn = String(m.business_connection_id || "");
+  var key = conn + ":" + chatId + ":" + String(m.message_id || "");
+  // У приватному чаті id чату = id клієнта: усе, що надіслав не він, — від власника акаунта.
+  var outgoing = !!m.sender_business_bot || !!(m.from && String(m.from.id) !== chatId);
+  var content = chatMessageContent_(m);
+  var text = content.text.length > CHAT_TEXT_MAX ? content.text.slice(0, CHAT_TEXT_MAX) + "…" : content.text;
+  var when = new Date(Number(m.date || 0) * 1000 || Date.now());
+
+  var result = chatWithLock_(function () {
+    var sh = chatsSheet_();
+    var row = chatFindRow_(sh, key);
+    if (row) {
+      if (!edited) return { status: "ok", duplicate: true };
+      sh.getRange(row, 8, 1, 3).setValues([[text, content.kind, content.file]]);
+      sh.getRange(row, 12).setValue(CHAT_MARK_EDITED);
+      return { status: "ok", edited: true };
+    }
+    sh.appendRow([key, when, chatAccountLabel_(conn), chatId, chatPersonName_(chat), chat.username ? "@" + chat.username : "",
+      outgoing ? CHAT_DIR_OUT : CHAT_DIR_IN, text, content.kind, content.file, conn, edited ? CHAT_MARK_EDITED : (mark || "")]);
+    return { status: "ok", added: true };
+  });
+  if (result.added && !outgoing) {
+    try { chatAutoLink_(chatId, chat.username); } catch (linkErr) { console.error("Чат → замовлення: " + linkErr); }
+  }
+  return result;
+}
+
+function chatMarkDeleted_(d) {
+  var chatId = chatIdStr_(d && d.chat && d.chat.id);
+  if (!chatId || !d.message_ids || !d.message_ids.length) return { status: "ok", skipped: true };
+  var conn = String(d.business_connection_id || "");
+  return chatWithLock_(function () {
+    var sh = chatsSheet_();
+    var n = 0;
+    d.message_ids.forEach(function (mid) {
+      var row = chatFindRow_(sh, conn + ":" + chatId + ":" + mid);
+      if (row) { sh.getRange(row, 12).setValue(CHAT_MARK_DELETED); n++; }
+    });
+    return { status: "ok", deleted: n };
+  });
+}
+
+/** Оновлення Telegram, яке переслав сервер кабінету. */
+function adminChatIngest_(data) {
+  var u = (data && data.update) || {};
+  if (u.business_connection) return chatNoteConnection_(u.business_connection);
+  if (u.business_message) return chatUpsertMessage_(u.business_message, false);
+  if (u.edited_business_message) return chatUpsertMessage_(u.edited_business_message, true);
+  if (u.deleted_business_messages) return chatMarkDeleted_(u.deleted_business_messages);
+  return { status: "ok", skipped: true };
+}
+/** Повідомлення, яке кабінет щойно надіслав через бота (відповідь Telegram на sendMessage). */
+function adminChatLogOut_(data) {
+  var m = data && data.message;
+  if (!m || !m.chat) throw new Error("Немає повідомлення");
+  return chatUpsertMessage_(m, false, CHAT_MARK_CRM);
+}
+
+// --- привʼязка до замовлень ---
+function chatLinks_(chatId) {
+  return String(chatProps_().getProperty(CHAT_LINK_PREFIX + chatId) || "").split(",")
+    .map(function (s) { return s.trim(); }).filter(function (s) { return s; });
+}
+function chatSetLinks_(chatId, list) {
+  if (list.length) chatProps_().setProperty(CHAT_LINK_PREFIX + chatId, list.join(","));
+  else chatProps_().deleteProperty(CHAT_LINK_PREFIX + chatId);
+}
+
+/** Нік Telegram → номери замовлень (нові — останніми), з колонки AM і приміток. */
+function chatOrdersByNick_() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_ORDERS);
+  var out = {};
+  if (!sheet) return out;
+  var last = sheet.getLastRow();
+  if (last < 2) return out;
+  var vals = sheet.getRange(2, 1, last - 1, 39).getValues();
+  vals.forEach(function (v) {
+    var num = String(v[0] || "").trim();
+    if (!num) return;
+    var nick = chatNick_(v[38]) || chatNick_(parseContactFromNotes_(v[31]).contact_telegram);
+    if (!nick) return;
+    if (!out[nick]) out[nick] = [];
+    if (out[nick].indexOf(num) < 0) out[nick].push(num);
+  });
+  return out;
+}
+
+/** Перше повідомлення клієнта з ніком, за яким є замовлення, — привʼязуємо до найновішого. */
+function chatAutoLink_(chatId, username) {
+  var nick = chatNick_(username);
+  if (!nick || chatLinks_(chatId).length) return;
+  var nums = chatOrdersByNick_()[nick];
+  if (nums && nums.length) chatSetLinks_(chatId, [nums[nums.length - 1]]);
+}
+
+function adminChatLink_(data) {
+  var chatId = chatIdStr_(data && data.chat_id);
+  var num = String(data && data.order_number || "").trim();
+  if (!chatId) throw new Error("Не вказано чат");
+  if (!/^[A-Za-zА-Яа-яІіЇїЄєҐґ0-9_\-]{3,40}$/.test(num)) throw new Error("Не вказано замовлення");
+  var list = chatLinks_(chatId).filter(function (x) { return x !== num; });
+  if (!data.remove) list.push(num);
+  chatSetLinks_(chatId, list);
+  return { status: "ok", chat_id: chatId, orders: list };
+}
+
+// --- читання ---
+function chatReadRows_() {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_CHATS);
+  if (!sh) return [];
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  return sh.getRange(2, 1, last - 1, CHAT_COLS).getValues();
+}
+function chatIso_(v) {
+  if (v instanceof Date) return isNaN(v.getTime()) ? "" : v.toISOString();
+  var d = new Date(v);
+  return isNaN(d.getTime()) ? "" : d.toISOString();
+}
+function chatRowToMessage_(r) {
+  return {
+    key: String(r[0] || ""), at: chatIso_(r[1]), account: String(r[2] || ""), chat_id: String(r[3] || ""),
+    out: String(r[6] || "") === CHAT_DIR_OUT, text: String(r[7] || ""), kind: String(r[8] || ""),
+    file_id: String(r[9] || ""), connection_id: String(r[10] || ""), mark: String(r[11] || ""),
+  };
+}
+
+/** Усі чати: останнє повідомлення, привʼязані й можливі замовлення. */
+function adminChatList_() {
+  var rows = chatReadRows_();
+  var byChat = {};
+  rows.forEach(function (r) {
+    var id = String(r[3] || "");
+    if (!id) return;
+    var m = chatRowToMessage_(r);
+    var c = byChat[id] || (byChat[id] = { chat_id: id, name: "", username: "", count: 0, accounts: [], last: null, last_in_at: "", connection_id: "" });
+    c.count++;
+    if (r[4]) c.name = String(r[4]);
+    if (r[5]) c.username = String(r[5]).replace(/^@/, "");
+    if (m.account && c.accounts.indexOf(m.account) < 0) c.accounts.push(m.account);
+    if (!c.last || m.at >= c.last.at) c.last = m;
+    if (!m.out && m.at >= c.last_in_at) { c.last_in_at = m.at; c.connection_id = m.connection_id; }
+  });
+  var nicks = chatOrdersByNick_();
+  var list = Object.keys(byChat).map(function (id) {
+    var c = byChat[id];
+    if (!c.connection_id && c.last) c.connection_id = c.last.connection_id;
+    c.orders = chatLinks_(id);
+    c.suggested = (nicks[chatNick_(c.username)] || []).filter(function (n) { return c.orders.indexOf(n) < 0; });
+    return c;
+  });
+  list.sort(function (a, b) { return a.last.at < b.last.at ? 1 : a.last.at > b.last.at ? -1 : 0; });
+  return { status: "ok", chats: list.slice(0, CHAT_LIST_LIMIT), connections: chatConnections_() };
+}
+
+/** Переписка одного чату (chat_id) або всіх чатів клієнта замовлення (order_number). */
+function adminChatMessages_(data) {
+  var ids = [];
+  var chatId = chatIdStr_(data && data.chat_id);
+  var num = String(data && data.order_number || "").trim();
+  var rows = chatReadRows_();
+  if (chatId) ids = [chatId];
+  else if (num) {
+    var props = chatProps_().getProperties();
+    Object.keys(props).forEach(function (k) {
+      if (k.indexOf(CHAT_LINK_PREFIX) !== 0) return;
+      var list = String(props[k] || "").split(",").map(function (s) { return s.trim(); });
+      if (list.indexOf(num) >= 0) ids.push(k.slice(CHAT_LINK_PREFIX.length));
+    });
+    // Без привʼязки — за ніком Telegram клієнта в замовленні.
+    var nicks = chatOrdersByNick_();
+    var orderNicks = Object.keys(nicks).filter(function (n) { return nicks[n].indexOf(num) >= 0; });
+    if (orderNicks.length) {
+      rows.forEach(function (r) {
+        var id = String(r[3] || "");
+        if (id && ids.indexOf(id) < 0 && orderNicks.indexOf(chatNick_(r[5])) >= 0) ids.push(id);
+      });
+    }
+  } else throw new Error("Не вказано чат чи замовлення");
+
+  var chats = {};
+  var messages = [];
+  rows.forEach(function (r) {
+    var id = String(r[3] || "");
+    if (ids.indexOf(id) < 0) return;
+    var m = chatRowToMessage_(r);
+    messages.push(m);
+    var c = chats[id] || (chats[id] = { chat_id: id, name: "", username: "", connection_id: "", last_in_at: "" });
+    if (r[4]) c.name = String(r[4]);
+    if (r[5]) c.username = String(r[5]).replace(/^@/, "");
+    if (!m.out && m.at >= c.last_in_at) { c.last_in_at = m.at; c.connection_id = m.connection_id; }
+    if (!c.connection_id) c.connection_id = m.connection_id;
+  });
+  messages.sort(function (a, b) { return a.at < b.at ? -1 : a.at > b.at ? 1 : 0; });
+  var chatList = ids.map(function (id) {
+    var c = chats[id] || { chat_id: id, name: "", username: "", connection_id: "", last_in_at: "" };
+    c.orders = chatLinks_(id);
+    return c;
+  });
+  return {
+    status: "ok", chats: chatList,
+    messages: messages.slice(-CHAT_MESSAGES_LIMIT),
+    truncated: messages.length > CHAT_MESSAGES_LIMIT,
+    connections: chatConnections_(),
+  };
+}
+
+function adminChatStatus_() {
+  var rows = chatReadRows_().filter(function (r) { return r[0]; });
+  var lastAt = "";
+  rows.forEach(function (r) { var a = chatIso_(r[1]); if (a > lastAt) lastAt = a; });
+  return { status: "ok", connections: chatConnections_(), messages: rows.length, last_at: lastAt };
+}
+
+/** Прибрати чат із CRM: видалити його рядки й більше не зберігати (лише власник). */
+function adminChatForget_(data) {
+  var chatId = chatIdStr_(data && data.chat_id);
+  if (!chatId) throw new Error("Не вказано чат");
+  chatProps_().setProperty(CHAT_IGNORE_PREFIX + chatId, new Date().toISOString());
+  chatProps_().deleteProperty(CHAT_LINK_PREFIX + chatId);
+  return chatWithLock_(function () {
+    var sh = chatsSheet_();
+    var last = sh.getLastRow();
+    if (last < 2) return { status: "ok", removed: 0 };
+    var vals = sh.getRange(2, 1, last - 1, CHAT_COLS).getValues();
+    var keep = vals.filter(function (r) { return String(r[3] || "") !== chatId; });
+    var removed = vals.length - keep.length;
+    if (removed) {
+      sh.getRange(2, 1, vals.length, CHAT_COLS).clearContent();
+      if (keep.length) sh.getRange(2, 1, keep.length, CHAT_COLS).setValues(keep);
+    }
+    return { status: "ok", removed: removed };
   });
 }
 

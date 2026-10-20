@@ -3,10 +3,11 @@ const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
 const filesHandler = require("../../lib/admin-files-handler");
 const contractorHandler = require("../../lib/admin-contractor-handler");
 const ratesHandler = require("../../lib/admin-rates-handler");
+const chatHandler = require("../../lib/admin-chat-handler");
 
 // Тариф Vercel Hobby дозволяє не більше 12 серверних функцій, і в проєкті їх
 // рівно 12. Тому файли замовлення, надсилання підряднику й ставки підрядника живуть тут:
-// /api/admin/order?resource=files|contractor|rates.
+// /api/admin/order?resource=files|contractor|rates|chat.
 // Лише поля, за якими звіряємо позицію, і лише рядки/числа.
 const EXPECT_KEYS = ["basket_type", "construction", "quantity", "basket_model", "product_kind"];
 function cleanExpect(raw) {
@@ -54,6 +55,7 @@ module.exports = async function handler(req, res) {
   if (resource === "files") return filesHandler(req, res);
   if (resource === "contractor") return contractorHandler(req, res);
   if (resource === "rates") return ratesHandler(req, res);
+  if (resource === "chat") return chatHandler(req, res);
 
   setAdminCors(req, res);
   if (req.method === "OPTIONS") return handleOptions(req, res);
