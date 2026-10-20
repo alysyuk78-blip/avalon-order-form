@@ -29,6 +29,7 @@
       /* Середня прозорість колонок воронки (між блідим і насиченим) */
       --st-new-bg: rgba(230, 184, 0, 0.08); --st-new-fg: #856404;
       --st-proc-bg: rgba(234, 88, 12, 0.08); --st-proc-fg: #9a3412;
+      --st-appr-bg: rgba(236, 72, 153, 0.08); --st-appr-fg: #9d174d;
       --st-work-bg: rgba(59, 130, 246, 0.08); --st-work-fg: #1d4f91;
       --st-ready-bg: rgba(20, 184, 166, 0.08); --st-ready-fg: #0f6b5c;
       --st-ship-bg: rgba(168, 85, 247, 0.08); --st-ship-fg: #6b21a8;
@@ -38,6 +39,7 @@
       /* Бейджі трохи насиченіші за колонки, щоб читались */
       --st-new-chip: rgba(230, 184, 0, 0.20);
       --st-proc-chip: rgba(234, 88, 12, 0.16);
+      --st-appr-chip: rgba(236, 72, 153, 0.16);
       --st-work-chip: rgba(59, 130, 246, 0.18);
       --st-ready-chip: rgba(20, 184, 166, 0.18);
       --st-ship-chip: rgba(168, 85, 247, 0.18);
@@ -446,6 +448,7 @@
     .remind-item .tag.debt { color: var(--warn); background: rgba(154, 103, 0, 0.12); }
     .remind-item .tag.stuck { color: var(--st-work-fg); background: var(--st-work-chip); }
     .remind-item .tag.proc { color: var(--st-proc-fg); background: var(--st-proc-chip); }
+    .remind-item .tag.appr { color: var(--st-appr-fg); background: var(--st-appr-chip); }
     .remind-item .tag.ship { color: var(--st-ship-fg); background: var(--st-ship-chip); }
     .remind-item .tag.data { color: var(--st-missing-fg); background: var(--st-missing-chip); }
     .col.st-new { --col-sticky-bg: #fbf9ea; background: var(--st-new-bg); }
@@ -454,6 +457,8 @@
     .col.st-work h3 { color: var(--st-work-fg); }
     .col.st-proc { --col-sticky-bg: #fdf1e9; background: var(--st-proc-bg); }
     .col.st-proc h3 { color: var(--st-proc-fg); }
+    .col.st-appr { --col-sticky-bg: #fdeef5; background: var(--st-appr-bg); }
+    .col.st-appr h3 { color: var(--st-appr-fg); }
     /* Довга назва «В опрацюванні підрядником» переноситься, а не обрізається. */
     .col h3 .col-title > span:first-child { min-width: 0; white-space: normal; line-height: 1.25; }
     .col.st-ready { --col-sticky-bg: #edf8f6; background: var(--st-ready-bg); }
@@ -896,6 +901,15 @@
     .badge.st-new { background: var(--st-new-chip); color: var(--st-new-fg); }
     .badge.st-work { background: var(--st-work-chip); color: var(--st-work-fg); }
     .badge.st-proc { background: var(--st-proc-chip); color: var(--st-proc-fg); }
+    .badge.st-appr { background: var(--st-appr-chip); color: var(--st-appr-fg); }
+    /* Погодження клієнтом: нагадування з картки */
+    .approval-remind { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: var(--st-appr-bg); }
+    .approval-summary { margin: 0 0 10px; font-size: 13px; font-weight: 650; color: var(--st-appr-fg); }
+    .approval-label { display: block; margin-bottom: 4px; font-size: 11.5px; font-weight: 620; color: var(--muted); }
+    .approval-remind textarea { width: 100%; font: inherit; font-size: 13px; line-height: 1.45; }
+    .approval-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .approval-actions .btn { text-decoration: none; }
+    .approval-actions .btn[aria-disabled="true"] { opacity: .5; pointer-events: none; }
     .badge.st-ready { background: var(--st-ready-chip); color: var(--st-ready-fg); }
     .badge.st-ship { background: var(--st-ship-chip); color: var(--st-ship-fg); }
     .badge.st-done { background: var(--st-done-chip); color: var(--st-done-fg); }

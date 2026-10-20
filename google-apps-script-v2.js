@@ -889,7 +889,8 @@ function isColorSurchargeItem_(it) {
  * Доплата за небазовий колір — ОДНА на замовлення (не на виріб): окрема позиція-послуга
  * «Доплата за колір» (собівартість = ціна, маржа 0). Додається, коли в замовленні є кошик
  * небазового кольору з уже порахованою ціною; прибирається, коли небазових не лишилось.
- * Працює лише до запуску у виробництво («Нове», «В опрацюванні підрядником»): далі ціна
+ * Працює лише до запуску у виробництво («Нове», «В опрацюванні підрядником», «Погодження
+ * клієнтом»): далі ціна
  * погоджена з клієнтом і сама собою мінятись не повинна.
  * keepRow — рядок, який менеджер саме править: його не видаляємо.
  * Менеджер може зняти доплату, видаливши її позицію: тоді вона не повертається, доки в
@@ -956,7 +957,7 @@ function syncColorSurcharge_(sh, orderNumber, keepRow, dueBefore) {
   var rows = st.rows, base = st.base, pricedColors = st.pricedColors, allColors = st.allColors, surcharges = st.surcharges;
   if (!rows.length) return false;
   var status = canonStatus_(base[2]);
-  if (status !== "Нове" && status !== STATUS_PROCESSING) return false;
+  if (status !== "Нове" && status !== STATUS_PROCESSING && status !== STATUS_APPROVAL) return false;
 
   var props = PropertiesService.getScriptProperties();
   var waived = props.getProperty(colorWaivedKey_(orderNumber)) === "1";
@@ -2635,6 +2636,7 @@ function buildOwnerDailyReport_() {
   msg += "🕐 " + nowKyiv_() + "\n\n";
   msg += "• Нові: <b>" + counts["Нове"] + "</b>\n";
   msg += "• В опрацюванні підрядником: <b>" + counts[STATUS_PROCESSING] + "</b>\n";
+  msg += "• Погодження клієнтом: <b>" + counts[STATUS_APPROVAL] + "</b>\n";
   msg += "• Виготовлення: <b>" + counts[STATUS_PRODUCTION] + "</b>\n";
   msg += "• Готові: <b>" + counts["Готове"] + "</b>\n";
   msg += "• Прострочені: <b>" + late.length + "</b>\n";
@@ -2869,6 +2871,7 @@ function applyOrderConditionalFormats_(sheet) {
   // Кольори статус-комірки (як було).
   var cellRules = [
     {t:"Нове",bg:"#FFF3CD",fg:"#856404"}, {t:STATUS_PROCESSING,bg:"#FFE3CC",fg:"#8A3B00"},
+    {t:STATUS_APPROVAL,bg:"#FCE4EC",fg:"#AD1457"},
     {t:STATUS_PRODUCTION,bg:"#CCE5FF",fg:"#004085"}, {t:"В роботі",bg:"#CCE5FF",fg:"#004085"},
     {t:"Готове",bg:"#D4EDDA",fg:"#155724"}, {t:"Відправлено",bg:"#D1ECF1",fg:"#0C5460"},
     {t:"Завершено",bg:"#E2E3E5",fg:"#383D41"}, {t:"Скасовано",bg:"#F8D7DA",fg:"#721C24"}
@@ -3257,7 +3260,8 @@ function setupInstructions(ss) {
     "Чистий прибуток факт (Зведення) = отримана маржа − комісії − витрати.",
     "",
     "━━━ ЯК ПРАВИЛЬНО РЕДАГУВАТИ ТА СКАСОВУВАТИ ━━━",
-    "СТАТУСИ: Нове → В опрацюванні підрядником → Виготовлення (раніше «В роботі») → Готове → Відправлено → Завершено.",
+    "СТАТУСИ: Нове → В опрацюванні підрядником → Погодження клієнтом → Виготовлення (раніше «В роботі») → Готове → Відправлено → Завершено.",
+    "«ПОГОДЖЕННЯ КЛІЄНТОМ» — клієнт отримав ціну й думає. Маржа ще не борг підрядника; доплата за колір ще може додатись. Погодив — надішли підряднику «у виробництво», статус стане «Виготовлення».",
     "«В ОПРАЦЮВАННІ ПІДРЯДНИКОМ» — підрядник рахує виробничу вартість, розробляє конструктив нової моделі тощо; у виробництво замовлення ще не пішло. Термін (колонка AU) і завдання (AV) задаються в картці CRM; на дату терміну в Google Календарі зʼявляється нагадування (за добу й у сам день). Щойно замовлення виходить з цього статусу — нагадування прибирається.",
     "ГОЛОВНЕ ПРАВИЛО: усі правки (розміри, колір, адреса, оплата тощо) роби ДО того, як надішлеш замовлення підряднику: кнопка «Надіслати підряднику» в картці CRM (з пташками, що саме надсилати) або статус «В опрацюванні підрядником» / «Виготовлення» прямо в таблиці.",
     "ПРАВКИ ПІСЛЯ НАДСИЛАННЯ: у CRM — ще раз «Надіслати підряднику» (у ту саму гілку піде «Оновлено замовлення»; після опрацювання — «Погоджено, запускаємо у виробництво»). У таблиці — стань на рядок → меню «AVALON» → «🔄 Надіслати оновлення підряднику».",
@@ -3433,8 +3437,8 @@ function legacyPaidState_(revenue, marginDue, agChecked, ahChecked) {
  */
 /**
  * Маржа стає БОРГОМ підрядника («до виплати») лише коли замовлення погоджене й пішло у
- * виготовлення. «Нове» й «В опрацюванні підрядником» ще може бути скасоване замовником —
- * там маржа лише прогноз і в «до отримання» / акт звірки не потрапляє.
+ * виготовлення. «Нове», «В опрацюванні підрядником» і «Погодження клієнтом» ще може бути
+ * скасоване замовником — там маржа лише прогноз і в «до отримання» / акт звірки не потрапляє.
  */
 var MARGIN_OWED_STATUSES = ["Виготовлення", "Готове", "Відправлено", "Завершено"];
 function marginOwed_(status) {
@@ -4022,10 +4026,12 @@ var ADMIN_ORDER_COLS = 50; // A–AX (контакт AL–AN; виріб AO–AQ
 var CANCEL_REASON_COL = 49;  // AW: чому скасовано — обовʼязково при скасуванні з CRM
 var ITEM_COMMENT_COL = 50;   // AX: коментар САМЕ до цієї позиції — підрядник бачить його в її блоці
 // Статуси замовлення. «В опрацюванні підрядником» — підрядник рахує виробничу
-// вартість / розробляє конструктив; «Виготовлення» — раніше називалось «В роботі».
+// вартість / розробляє конструктив; «Погодження клієнтом» — клієнт отримав ціну й думає;
+// «Виготовлення» — раніше називалось «В роботі».
 var STATUS_PROCESSING = "В опрацюванні підрядником";
+var STATUS_APPROVAL = "Погодження клієнтом";
 var STATUS_PRODUCTION = "Виготовлення";
-var STATUSES = ["Нове", STATUS_PROCESSING, STATUS_PRODUCTION, "Готове", "Відправлено", "Завершено", "Скасовано"];
+var STATUSES = ["Нове", STATUS_PROCESSING, STATUS_APPROVAL, STATUS_PRODUCTION, "Готове", "Відправлено", "Завершено", "Скасовано"];
 // Стара назва з таблиці, кешу сторінки чи старої версії кабінету → нова.
 var LEGACY_STATUSES = { "В роботі": STATUS_PRODUCTION };
 function canonStatus_(s) {
@@ -4037,6 +4043,8 @@ function applyStatusSideEffects_(sh, row, newStatus, opts) {
   newStatus = canonStatus_(newStatus);
   if (!newStatus) return;
   var onum = String(sh.getRange(row, 1).getValue() || "").trim();
+  // Коли клієнт почав думати над ціною — від цього дня кабінет рахує, скільки він мовчить.
+  if (onum && newStatus === STATUS_APPROVAL) markApprovalStarted_(onum);
   // З CRM підрядник отримує замовлення лише кнопкою «Надіслати підряднику» — з
   // пташками, що саме надсилати. Автовідправка лишилась для зміни статусу прямо в
   // таблиці та для старої версії кабінету (без прапорця manual_contractor_send).
@@ -4227,6 +4235,7 @@ function adminOrdersSheet_() {
   }
   ensureDiscountColumnsOnce_();
   ensureStatusesV2Once_(sheet);
+  try { ensureStatusesV3Once_(sheet); } catch (statusErr) { console.error("Список статусів: " + statusErr); }
   try { ensureCommissionFormulaV2Once_(sheet); } catch (formulaErr) { console.error("Формула комісії: " + formulaErr); }
   try { ensureCommissionFormulaV3Once_(sheet); } catch (formulaErr3) { console.error("Формула комісії (партнер + ТОВ): " + formulaErr3); }
   return sheet;
@@ -4451,6 +4460,12 @@ function adminGroupOrders_(orders, payments) {
     g.contractor_purpose = sentProps["sent_purpose_" + k] || "";
     // Скріпка на картці: кількість файлів без походу на Google Диск.
     g.files_count = Number(sentProps["files_count_" + k]) || 0;
+    // Погодження клієнтом: з якого дня думає, скільки разів і коли востаннє нагадували.
+    g.approval_since = sentProps["approval_since_" + k] || "";
+    var reminded = {};
+    try { reminded = JSON.parse(sentProps["reminded_" + k] || "{}") || {}; } catch (remErr) { reminded = {}; }
+    g.reminded_count = Number(reminded.n) || 0;
+    g.reminded_at = String(reminded.at || "");
     g.margin_pct = g.revenue ? Math.round((g.profit / g.revenue) * 1000) / 10 : null;
     // Комісію з маржі утримує підрядник → його борг = валовий прибуток мінус ця комісія.
     // Ставка партнера сюди не входить: її Avalon платить партнерові сама.
@@ -4930,6 +4945,10 @@ function adminUpdateOrder_(data) {
   var colorDueBefore = colorSurchargeDue_(sh, orderNumber);
   // colorSurchargeDue_ щойно визначив ставки замовлення — звіряємо з тими, якими рахував клієнт.
   assertPricedWithRates_(orderRatesForPricing_(sh, orderNumber, sh.getRange(row, 2).getValue()).from, data.priced_with_rates);
+  // «Нагадати клієнту» з картки: лише позначка, що нагадування надіслано (текст іде з месенджера).
+  var clientReminded = patch.client_reminded === true;
+  delete patch.client_reminded;
+  if (clientReminded) markClientReminded_(orderNumber);
   var waiveColorSurcharge = !!patch.waive_color_surcharge;
   delete patch.waive_color_surcharge;
 
@@ -5609,7 +5628,7 @@ var PROCESSING_TASK_COL = 48;  // AV
 /**
  * Після надсилання підряднику статус іде вперед (назад — ніколи):
  *  на опрацювання: «Нове» → «В опрацюванні підрядником»;
- *  у виробництво:  «Нове» / «В опрацюванні підрядником» → «Виготовлення».
+ *  у виробництво:  «Нове» / «В опрацюванні підрядником» / «Погодження клієнтом» → «Виготовлення».
  */
 function advanceStatusAfterSend_(sh, num, purpose) {
   var lock = LockService.getScriptLock();
@@ -5626,7 +5645,7 @@ function advanceStatusAfterSend_(sh, num, purpose) {
     }
     var to = "";
     if (purpose === "processing" && from === "Нове") to = STATUS_PROCESSING;
-    if (purpose !== "processing" && (from === "Нове" || from === STATUS_PROCESSING)) to = STATUS_PRODUCTION;
+    if (purpose !== "processing" && (from === "Нове" || from === STATUS_PROCESSING || from === STATUS_APPROVAL)) to = STATUS_PRODUCTION;
     if (!to || !rows.length) return null;
     // setValue з коду не запускає onEdit — тож повторної автовідправки не буде.
     rows.forEach(function (r) { sh.getRange(r, 3).setValue(to); });
@@ -5770,6 +5789,32 @@ function ensureStatusesV2Once_(sheet) {
   }
   applyOrderConditionalFormats_(sheet);
   props.setProperty("STATUSES_V2_READY", "1");
+}
+
+// ── Погодження клієнтом: з якого дня клієнт думає і скільки разів йому нагадували ──
+// Властивості скрипта: approval_since_<№> — дата (РРРР-ММ-ДД) переходу в «Погодження клієнтом»;
+// reminded_<№> — {"n": скільки нагадувань, "at": "РРРР-ММ-ДД"}. Кабінет показує їх у картці
+// й у «Нагадуваннях», щоб замовлення, над яким клієнт думає, не загубилось.
+function markApprovalStarted_(orderNumber) {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty("approval_since_" + orderNumber, kyivToday_());
+  props.deleteProperty("reminded_" + orderNumber);   // новий цикл погодження — лічильник з нуля
+}
+function markClientReminded_(orderNumber) {
+  var props = PropertiesService.getScriptProperties();
+  var prev = {};
+  try { prev = JSON.parse(props.getProperty("reminded_" + orderNumber) || "{}") || {}; } catch (e) { prev = {}; }
+  props.setProperty("reminded_" + orderNumber, JSON.stringify({ n: (Number(prev.n) || 0) + 1, at: kyivToday_() }));
+}
+
+/** РАЗОВО: новий статус «Погодження клієнтом» — у списку вибору статусу й кольорах таблиці. */
+function ensureStatusesV3Once_(sheet) {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty("STATUSES_V3_READY") === "1") return;
+  var rule = SpreadsheetApp.newDataValidation().requireValueInList(STATUSES).setAllowInvalid(false).build();
+  sheet.getRange(2, 3, Math.max(sheet.getMaxRows() - 1, 1), 1).setDataValidation(rule);
+  applyOrderConditionalFormats_(sheet);
+  props.setProperty("STATUSES_V3_READY", "1");
 }
 
 function adminContractorPreview_(data) {
