@@ -146,6 +146,9 @@ function testGas() {
   assert.equal(p.connection_id, "c1");
   assert.deepEqual(p.orders, ["ORD-3"]);
   assert.deepEqual(p.suggested, ["ORD-1"], "старіше замовлення того ж клієнта — підказкою");
+  // Лічильник непрочитаних: час вхідних (видалені й вихідні не рахуються).
+  assert.equal(p.recent_in.length, 2, "вхідні Петра: текст і фото; видалене вихідне не рахується");
+  assert.ok(p.recent_in[0] <= p.recent_in[1]);
   assert.equal(list.connections.c1.name, "Олександр");
 
   // Переписка замовлення: старе ORD-1 не привʼязане, але знаходить чат за ніком.

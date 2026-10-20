@@ -914,11 +914,20 @@
     .approval-actions .btn[aria-disabled="true"] { opacity: .5; pointer-events: none; }
     /* Чати Telegram: розділ «Чати» і переписка в картці замовлення */
     .nav-item { position: relative; display: inline-flex; flex-shrink: 0; }
+    /* Лічильник нових повідомлень — червоний кружечок, як в iOS. */
     .nav-badge {
-      position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
-      background: var(--danger); color: #fff; font-size: 10px; font-weight: 750; line-height: 16px; text-align: center; pointer-events: none;
+      position: absolute; top: -5px; right: -5px; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box;
+      border-radius: 10px; border: 2px solid #fff; background: #ff3b30; color: #fff;
+      font-size: 11px; font-weight: 700; line-height: 16px; text-align: center; pointer-events: none;
+      font-variant-numeric: tabular-nums; box-shadow: 0 1px 2px rgba(0,0,0,.15);
     }
-    .chat-badge { margin-left: 8px; padding: 1px 7px; border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px; vertical-align: middle; }
+    .chat-badge { margin-left: 8px; padding: 1px 7px; border-radius: 9px; background: #ff3b30; color: #fff; font-size: 11px; vertical-align: middle; }
+    .chat-row { position: relative; }
+    .chat-row-count {
+      position: absolute; right: 10px; bottom: 9px; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box;
+      border-radius: 10px; background: #ff3b30; color: #fff; font-size: 11px; font-weight: 700; line-height: 20px; text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
     .chat-empty { margin: 8px 0; color: var(--muted); font-size: 13px; }
     .chats { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 16px; min-height: 60vh; }
     .chats-list { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-height: 75vh; overflow-y: auto; }
@@ -931,10 +940,10 @@
     .chat-row.active { background: #e3e7ea; }
     .chat-row-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
     .chat-row-top span { color: var(--muted); font-size: 11px; white-space: nowrap; }
-    .chat-row.unread .chat-row-top strong::after { content: ""; display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: var(--danger); vertical-align: middle; }
     .chat-row-last { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .chat-row.unread .chat-row-last { color: var(--ink); font-weight: 650; }
-    .chat-row-orders { font-size: 11px; color: var(--accent); }
+    .chat-row-orders { font-size: 11px; color: var(--accent); padding-right: 34px; }
+    .chat-row.unread .chat-row-last { padding-right: 34px; }
     .chats-conv { display: flex; flex-direction: column; min-width: 0; }
     .chats-conv-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
     .chats-conv-title { flex: 1; min-width: 0; font-size: 14px; }
@@ -1104,6 +1113,8 @@
         scrollbar-width: none;
       }
       .nav::-webkit-scrollbar { display: none; }
+      /* Меню гортається вбік і обрізає все, що виходить за край, — кружечок лишаємо всередині кнопки. */
+      .nav-badge { top: -1px; right: -1px; }
       .nav .icon-button {
         flex: 0 0 42px; width: 42px; height: 42px; padding: 0;
         background: #eef1f3; color: var(--ink);

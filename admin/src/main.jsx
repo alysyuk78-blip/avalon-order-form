@@ -1126,8 +1126,14 @@ import pricing from '../../lib/avalon-pricing.js';
         }
       } catch (_) { /* сховище недоступне — непрочитані просто не запамʼятаються */ }
     }
-    function chatUnread(c, seen) {
-      return !!(c.last && !c.last.out && c.last.at > (seen[c.chat_id] || ""));
+    /** Скільки вхідних повідомлень чату ще не прочитано в кабінеті. */
+    function chatUnreadCount(c, seen) {
+      const since = seen[c.chat_id] || "";
+      if (Array.isArray(c.recent_in)) return c.recent_in.filter(at => at > since).length;
+      return c.last && !c.last.out && c.last.at > since ? 1 : 0;
+    }
+    function badgeText(n) {
+      return n > 99 ? "99+" : String(n);
     }
     function chatTime(iso) {
       const d = new Date(iso);
@@ -1437,7 +1443,7 @@ import pricing from '../../lib/avalon-pricing.js';
       usePolling(loadConv, [selected], CHAT_POLL_MS);
 
       const chats = (data && data.chats) || [];
-      const unread = chats.filter(c => chatUnread(c, seen)).length;
+      const unread = chats.reduce((sum, c) => sum + chatUnreadCount(c, seen), 0);
       useEffect(() => { onUnread && onUnread(unread); }, [unread]);
       // Відкрита переписка на видному екрані — прочитана.
       const current = chats.find(c => c.chat_id === selected) || null;
@@ -1482,15 +1488,17 @@ import pricing from '../../lib/avalon-pricing.js';
             <div className={"panel chats" + (selected ? " has-selected" : "")}>
               <div className="chats-list">
                 <div className="panel-head">
-                  <h2>Чати{unread ? <span className="chat-badge">{unread}</span> : null}</h2>
+                  <h2>Чати{unread ? <span className="chat-badge">{badgeText(unread)}</span> : null}</h2>
                   <GuideLink section="chats" />
                 </div>
                 <input className="chats-search" type="search" placeholder="Імʼя, нік, № замовлення…" value={q} onChange={e => setQ(e.target.value)} />
                 {error && <ErrorBar text={error} onRetry={() => loadList()} />}
                 {!data && !error && <p className="chat-empty">Завантажую чати… (таблиця відповідає до пів хвилини)</p>}
                 {data && !chats.length && <p className="chat-empty">Повідомлень ще немає. Вони зʼявляться, щойно клієнт напише на підключений акаунт.</p>}
-                {filtered.map(c => (
-                  <button key={c.chat_id} type="button" className={"chat-row" + (c.chat_id === selected ? " active" : "") + (chatUnread(c, seen) ? " unread" : "")}
+                {filtered.map(c => {
+                  const n = chatUnreadCount(c, seen);
+                  return (
+                  <button key={c.chat_id} type="button" className={"chat-row" + (c.chat_id === selected ? " active" : "") + (n ? " unread" : "")}
                     onClick={() => { setSelected(c.chat_id); setConv(null); setConvError(""); }}>
                     <span className="chat-row-top">
                       <strong>{chatTitle(c)}</strong>
@@ -1500,8 +1508,10 @@ import pricing from '../../lib/avalon-pricing.js';
                     <span className="chat-row-orders">
                       {(c.orders || []).length ? c.orders.join(", ") : c.suggested && c.suggested.length ? "можливо: " + c.suggested[c.suggested.length - 1] : "без замовлення"}
                     </span>
+                    {n > 0 && <span className="chat-row-count" aria-label={"нових: " + n}>{badgeText(n)}</span>}
                   </button>
-                ))}
+                  );
+                })}
               </div>
               <div className="chats-conv">
                 {!selected && <p className="chat-empty">Оберіть чат ліворуч.</p>}
@@ -6150,6 +6160,11 @@ import pricing from '../../lib/avalon-pricing.js';
       const [token, setToken] = useState(() => readToken());
       const [tab, setTab] = useState("orders");
       const [chatUnreadCount, setChatUnreadCount] = useState(0);
+      // Число нових повідомлень і в назві вкладки браузера: «(3) Avalon CRM — кабінет».
+      useEffect(() => {
+        const base = document.title.replace(/^\(\d+\+?\)\s*/, "");
+        document.title = chatUnreadCount > 0 ? "(" + badgeText(chatUnreadCount) + ") " + base : base;
+      }, [chatUnreadCount]);
       const [groups, setGroups] = useState(() => {
         const cached = readAdminCache();
         return Array.isArray(cached.groups) ? cached.groups : [];
@@ -6548,7 +6563,7 @@ import pricing from '../../lib/avalon-pricing.js';
                     aria-current={tab === item.id ? "page" : undefined}
                     onClick={() => setTab(item.id)}
                   />
-                  {item.id === "chats" && chatUnreadCount > 0 && <span className="nav-badge" aria-hidden="true">{chatUnreadCount}</span>}
+                  {item.id === "chats" && chatUnreadCount > 0 && <span className="nav-badge" aria-hidden="true">{badgeText(chatUnreadCount)}</span>}
                 </span>
               ))}
             </nav>
