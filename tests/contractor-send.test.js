@@ -449,7 +449,7 @@ function testStatusesMigrationAndCanon() {
   const ctx = load({ PropertiesService: { getScriptProperties: () => props }, SpreadsheetApp: makeSpreadsheetApp() });
 
   assert.deepEqual(Array.from(ctx.STATUSES),
-    ["Нове", "В опрацюванні підрядником", "Виготовлення", "Готове", "Відправлено", "Завершено", "Скасовано"]);
+    ["Нове", "В опрацюванні підрядником", "Погодження клієнтом", "Виготовлення", "Готове", "Відправлено", "Завершено", "Скасовано"]);
   assert.equal(ctx.canonStatus_("В роботі"), "Виготовлення");
   assert.equal(ctx.canonStatus_(" Нове "), "Нове");
 
@@ -1985,6 +1985,60 @@ function testContractorRates() {
   assert.deepEqual([fresh14.duplicate, fresh14.pricing_rates.solidRate], [false, 2233]);
 }
 
+// ── Погодження клієнтом: клієнт отримав ціну й думає ──
+function testClientApprovalStage() {
+  const props = makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" });
+  const calendar = makeCalendar();
+  const tg = [];
+  const sheet = makeSheet([orderRow(ORD, "В опрацюванні підрядником", { 46: "2026-09-15" }), orderRow("ORD-110926-009", "Нове")]);
+  const ctx = processingContext(sheet, props, calendar, tg);
+  ctx.kyivToday_ = () => "2026-09-12";
+  ctx.syncOrderPaymentState_ = () => {};
+  ctx.adminGetOrder_ = () => ({ status: "ok" });
+
+  // Новий статус у списку таблиці — разово оновлюємо список вибору й кольори.
+  ctx.applyOrderConditionalFormats_ = () => {};
+  const validated = [];
+  ctx.SpreadsheetApp = Object.assign({}, makeSpreadsheetApp(), { flush() {}, newDataValidation: () => {
+    const b = { requireValueInList(list) { validated.push(Array.from(list)); return b; }, setAllowInvalid() { return b; }, build: () => ({}) };
+    return b;
+  } });
+  const sheetWithValidation = Object.assign({}, sheet, { getRange: (...a) => Object.assign(sheet.getRange(...a), { setDataValidation() { return this; } }) });
+  ctx.ensureStatusesV3Once_(sheetWithValidation);
+  assert.ok(validated[0].includes("Погодження клієнтом"));
+  assert.equal(props.getProperty("STATUSES_V3_READY"), "1");
+  ctx.ensureStatusesV3Once_(sheetWithValidation);
+  assert.equal(validated.length, 1, "разово");
+
+  // Маржа в погодженні — ще не борг підрядника; доплата за колір ще може додатись.
+  assert.equal(ctx.marginOwed_("Погодження клієнтом"), false);
+  assert.equal(ctx.marginOwed_("Виготовлення"), true);
+
+  // Перехід у погодження запамʼятовує день; нагадування з картки рахуються.
+  ctx.applyStatusSideEffects_(sheet, 2, "Погодження клієнтом", { skipContractorSend: true });
+  assert.equal(props.getProperty("approval_since_" + ORD), "2026-09-12");
+  ctx.markClientReminded_(ORD);
+  ctx.kyivToday_ = () => "2026-09-14";
+  ctx.markClientReminded_(ORD);
+  assert.deepEqual(JSON.parse(props.getProperty("reminded_" + ORD)), { n: 2, at: "2026-09-14" });
+  sheet.data[1][2] = "Погодження клієнтом";
+  const group = ctx.adminGroupOrders_([ctx.mapOrderRow_(2, sheet.data[1])], [])[0];
+  assert.deepEqual([group.status, group.approval_since, group.reminded_count, group.reminded_at],
+    ["Погодження клієнтом", "2026-09-12", 2, "2026-09-14"]);
+  // Новий цикл погодження (знову перейшли в цей статус) — лічильник з нуля.
+  ctx.applyStatusSideEffects_(sheet, 2, "Погодження клієнтом", { skipContractorSend: true });
+  assert.deepEqual([props.getProperty("approval_since_" + ORD), props.getProperty("reminded_" + ORD)], ["2026-09-14", null]);
+  // Кнопка «Нагадати» в картці — позначка через звичайну правку замовлення, без інших змін.
+  ctx.adminUpdateOrder_({ order_number: ORD, row: 2, patch: { client_reminded: true } });
+  assert.deepEqual(JSON.parse(props.getProperty("reminded_" + ORD)), { n: 1, at: "2026-09-14" });
+  assert.equal(sheet.data[1][2], "Погодження клієнтом", "статус не змінився");
+
+  // Клієнт погодив — у виробництво з погодження: статус «Виготовлення».
+  const r = ctx.adminContractorSend_({ order_number: ORD, purpose: "production", request_id: "ap1" });
+  assert.deepEqual([r.prev_status, r.new_status], ["Погодження клієнтом", "Виготовлення"]);
+  assert.equal(sheet.data[2][2], "Нове", "чужі замовлення не чіпаємо");
+}
+
 testMessageOptions();
 testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
@@ -2006,4 +2060,5 @@ testUnifiedPricingInSheet();
 testColorSurchargeInSheet();
 testAuditFixes();
 testContractorRates();
+testClientApprovalStage();
 console.log("contractor-send tests: OK");

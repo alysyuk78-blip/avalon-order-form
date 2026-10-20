@@ -37,7 +37,7 @@ import finance from '../../lib/admin-finance.js';
 import pricing from '../../lib/avalon-pricing.js';
 
     const { groupPaymentMetrics, marginOwed } = finance;
-    // До погодження («Нове», «В опрацюванні підрядником») маржа не «до отримання» — навіть
+    // До погодження («Нове», «В опрацюванні підрядником», «Погодження клієнтом») маржа не «до отримання» — навіть
     // якщо дані прийшли з кешу, зробленого до цього правила.
     function withMarginRule(group) {
       if (!group || marginOwed(group)) return group;
@@ -45,10 +45,12 @@ import pricing from '../../lib/avalon-pricing.js';
     }
 
     // «В опрацюванні підрядником» — підрядник рахує вартість / розробляє конструктив;
+    // «Погодження клієнтом» — клієнт отримав ціну й думає;
     // «Виготовлення» — раніше «В роботі» (стару назву читаємо як нову).
     const STATUS_PROCESSING = "В опрацюванні підрядником";
+    const STATUS_APPROVAL = "Погодження клієнтом";
     const STATUS_PRODUCTION = "Виготовлення";
-    const STATUSES = ["Нове", STATUS_PROCESSING, STATUS_PRODUCTION, "Готове", "Відправлено", "Завершено", "Скасовано"];
+    const STATUSES = ["Нове", STATUS_PROCESSING, STATUS_APPROVAL, STATUS_PRODUCTION, "Готове", "Відправлено", "Завершено", "Скасовано"];
     const LEGACY_STATUS = { "В роботі": STATUS_PRODUCTION };
     function canonStatus(s) {
       const t = String(s || "").trim();
@@ -59,6 +61,7 @@ import pricing from '../../lib/avalon-pricing.js';
     const STATUS_CLASS = {
       "Нове": "st-new",
       [STATUS_PROCESSING]: "st-proc",
+      [STATUS_APPROVAL]: "st-appr",
       [STATUS_PRODUCTION]: "st-work",
       "Готове": "st-ready",
       "Відправлено": "st-ship",
@@ -766,6 +769,14 @@ import pricing from '../../lib/avalon-pricing.js';
             if (priority > 4) { priority = 4; tag = "Опрацювання"; tagClass = "proc"; }
           }
         }
+        if (g.status === STATUS_APPROVAL) {
+          // Клієнт думає над ціною: скільки днів мовчить після переходу в погодження чи
+          // після останнього нагадування. Від двох днів — пора нагадати.
+          const since = approvalQuietDays(g);
+          reasons.push(approvalSummary(g) + " · " + money(g.revenue));
+          const pri = since != null && since >= 2 ? 2 : 4;
+          if (priority > pri) { priority = pri; tag = since != null && since >= 2 ? "Нагадати" : "Погодження"; tagClass = "appr"; }
+        }
         if (g.status === STATUS_PRODUCTION) {
           reasons.push("Виготовлення · " + money(g.revenue));
           if (priority > 2) { priority = 2; tag = "Виготовлення"; tagClass = "stuck"; }
@@ -959,6 +970,120 @@ import pricing from '../../lib/avalon-pricing.js';
             >{a.label}</a>
           ))}
         </span>
+      );
+    }
+    // ── Погодження клієнтом: скільки думає клієнт і кнопка «Нагадати» ──
+    function isoDaysBetween(fromIso, toIso) {
+      const a = String(fromIso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/), b = String(toIso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!a || !b) return null;
+      return Math.round((Date.UTC(+b[1], +b[2] - 1, +b[3]) - Date.UTC(+a[1], +a[2] - 1, +a[3])) / 86400000);
+    }
+    function localTodayIso() {
+      const d = new Date();
+      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    }
+    function isoLabel(iso) {
+      const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      return m ? m[3] + "." + m[2] : "";
+    }
+    // Скільки днів тиша: від останнього нагадування, а якщо не нагадували — від переходу в погодження.
+    function approvalQuietDays(g) {
+      return isoDaysBetween(g.reminded_at || g.approval_since, localTodayIso());
+    }
+    function dayWord(n) {
+      const a = Math.abs(n) % 100, b = a % 10;
+      if (a > 10 && a < 20) return "днів";
+      if (b === 1) return "день";
+      if (b >= 2 && b <= 4) return "дні";
+      return "днів";
+    }
+    function approvalSummary(g) {
+      const think = isoDaysBetween(g.approval_since, localTodayIso());
+      const parts = [think == null ? "Клієнт погоджує ціну" : think === 0 ? "Клієнт думає з сьогодні" : "Клієнт думає " + think + " " + dayWord(think)];
+      if (g.reminded_count > 0) parts.push("нагадували " + g.reminded_count + " раз" + (g.reminded_count >= 2 && g.reminded_count <= 4 ? "и" : "") + ", востаннє " + isoLabel(g.reminded_at));
+      else parts.push("ще не нагадували");
+      return parts.join(" · ");
+    }
+    // Текст нагадування: перше — з переліком і сумою, наступні — коротке «чи актуально».
+    function approvalReminderText(order, items) {
+      const name = String(order.client || "").trim().split(/\s+/)[0] || "";
+      const hello = "Добрий день" + (name ? ", " + name : "") + "!";
+      const sum = money(order.revenue);
+      if (Number(order.reminded_count) > 0) {
+        return hello + " Пишу ще раз щодо вашого замовлення " + order.order_number + " в Avalon Metal Design на " + sum + ".\n"
+          + "Підкажіть, будь ласка, чи воно ще актуальне — щоб ми розуміли, планувати виготовлення чи ні. Якщо щось хочете змінити — напишіть, підлаштуємо.";
+      }
+      const lines = (items || [])
+        .filter(it => !/послуг/i.test(String(it.product_kind || "")))
+        .map(it => {
+          // «Кошик AVL-01 «Суцільний», 500×800×500 мм — 2 шт.»: код моделі й розміри клієнт упізнає одразу.
+          const code = (String(it.construction || "") + " " + String(it.basket_model || "")).toUpperCase().match(/AVL-\d{2}(?:[\/-]\d(?!\d))?/);
+          const name = String(it.basket_model || "").trim();
+          const isBasket = !it.product_kind || /кошик/i.test(String(it.product_kind));
+          const title = isBasket
+            ? "Кошик" + (code ? " " + code[0] : "") + (name && !/^AVL-/i.test(name) ? " «" + name + "»" : "")
+            : (name || String(it.construction || "Виріб").trim());
+          const size = Number(it.size_w) > 0 && Number(it.size_h) > 0 ? ", " + it.size_h + "×" + it.size_w + (Number(it.size_d) > 0 ? "×" + it.size_d : "") + " мм" : "";
+          return "• " + title + size + " — " + (Number(it.quantity) || 1) + " " + (String(it.unit || "").trim() || "шт.");
+        });
+      return hello + "\nНагадую щодо вашого замовлення " + order.order_number + " в Avalon Metal Design:\n"
+        + (lines.length ? lines.join("\n") + "\n" : "")
+        + "Сума: " + sum + ".\n"
+        + "Чи вдалося обдумати? Якщо все підходить — підтвердіть, і ми запустимо виготовлення. Якщо є питання чи хочете щось змінити — напишіть, підкажу.";
+    }
+    function ClientReminder({ order, items, disabled, onReminded }) {
+      const [text, setText] = useState(() => approvalReminderText(order, items));
+      const [note, setNote] = useState("");
+      // Нове нагадування (лічильник змінився) — новий типовий текст; підказку про щойно надіслане лишаємо.
+      useEffect(() => { setText(approvalReminderText(order, items)); }, [order.order_number, order.reminded_count]);
+      useEffect(() => { setNote(""); }, [order.order_number]);
+      const phone = String(order.phone || "").trim();
+      const digits = normalizePhone(phone);
+      const tg = telegramHandle(order.contact_telegram);
+      const enc = encodeURIComponent(text);
+      const channels = [];
+      if (tg) channels.push({ key: "telegram", label: "Telegram", href: "https://t.me/" + encodeURIComponent(tg) + "?text=" + enc, prefilled: true });
+      if (digits) channels.push({ key: "viber", label: "Viber", href: "viber://chat?number=%2B" + digits + "&draft=" + enc, prefilled: false });
+      if (digits) channels.push({ key: "whatsapp", label: "WhatsApp", href: "https://wa.me/" + digits + "?text=" + enc, prefilled: true });
+      // Спершу — той месенджер, яким клієнт просив звʼязуватись.
+      const preferred = resolveContactMethod(order);
+      channels.sort((a, b) => (b.key === preferred) - (a.key === preferred));
+      async function copy() {
+        try { await navigator.clipboard.writeText(text); return true; } catch (_) { return false; }
+      }
+      function send(ch) {
+        copy().then(ok => setNote(ch.prefilled
+          ? "Текст уже в полі повідомлення " + ch.label + (ok ? " (і скопійований)" : "") + " — перевірте й надішліть."
+          : (ok ? "Текст скопійовано — у " + ch.label + " вставте його (Cmd+V або Ctrl+V) і надішліть." : "Скопіюйте текст вище й вставте його в " + ch.label + ".")));
+        onReminded();
+      }
+      return (
+        <section className="approval-remind">
+          <div className="section-title section-title--first">Погодження клієнтом <GuideLink section="accept" /></div>
+          <p className="approval-summary">{approvalSummary(order)}</p>
+          <label className="field">
+            <span className="approval-label">Текст нагадування — можна змінити перед надсиланням</span>
+            <textarea rows={6} value={text} onChange={e => setText(e.target.value)} />
+          </label>
+          <div className="approval-actions">
+            {channels.map(ch => (
+              <a key={ch.key} className={"btn" + (ch.key === preferred ? "" : " secondary")} href={ch.href}
+                target={ch.key === "viber" ? undefined : "_blank"} rel="noopener noreferrer"
+                aria-disabled={disabled} onClick={e => { if (disabled) { e.preventDefault(); return; } send(ch); }}>
+                Нагадати в {ch.label}
+              </a>
+            ))}
+            <button type="button" className="btn secondary" onClick={() => copy().then(ok => setNote(ok ? "Текст скопійовано." : "Не вдалося скопіювати — виділіть текст і скопіюйте вручну."))}>
+              Скопіювати текст
+            </button>
+          </div>
+          {!channels.length && <p className="margin-calc-note">Немає телефону чи Telegram клієнта — скопіюйте текст і надішліть, як зручно.</p>}
+          {note && <p className="send-hint ok">{note}</p>}
+          <p className="margin-calc-note">
+            Натискання кнопки записує нагадування: у «Нагадуваннях» видно, скільки клієнт думає і коли йому писали.
+            Погодив — надішліть підряднику «у виробництво», статус стане «Виготовлення».
+          </p>
+        </section>
       );
     }
     function QuickContact({ order }) {
@@ -2911,6 +3036,11 @@ import pricing from '../../lib/avalon-pricing.js';
 
             <QuickContact order={order} />
 
+            {order.status === STATUS_APPROVAL && (
+              <ClientReminder order={order} items={items} disabled={busy || stale}
+                onReminded={() => save({ client_reminded: true })} />
+            )}
+
             <PaymentsSection
               token={token}
               orderNumber={orderNumber}
@@ -4195,6 +4325,7 @@ import pricing from '../../lib/avalon-pricing.js';
     const STATUS_CHART_COLORS = {
       "Нове": "#c9a227",
       [STATUS_PROCESSING]: "#f97316",
+      [STATUS_APPROVAL]: "#ec4899",
       [STATUS_PRODUCTION]: "#3b82f6",
       "Готове": "#14b8a6",
       "Відправлено": "#a855f7",
@@ -4858,9 +4989,11 @@ import pricing from '../../lib/avalon-pricing.js';
           ["Перевірте ціну", "Під товаром — блок «Розрахунок за формулою калькулятора». Напис «Фінанси позиції збігаються з розрахунком» означає, що ціна вже записана в замовлення. Якщо замість нього є кнопка «Застосувати розрахунок і зберегти» — натисніть її. Ціну не вигадуйте: її рахує формула за ставками підрядника."],
           ["Знижка та оплата на ТОВ", "Знижку вписуйте в розділі «Фінанси» у поле «Знижка %» і натискайте «Зберегти фінанси» — вона збережеться й після зміни розмірів чи кількості. Клієнт платить на рахунок ТОВ — у полі «Комісія з маржі, %» поставте 30: ціна сама зросте так, щоб маржа не зменшилась."],
           ["Якщо формула ціну не рахує", "Антивандальне виконання, складні візерунки K3, K4, K6, K8, K9 і вироби не з каталогу рахує підрядник. У розділі «Надіслати підряднику» оберіть «На опрацювання», позначте завдання (наприклад, «Порахувати виробничу вартість»), вкажіть термін і надішліть. Статус стане «В опрацюванні підрядником». Коли підрядник назве суму — впишіть її в «Собівартість (разом)», натисніть «Підставити ціну», а потім «Зберегти фінанси»."],
-          ["Узгодьте з клієнтом", "Назвіть суму, термін і спосіб оплати. Потрібна комерційна пропозиція, рахунок або картинка для месенджера — «Порахувати в калькуляторі». Дату, спосіб і адресу доставки впишіть у розділі «Доставка та нотатки»."],
+          ["Узгодьте з клієнтом", "Назвіть суму, термін і спосіб оплати. Потрібна комерційна пропозиція, рахунок або картинка для месенджера — «Порахувати в калькуляторі». Дату, спосіб і адресу доставки впишіть у розділі «Доставка та нотатки». Поки клієнт думає, поставте у «Швидких діях» статус «Погодження клієнтом»."],
+          ["Клієнт думає — нагадайте", "У статусі «Погодження клієнтом» у картці зʼявляється блок із готовим текстом нагадування. Натисніть «Нагадати в Viber», «у WhatsApp» чи «у Telegram» — відкриється чат із клієнтом: у WhatsApp і Telegram текст уже вставлено, у Viber вставте його (Cmd+V або Ctrl+V) і надішліть. Кабінет запамʼятовує нагадування й через два дні тиші покаже замовлення в «Нагадуваннях»."],
+
           ["Внесіть передоплату", "Розділ «Платежі»: тип «Передоплата», сума, за потреби примітка — і «Внести платіж»."],
-          ["Передайте у виробництво", "Додайте файли: ескіз візерунка, фото місця монтажу. У розділі «Надіслати підряднику» оберіть «У виробництво», позначте, які дані побачить підрядник, і надішліть. Статус стане «Виготовлення». Без цього кроку підрядник замовлення не побачить."],
+          ["Передайте у виробництво", "Клієнт погодив — додайте файли: ескіз візерунка, фото місця монтажу. У розділі «Надіслати підряднику» оберіть «У виробництво», позначте, які дані побачить підрядник, і надішліть. Статус стане «Виготовлення». Без цього кроку підрядник замовлення не побачить."],
           ["Доведіть до кінця", "У «Швидких діях» міняйте статус: «Готове» → «Відправлено» → «Завершено». Решту оплати клієнта внесіть у «Платежі» («Доплата» або «Оплата повністю»), гроші від підрядника — типом «Маржа від підрядника»."],
         ],
       },
