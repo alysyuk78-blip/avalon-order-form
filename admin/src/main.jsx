@@ -731,6 +731,22 @@ import pricing from '../../lib/avalon-pricing.js';
     }
     /** Одне нагадування на замовлення; пріоритет: статус → прострочене опрацювання /
      *  борг маржі → опрацювання й виготовлення → без дати доставки. */
+    /**
+     * Переплата за замовленням: клієнт сплатив більше за суму замовлення або підрядник переказав
+     * більше маржі, ніж належить. Часто це платіж, внесений не тим типом (маржа від підрядника як
+     * оплата клієнта). Менше гривні — округлення, не переплата.
+     * На вхід — і група з воронки (client_paid_sum), і підсумок платежів картки (client_paid).
+     */
+    function overpayments(g) {
+      const src = g || {};
+      const revenue = Number(src.revenue) || 0;
+      const paid = Number(src.client_paid_sum != null ? src.client_paid_sum : src.client_paid) || 0;
+      const due = Number(src.margin_due) || 0;
+      const received = Number(src.margin_received) || 0;
+      const client = revenue > 0 ? Math.round(paid - revenue) : 0;
+      const margin = due > 0 || received > 0 ? Math.round(received - Math.max(0, due)) : 0;
+      return { client: client >= 1 ? client : 0, margin: margin >= 1 ? margin : 0 };
+    }
     function buildReminders(groups) {
       // Без дати доставки нагадуємо, коли вона вже потрібна; в опрацюванні її ще може не бути.
       const needsDelivery = ["Нове", STATUS_PRODUCTION, "Готове", "Відправлено"];
@@ -747,6 +763,12 @@ import pricing from '../../lib/avalon-pricing.js';
           priority = 0;
           tag = "Статус";
           tagClass = "data";
+        }
+        const over = overpayments(g);
+        if (over.client || over.margin) {
+          if (over.client) reasons.push("Переплата клієнта: " + money(over.client) + " — перевірте платежі");
+          if (over.margin) reasons.push("Підрядник переплатив маржу: " + money(over.margin));
+          if (priority > 1) { priority = 1; tag = "Переплата"; tagClass = "debt"; }
         }
         if (payment.marginDebt > 0) {
           reasons.push("Маржа до отримання: " + money(payment.marginDebt));
@@ -1991,10 +2013,10 @@ import pricing from '../../lib/avalon-pricing.js';
       const pendingRef = useRef({ fingerprint: "", requestId: "" });
       const list = payments || [];
       const s = summary || {};
-      const clientOverpaid = Math.max(0, (Number(s.client_paid) || 0) - (Number(s.revenue) || 0));
+      const clientOverpaid = (Number(s.revenue) || 0) > 0 ? Math.max(0, Math.round((Number(s.client_paid) || 0) - (Number(s.revenue) || 0))) : 0;
       // Підрядник утримує комісію, тож переказати він має валовий прибуток мінус її.
       const marginDue = Number(s.margin_due) || groupPaymentMetrics(s).marginDue;
-      const marginOverreceived = Math.max(0, (Number(s.margin_received) || 0) - marginDue);
+      const marginOverreceived = Math.max(0, Math.round((Number(s.margin_received) || 0) - Math.max(0, marginDue)));
 
       async function add() {
         setError("");
@@ -2045,7 +2067,7 @@ import pricing from '../../lib/avalon-pricing.js';
                 <b>{money(s.client_paid || 0)}</b> / {money(s.revenue || 0)}
                 <span className={(s.client_left || 0) > 0 ? "field-static-note debt" : "field-static-note"}>
                   {(s.client_left || 0) > 0 ? "борг " + money(s.client_left)
-                    : clientOverpaid > 0 ? "переплата " + money(clientOverpaid) : "повністю"}
+                    : clientOverpaid >= 1 ? "переплата " + money(clientOverpaid) : "повністю"}
                 </span>
               </div>
             </div>
@@ -2057,11 +2079,23 @@ import pricing from '../../lib/avalon-pricing.js';
                   {s.margin_owed === false && !(Number(s.margin_received) > 0)
                     ? "до виплати — після переходу у «Виготовлення»"
                     : (s.margin_left || 0) > 0 ? "до отримання " + money(s.margin_left)
-                    : marginOverreceived > 0 ? "понад нову маржу " + money(marginOverreceived) : "повністю"}
+                    : marginOverreceived >= 1 ? "переплата " + money(marginOverreceived) : "повністю"}
                 </span>
               </div>
             </div>
           </div>
+
+          {(clientOverpaid >= 1 || marginOverreceived >= 1) && (
+            <div className="overpay-note" role="status">
+              {clientOverpaid >= 1 && <p><b>Переплата клієнта: {money(clientOverpaid)}.</b> Внесено більше, ніж коштує замовлення.</p>}
+              {marginOverreceived >= 1 && <p><b>Підрядник переплатив маржу: {money(marginOverreceived)}.</b> Отримано більше, ніж належить за цим замовленням.</p>}
+              <p>
+                Якщо платіж внесено не тим типом (наприклад, маржу від підрядника — як оплату клієнта), видаліть
+                його в списку нижче й внесіть знову з правильним типом. Якщо переплата справжня — поверніть різницю
+                («Повернення клієнту») або врахуйте її в наступному розрахунку з підрядником.
+              </p>
+            </div>
+          )}
 
           {s.legacy && (
             <div style={{ margin: "8px 0 10px", padding: "10px 12px", borderRadius: 10, background: "#fff7e6", color: "#7a5410", fontSize: 12, lineHeight: 1.45 }}>
@@ -4708,12 +4742,18 @@ import pricing from '../../lib/avalon-pricing.js';
                               );
                             })()}
                             {/* Оплати клієнта: видно борг просто на картці, без відкриття замовлення. */}
-                            {(g.client_paid_sum > 0 || g.client_left > 0) && (
-                              <div className={"card-payment " + (g.client_left > 0 ? "debt" : "paid")}>
-                                {g.client_left > 0
-                                  ? "Сплачено " + money(g.client_paid_sum) + " · борг " + money(g.client_left)
-                                  : "Сплачено повністю"}
-                              </div>
+                            {(g.client_paid_sum > 0 || g.client_left > 0) && (() => {
+                              const overClient = overpayments(g).client;
+                              return (
+                                <div className={"card-payment " + (g.client_left > 0 ? "debt" : overClient ? "over" : "paid")}>
+                                  {g.client_left > 0
+                                    ? "Сплачено " + money(g.client_paid_sum) + " · борг " + money(g.client_left)
+                                    : overClient ? "Переплата клієнта: " + money(overClient) : "Сплачено повністю"}
+                                </div>
+                              );
+                            })()}
+                            {overpayments(g).margin > 0 && (
+                              <div className="card-payment over">Підрядник переплатив маржу: {money(overpayments(g).margin)}</div>
                             )}
                             {g.margin_left > 0 && g.client_left === 0 && (
                               <div className="card-payment margin">Маржа до отримання: {money(g.margin_left)}</div>
@@ -5514,6 +5554,7 @@ import pricing from '../../lib/avalon-pricing.js';
           ["Оплата клієнта", "«Платежі» → тип «Передоплата», «Доплата» або «Оплата повністю» → сума → «Внести платіж». Картка показує, скільки сплачено і скільки лишилось."],
           ["Маржа від підрядника", "Коли підрядник перерахував вашу частину — внесіть платіж типом «Маржа від підрядника». Кабінет рахує, скільки ще має надійти."],
           ["Повернення", "Гроші, повернуті клієнтові, вносьте типом «Повернення клієнту»."],
+          ["Переплата", "Якщо внесено більше, ніж належить, картка покаже помаранчеву позначку «Переплата клієнта» або «Підрядник переплатив маржу», а замовлення зʼявиться в «Нагадуваннях». Найчастіше це платіж не того типу: видаліть його в списку платежів і внесіть знову з правильним типом."],
           ["Скасування", "«Швидкі дії» → «Скасувати» → вкажіть причину. Причина потрібна завжди — за нею видно, чому втрачаються замовлення."],
           ["Завершення", "Кошик доставлено, клієнт розрахувався, маржу отримано — поставте статус «Завершено»."],
         ],

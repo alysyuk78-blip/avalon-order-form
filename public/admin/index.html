@@ -512,6 +512,11 @@
     .card-payment.debt { background: rgba(180,72,66,.08); color: #b54842; }
     .card-payment.margin { background: rgba(143,115,64,.10); color: #8f7340; }
     .card-payment.paid { background: rgba(27,122,74,.09); color: #1b7a4a; }
+    /* Переплата — помітно, бо найчастіше це платіж, внесений не тим типом. */
+    .card-payment.over { background: rgba(217,119,6,.13); color: #9a5b00; font-weight: 700; }
+    .overpay-note { margin: 8px 0 12px; padding: 10px 12px; border-radius: 10px; background: #fff3e0; color: #7a4a00; font-size: 12.5px; line-height: 1.45; }
+    .overpay-note p { margin: 0 0 6px; }
+    .overpay-note p:last-child { margin-bottom: 0; }
     /* Дата доставки/відправлення на картці; протермінована — червоним. */
     /* Заголовок «Що зробити сьогодні» — клікабельний, згортає список. */
     .todo-head {
