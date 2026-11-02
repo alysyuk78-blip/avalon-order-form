@@ -38,7 +38,7 @@ var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "delete_order_item", 
   "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment",
   "settlement_pdf", "settlement_send", "migrate_legacy_payments",
   "rates_save", "rates_delete", "order_reprice",
-  "cash_add", "cash_delete", "cash_settle", "cash_settle_undo"];
+  "cash_add", "cash_delete", "cash_settle", "cash_settle_undo", "cash_take"];
 
 function doPost(e) {
   // Тіло читаємо ДО блокування: кабінет робить кілька запитів паралельно, і якщо
@@ -3454,7 +3454,10 @@ function paymentTotals_(payments) {
  * воронка, зведення, нагадування, акт звірки й каса. Правила власника (02.11.2026):
  *  1) комісія ТОВ не застосовується до грошей, які клієнт заплатив власнику: вона лише з частки,
  *     що пройшла через підрядника;
- *  2) хто кому винен — лише коли клієнт сплатив повністю (до того — прогноз);
+ *  2) спершу: «хто кому винен — лише після повної оплати»; потім (того ж дня) власник уточнив:
+ *     «якщо не доплатив, можу забирати» — тож гроші клієнта у власника діляться на його маржу й частку
+ *     підрядника вже з «Виготовлення». Маржу, яку переказує сам підрядник (акт звірки), — як і раніше,
+ *     лише за повністю оплаченими замовленнями;
  *  3) витрати підрядника за замовлення, скасоване після виготовлення, несе власник — це окремий
  *     платіж «Частка підряднику» на скасованому замовленні.
  * Гроші клієнта у власника («held» = отримав − передав підряднику) зменшують маржу, яку винен
@@ -3480,7 +3483,9 @@ function orderSettlement_(revenue, profit, marginCommission, commissionPct, tota
   // Борг власника — лише там, де гроші клієнта справді були в нього: збиткове замовлення чи
   // переплачена підрядником маржа без грошей власника лишаються як раніше (без боргу).
   var hasOwnerMoney = ownerReceived !== 0 || share !== 0;
-  var counts = owed && settled;
+  // Друге рішення власника (02.11.2026): «якщо не доплатив, можу забирати» — гроші клієнта у власника
+  // ділимо на його маржу й частку підрядника вже з «Виготовлення», не чекаючи повної оплати.
+  var counts = owed;
   return {
     margin_due: due,
     margin_commission_eff: commission,
@@ -3602,8 +3607,8 @@ function syncOrderPaymentState_(orderNumber) {
   var totals = paymentTotals_(payments);
   var st = orderSettlement_(revenue, profit, marginCommission, commissionPct, totals, owed);
   var clientDone = revenue > 0 && totals.client_paid >= revenue;
-  // «Маржу отримано ✓» — коли підрядник нічого не винен: маржу переказав, або (за тими ж правилами,
-  // що й борг: клієнт сплатив повністю, статус від «Виготовлення») гроші клієнта в мене.
+  // «Маржу отримано ✓» — коли підрядник нічого не винен: маржу переказав, або (статус від
+  // «Виготовлення») гроші клієнта в мене.
   var marginDone = st.margin_due > 0 && marginLeft_(st.margin_due, totals.margin_paid_sum + (st.counts ? st.held : 0)) === 0;
   rows.forEach(function (r) {
     if (!!sh.getRange(r, 33).getValue() !== clientDone) sh.getRange(r, 33).setValue(clientDone);
@@ -3642,7 +3647,7 @@ function adminAddPayment_(data) {
   if (PAYMENT_TYPES.indexOf(type) < 0) throw new Error("Невідомий тип платежу: " + type);
   var requestId = String(p.request_id || "").trim();
   // ID розрахунку з підрядником пише лише сам розрахунок (adminCashSettle_), не платіж вручну.
-  if (requestId.indexOf(SETTLE_PREFIX) === 0) throw new Error("Недопустимий ID запиту");
+  if (requestId.indexOf(SETTLE_PREFIX) === 0 || requestId.indexOf(TAKE_PREFIX) === 0) throw new Error("Недопустимий ID запиту");
   // «Хто отримав» має сенс лише для грошей клієнта (оплата чи повернення).
   var recipient = (type !== PAYMENT_MARGIN && type !== PAYMENT_SHARE && String(p.recipient || "").trim() === PAYMENT_ME) ? PAYMENT_ME : "";
 
@@ -3705,6 +3710,9 @@ function adminDeletePayment_(data) {
   if (actualRequestId.indexOf(SETTLE_PREFIX) === 0) {
     throw new Error("Цей запис зроблено розрахунком із підрядником — скасуйте весь розрахунок у розділі «Каса»");
   }
+  if (actualRequestId.indexOf(TAKE_PREFIX) === 0) {
+    throw new Error("Цей запис зроблено кнопкою «Забрати маржу» — приберіть його в розділі «Каса»");
+  }
   if (String(actual[1] || "").trim() === PAYMENT_SHARE && !(data && data.is_owner === true)) {
     throw new Error("«Частку підряднику» видаляє лише власник");
   }
@@ -3737,22 +3745,169 @@ function adminDeletePayment_(data) {
 //  • решту гасить фактично передана сума (з каси чи з рахунку); часткова — лишається боргом;
 //  • скасування розрахунку прибирає всі його записи разом.
 var SHEET_CASH = "Каса";
-var CASH_TYPES = ["Взяв собі", "Витрата з каси", "Внесення в касу", "Коригування після перерахунку"];
+// Записи вручну. «Взяв собі» без замовлення більше не вноситься (власник: маржу забираю лише за
+// конкретне замовлення) — старі такі рядки лише читаються.
+var CASH_TYPES = ["Витрата з каси", "Внесення в касу", "Коригування після перерахунку"];
+// Записи, які робить кнопка «Забрати маржу» (з № замовлення в колонці F):
+var CASH_TAKE_OWN = "Забрав свою маржу";                 // ваша маржа з грошей клієнта, що були у вас
+var CASH_TAKE_CONTR = "Забрав маржу з грошей підрядника"; // маржа, яку винен підрядник, — з його грошей у касі
+var CASH_ORDER_COL = 6;
+var TAKE_PREFIX = "take:";
+var CASH_TAKE_STATUSES = ["Виготовлення", "Готове", "Відправлено", "Завершено"];
 
 function setupCash(ss) {
   ss = ss || SpreadsheetApp.getActiveSpreadsheet();
   var existing = ss.getSheetByName(SHEET_CASH);
-  if (existing) return existing;
+  if (existing) {
+    if (existing.getMaxColumns() < CASH_ORDER_COL) {
+      existing.insertColumnsAfter(existing.getMaxColumns(), CASH_ORDER_COL - existing.getMaxColumns());
+    }
+    if (String(existing.getRange(1, CASH_ORDER_COL).getValue() || "").indexOf("№") < 0) {
+      existing.getRange(1, CASH_ORDER_COL).setValue("№ замовлення")
+        .setFontWeight("bold").setBackground(RAL7016).setFontColor(HDR_TEXT)
+        .setFontFamily(HDR_FONT).setHorizontalAlignment("center").setVerticalAlignment("middle");
+    }
+    return existing;
+  }
   var sh = ss.insertSheet(SHEET_CASH);
-  var headers = ["Дата", "Тип", "Сума, ₴", "Примітка", "ID запиту"];
+  var headers = ["Дата", "Тип", "Сума, ₴", "Примітка", "ID запиту", "№ замовлення"];
   sh.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sh, headers.length);
-  [110, 220, 120, 320, 210].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  [110, 260, 120, 320, 210, 150].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.getRange("A2:A").setNumberFormat("dd.MM.yyyy");
   sh.getRange("C2:C").setNumberFormat("#,##0 ₴");
   return sh;
 }
 function cashSheet_() { return setupCash(SpreadsheetApp.getActiveSpreadsheet()); }
+
+/**
+ * Маржа до отримання за замовленнями в роботі («Виготовлення», «Готове», «Відправлено», «Завершено»),
+ * навіть якщо клієнт ще не доплатив (рішення власника). По кожному замовленню:
+ *  • own — ваша маржа, яка вже у вас у грошах клієнта, мінус уже забране (запис «Забрав свою маржу»);
+ *  • contractor — маржа, яку винен підрядник; забрати її з каси можна лише з ГРОШЕЙ ПІДРЯДНИКА в касі
+ *    (його частка в оплатах, які клієнти внесли вам за інші замовлення) — у порядку давності;
+ *  • color: green — можна забрати все; amber — грошей підрядника не вистачає (частина або нічого).
+ * pool — гроші підрядника у вас: Σ(отримали від клієнта − передано підряднику − ваша незабрана маржа).
+ */
+function cashTakeList_(groups, cash, cashByOrder) {
+  var takenOwn = {}, takenAny = {};
+  (cash || []).forEach(function (x) {
+    if (!x.order_number) return;
+    if (x.type === CASH_TAKE_OWN) takenOwn[x.order_number] = (takenOwn[x.order_number] || 0) + Math.abs(x.amount);
+    if (x.type === CASH_TAKE_OWN || x.type === CASH_TAKE_CONTR) takenAny[x.order_number] = (takenAny[x.order_number] || 0) + Math.abs(x.amount);
+  });
+  var rows = [], pool = 0, poolOrders = [], cancelledTaken = [];
+  groups.forEach(function (g) {
+    var num = g.order_number;
+    if (g.status === "Скасовано") {
+      if ((takenAny[num] || 0) >= 1) cancelledTaken.push({ order_number: num, client: g.client || "", amount: takenAny[num] });
+      return;
+    }
+    if (CASH_TAKE_STATUSES.indexOf(g.status) < 0) return;
+    var due = Number(g.margin_due) || 0;
+    var left = Math.max(0, due - (Number(g.margin_received) || 0));   // маржа, яку ще не переказав підрядник
+    var held = (Number(g.owner_received) || 0) - (Number(g.share_paid) || 0);
+    var inHeld = Math.min(Math.max(0, held), left);                    // ваша маржа серед грошей клієнта у вас
+    var contrMoney = Math.max(0, held - left);                         // решта — гроші підрядника
+    // Забрати з каси можна лише ГОТІВКУ: що клієнт заплатив вам на картку, у касі немає.
+    var cashHere = Math.max(0, (cashByOrder || {})[num] || 0);
+    var inHeldCash = Math.min(inHeld, cashHere);
+    var contrCash = Math.max(0, Math.min(contrMoney, cashHere - inHeldCash));
+    if (contrCash >= 1) { pool += contrCash; poolOrders.push({ order_number: num, created_at: g.created_at, amount: contrCash }); }
+    var own = Math.max(0, Math.round(inHeldCash - (takenOwn[num] || 0)));
+    var contr = Math.round(Math.max(0, left - inHeld));   // що винен підрядник (готівкою чи на картку — неважливо)
+    if (own < 1 && contr < 1) return;
+    rows.push({ order_number: num, client: g.client || "", status: g.status, created_at: g.created_at,
+                client_left: Number(g.client_left) || 0, margin_due: due, own: own, contractor: contr });
+  });
+  rows.sort(function (a, b) { return orderDateMs_(a.created_at) - orderDateMs_(b.created_at); });
+  var poolLeft = Math.round(pool);
+  var ownTotal = 0;
+  rows.forEach(function (r) {
+    r.contractor_take = Math.min(r.contractor, poolLeft);
+    poolLeft -= r.contractor_take;
+    r.take = r.own + r.contractor_take;
+    r.color = r.take >= 1 && r.contractor_take >= r.contractor ? "green" : "amber";
+    ownTotal += r.own;
+  });
+  poolOrders.sort(function (a, b) { return orderDateMs_(a.created_at) - orderDateMs_(b.created_at); });
+  return { list: rows, pool: Math.round(pool), pool_orders: poolOrders, own_total: ownTotal, cancelled_taken: cancelledTaken };
+}
+
+/**
+ * «Забрати маржу» за одним замовленням: усі записи одним натиском.
+ *  • ваша маржа в грошах клієнта → запис каси «Забрав свою маржу» (готівки в касі менше);
+ *  • маржа, яку винен підрядник, → у платежах замовлення «Маржа від підрядника» (Взаємозалік), на
+ *    замовленнях, де лежать гроші підрядника, — «Частка підряднику» (Взаємозалік) на ту саму суму, і
+ *    запис каси «Забрав маржу з грошей підрядника».
+ * Повтор із тим самим ID нічого не дублює; скасовується видаленням запису каси (разом з усім іншим).
+ */
+function adminCashTake_(data) {
+  var num = String((data && data.order_number) || "").trim();
+  var rid = String((data && data.request_id) || "").trim();
+  if (!num) throw new Error("Не вказано замовлення");
+  if (!/^[A-Za-z0-9_-]{6,60}$/.test(rid)) throw new Error("Немає ID запиту");
+  var cash = readCash_();
+  if (cash.some(function (x) { return x.request_id === rid; })) return { status: "ok", duplicate: true, box: adminCashBox_() };
+  var box = adminCashBox_();
+  var item = (box.margin_list || []).filter(function (r) { return r.order_number === num; })[0];
+  if (!item || !(item.take >= 1)) throw new Error("За цим замовленням забирати з каси нічого");
+  if (data.expect != null && Math.round(Number(data.expect)) !== item.take) {
+    throw new Error("Суми змінились, поки була відкрита «Каса», — оновіть сторінку");
+  }
+  var available = Math.round((Number(box.cash.expected) || 0) - (Number(box.cash.deposits) || 0) - (Number(box.cash.cancelled) || 0));
+  if (item.take > available) throw new Error("У касі немає стільки готівки: є близько " + money_(Math.max(0, available)) + " ₴ поза передоплатами");
+  var date = toISODate(data && data.date) || Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd");
+  var note = "Маржа за " + num;
+  var entries = [];
+  if (item.contractor_take >= 1) {
+    entries.push({ order_number: num, type: PAYMENT_MARGIN, amount: item.contractor_take });
+    var need = item.contractor_take;
+    var pools = box.pool_orders || [];
+    for (var i = 0; i < pools.length && need > 0; i++) {
+      var part = Math.min(Math.round(pools[i].amount), need);
+      if (part <= 0) continue;
+      need -= part;
+      entries.push({ order_number: pools[i].order_number, type: PAYMENT_SHARE, amount: part });
+    }
+    if (need > 0) throw new Error("Грошей підрядника в касі не вистачає — оновіть сторінку");
+  }
+  var touched = {};
+  if (entries.length) {
+    var psh = paymentsSheet_();
+    var start = psh.getLastRow() + 1;
+    psh.getRange(start, 1, entries.length, PAYMENT_RECIPIENT_COL).setValues(entries.map(function (e, k) {
+      touched[e.order_number] = true;
+      return [date, e.order_number, e.type, e.amount, PAYMENT_NETTING, note, TAKE_PREFIX + rid + ":" + (k + 1), ""];
+    }));
+    psh.getRange(start, 1, entries.length, 1).setNumberFormat("dd.MM.yyyy");
+    psh.getRange(start, 4, entries.length, 1).setNumberFormat("#,##0 ₴");
+  }
+  var csh = cashSheet_();
+  var rowsOut = [];
+  if (item.own >= 1) rowsOut.push([date, CASH_TAKE_OWN, item.own, note, rid, num]);
+  if (item.contractor_take >= 1) rowsOut.push([date, CASH_TAKE_CONTR, item.contractor_take, note, rid, num]);
+  var crow = csh.getLastRow() + 1;
+  csh.getRange(crow, 1, rowsOut.length, CASH_ORDER_COL).setValues(rowsOut);
+  csh.getRange(crow, 1, rowsOut.length, 1).setNumberFormat("dd.MM.yyyy");
+  Object.keys(touched).forEach(function (n) { syncOrderPaymentState_(n); });
+  SpreadsheetApp.flush();
+  return { status: "ok", taken: item.take, own: item.own, contractor: item.contractor_take, box: adminCashBox_() };
+}
+
+/** Прибрати записи «Забрати маржу» з ID rid: рядки каси і платежі взаємозаліку. */
+function cashTakeUndo_(rid) {
+  var csh = cashSheet_();
+  readCash_().filter(function (x) { return x.request_id === rid; })
+    .sort(function (a, b) { return b.row - a.row; })
+    .forEach(function (x) { csh.deleteRow(x.row); });
+  var psh = paymentsSheet_();
+  var touched = {};
+  readPayments_("").filter(function (p) { return p.request_id.indexOf(TAKE_PREFIX + rid + ":") === 0; })
+    .sort(function (a, b) { return b.row - a.row; })
+    .forEach(function (p) { psh.deleteRow(p.row); touched[p.order_number] = true; });
+  Object.keys(touched).forEach(function (n) { syncOrderPaymentState_(n); });
+}
 
 /** План розрахунку: цілі гривні по замовленнях — так само, як їх потім запише розрахунок. */
 function cashSettlePlan_(contractorOrders, ownerOrders) {
@@ -3773,16 +3928,18 @@ function readCash_() {
   if (!sh) return [];
   var last = sh.getLastRow();
   if (last < 2) return [];
-  return sh.getRange(2, 1, last - 1, 5).getValues().map(function (r, i) {
+  var cols = Math.min(CASH_ORDER_COL, sh.getMaxColumns());
+  return sh.getRange(2, 1, last - 1, cols).getValues().map(function (r, i) {
     var type = String(r[1] || "").trim();
     var amount = Number(r[2]) || 0;
     return { row: i + 2, date: toISODate(r[0]) || String(r[0] || ""), type: type, amount: amount,
-             effect: cashEffect_(type, amount), note: String(r[3] || ""), request_id: String(r[4] || "") };
+             effect: cashEffect_(type, amount), note: String(r[3] || ""), request_id: String(r[4] || ""),
+             order_number: String(r[5] || "").trim() };
   }).filter(function (x) { return x.type; });
 }
 function cashEffect_(type, amount) {
   var a = Number(amount) || 0;
-  if (type === "Взяв собі" || type === "Витрата з каси") return -Math.abs(a);
+  if (type === "Взяв собі" || type === "Витрата з каси" || type === CASH_TAKE_OWN || type === CASH_TAKE_CONTR) return -Math.abs(a);
   if (type === "Внесення в касу") return Math.abs(a);
   return a;   // коригування — зі знаком, як внесли
 }
@@ -3825,10 +3982,10 @@ function adminCashBox_() {
     }
     if (g.margin_owed && settled && Number(g.margin_left) >= 1) contractorOwes.push(Object.assign({}, base, { amount: Number(g.margin_left) }));
     if (Number(g.owner_owes) >= 1) ownerOwes.push(Object.assign({}, base, { amount: Number(g.owner_owes) }));
-    // Готівка за замовлення, де борги ще не рахуються (до «Виготовлення» або клієнт не доплатив):
-    // це не вільні гроші — їх, можливо, доведеться повернути чи віддати підряднику.
-    if (!(g.margin_owed && settled) && (cashByOrder[g.order_number] || 0) >= 1) deposits.push(Object.assign({}, base, { amount: cashByOrder[g.order_number] }));
+    // Готівка за замовлення до «Виготовлення» — передоплата клієнта: його, можливо, доведеться повернути.
+    if (!g.margin_owed && (cashByOrder[g.order_number] || 0) >= 1) deposits.push(Object.assign({}, base, { amount: cashByOrder[g.order_number] }));
   });
+  var take = cashTakeList_(groups, cash, cashByOrder);
   function total(list) { return Math.round(list.reduce(function (s, x) { return s + x.amount; }, 0) * 100) / 100; }
   var settlements = {};
   payments.forEach(function (p) {
@@ -3855,6 +4012,13 @@ function adminCashBox_() {
     },
     // Точно ті числа, з якими проведеться розрахунок (цілі гривні по замовленнях).
     settle: cashSettlePlan_(contractorOwes, ownerOwes),
+    // Маржа до отримання по замовленнях (кнопка «Забрати»), гроші підрядника в касі, забрана маржа
+    // за скасованими замовленнями.
+    margin_list: take.list,
+    pool_orders: take.pool_orders,
+    contractor_pool: take.pool,
+    own_in_cash: take.own_total,
+    cancelled_taken: take.cancelled_taken,
     cancelled_refunded: cancelledRefunded,
     contractor_owes: contractorTotal,
     owner_owes: ownerTotal,
@@ -3898,6 +4062,12 @@ function adminCashDelete_(data) {
   // Записи без ID звіряємо за типом і сумою — щоб не прибрати сусідній після зсуву рядків.
   if (data.type != null && String(actual[1] || "").trim() !== String(data.type).trim()) throw new Error("Список змінився — оновіть сторінку");
   if (data.amount != null && Number(actual[2]) !== Number(data.amount)) throw new Error("Список змінився — оновіть сторінку");
+  var actualType = String(actual[1] || "").trim();
+  if ((actualType === CASH_TAKE_OWN || actualType === CASH_TAKE_CONTR) && actualId) {
+    cashTakeUndo_(actualId);   // разом з усіма записами цього «Забрати маржу»
+    SpreadsheetApp.flush();
+    return { status: "ok", box: adminCashBox_() };
+  }
   sh.deleteRow(row);
   SpreadsheetApp.flush();
   return { status: "ok", box: adminCashBox_() };
@@ -4655,6 +4825,7 @@ function handleAdminRequest_(data) {
     if (action === "cash_delete") return jsonOut(adminCashDelete_(data));
     if (action === "cash_settle") return jsonOut(adminCashSettle_(data));
     if (action === "cash_settle_undo") return jsonOut(adminCashSettleUndo_(data));
+    if (action === "cash_take") return jsonOut(adminCashTake_(data));
     // Чати з клієнтами (Telegram Business). Аркуш «Чати» пишуть під власним блокуванням.
     if (action === "chat_ingest") return jsonOut(adminChatIngest_(data));
     if (action === "chat_log_out") return jsonOut(adminChatLogOut_(data));

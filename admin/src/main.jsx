@@ -5645,8 +5645,9 @@ import pricing from '../../lib/avalon-pricing.js';
         steps: [
           ["Клієнт заплатив вам", "У картці замовлення → «Платежі» → тип оплати, сума, спосіб (наприклад, «Готівка») → «Хто отримав гроші: Я» → «Внести платіж». Менеджер теж може так позначити платіж, але касу бачите лише ви."],
           ["Що рахує кабінет", "Гроші клієнта у вас — ваша маржа вже у вас, а решта (частка підрядника) — ваш борг йому. Комісія ТОВ з грошей, отриманих вами, не береться. Хто кому винен, рахується лише коли клієнт сплатив повністю і замовлення вже у «Виготовленні»."],
-          ["Скільки в касі", "«Каса» → «Готівка в касі за обліком» і з чого вона складається: «Передоплати клієнтів — ще не ваші» (їх, можливо, доведеться повернути чи віддати підряднику), «Гроші підрядника — віддати йому» і «Ваші — можна взяти собі». Останнє орієнтовно: якщо борг підряднику лежить на вашій картці, вільної готівки більше."],
-          ["Взяли собі чи витратили", "«Каса» → «Що зробили з готівкою»: «Взяв собі», «Витратив на справи» або «Доклав у касу» → сума → «Записати». Якщо берете більше, ніж ваше, кабінет попередить."],
+          ["Скільки в касі", "«Каса» → «Готівка в касі за обліком» і з чого вона складається: «Ваша маржа — можна забрати», «Гроші підрядника — віддати йому» і «Передоплати клієнтів — ще не ваші»."],
+          ["Забрати маржу", "«Каса» → «Маржа до отримання»: замовлення в роботі, за якими маржу ще не отримано (навіть якщо клієнт не доплатив). Зелені — можна забрати з каси: натисніть «Забрати». Маржа з оплати, яку клієнт вніс вам, — ваша; маржа, яку винен підрядник, береться з його грошей у касі (стільки ж менше віддасте йому). Помаранчеві — його грошей у касі не вистачає: решту переказує підрядник. Кабінет сам робить усі записи; помилились — приберіть запис в історії каси."],
+          ["Витратили чи доклали", "«Каса» → «Що зробили з готівкою»: «Витратив на справи» або «Доклав у касу» → сума → «Записати». Лише те, що не стосується замовлень."],
           ["Перерахували готівку", "Впишіть, скільки є насправді, і натисніть «Звірити з обліком». Якщо не сходиться — кабінет запропонує записати розбіжність."],
           ["Розрахунок із підрядником", "«Каса» → «Розрахунок із підрядником». Спершу залік боргів: ваша маржа, яку винен підрядник за інші замовлення, зараховується в рахунок його грошей у вас — гроші не передаються. Різницю хтось віддає: впишіть, скільки віддаєте зараз і як («Готівкою з каси»), натисніть «Провести розрахунок». Можна віддати частину — решта лишиться боргом."],
           ["Помилились", "«Проведені розрахунки» → «Скасувати» — зникнуть усі записи цього розрахунку. Окремі записи розрахунку в картці не видаляються."],
@@ -5847,7 +5848,18 @@ import pricing from '../../lib/avalon-pricing.js';
     // проводиться розрахунок: спершу взаємозалік (його маржа гасить вашу частку), потім — передана
     // сума. Усе пишеться в журнал платежів таблиці, тож картки, акт звірки й зведення бачать те саме.
     const CASH_API = "/api/admin/payments?resource=cash";
-    const CASH_OUT_TYPES = [["Взяв собі", "Взяв собі (свої гроші)"], ["Витрата з каси", "Витратив на справи"], ["Внесення в касу", "Доклав у касу"]];
+    // Записи вручну — лише те, що не стосується замовлень. Маржу забирають кнопкою «Забрати» за замовленням.
+    const CASH_OUT_TYPES = [["Витрата з каси", "Витратив на справи"], ["Внесення в касу", "Доклав у касу"]];
+    const CASH_TAKE_LABELS = {
+      "Забрав свою маржу": "Забрав маржу (вашу, з оплати клієнта)",
+      "Забрав маржу з грошей підрядника": "Забрав маржу (з грошей підрядника)",
+      "Взяв собі": "Взяв собі (старий запис)",
+      "Коригування після перерахунку": "Розбіжність після перерахунку",
+    };
+    function cashTypeLabel(type) {
+      return CASH_TAKE_LABELS[type] || (CASH_OUT_TYPES.find(t => t[0] === type) || [])[1] || type;
+    }
+    function isCashTake(type) { return type === "Забрав свою маржу" || type === "Забрав маржу з грошей підрядника"; }
     // Як гроші переходять під час розрахунку: «з каси» чи «в касу» залежить від того, хто віддає.
     function settleMethods(toContractor) {
       return [["Готівка", toContractor ? "Готівкою з каси" : "Готівкою в касу"], ["На карту", "Переказом на картку"],
@@ -5881,7 +5893,7 @@ import pricing from '../../lib/avalon-pricing.js';
       const [error, setError] = useState("");
       const [busy, setBusy] = useState(false);
       const [note, setNote] = useState("");
-      const [entry, setEntry] = useState({ type: "Взяв собі", amount: "", note: "" });
+      const [entry, setEntry] = useState({ type: "Витрата з каси", amount: "", note: "" });
       const [counted, setCounted] = useState("");
       const [settle, setSettle] = useState({ amount: "", method: "Готівка", date: "" });
       const [showLists, setShowLists] = useState(false);
@@ -5920,9 +5932,6 @@ import pricing from '../../lib/avalon-pricing.js';
       async function addEntry() {
         const amount = Number(entry.amount);
         if (!(amount > 0)) return setError("Вкажіть суму");
-        if (entry.type === "Взяв собі" && amount > (Number(c.free) || 0)
-          && !window.confirm("Ви берете " + money(amount) + ", а ваших у касі близько " + money(Math.max(0, Number(c.free) || 0))
-            + ".\n\nРешта готівки — передоплати клієнтів і гроші підрядника. Якщо частина боргу підряднику лежить на вашій картці, вільної готівки більше.\n\nЗаписати все одно?")) return;
         const key = JSON.stringify(entry);
         const res = await post({ action: "add", type: entry.type, amount, note: entry.note, request_id: requestIdFor(key) },
           () => entry.type + ": " + money(amount) + " — записано.");
@@ -5938,8 +5947,21 @@ import pricing from '../../lib/avalon-pricing.js';
           () => "Розбіжність записано — тепер у касі " + money(actual) + ".");
         if (res) setCounted("");
       }
+      async function takeMargin(r) {
+        const parts = [];
+        if (r.own >= 1) parts.push(money(r.own) + " — ваша маржа з оплати, яку клієнт вніс вам");
+        if (r.contractor_take >= 1) parts.push(money(r.contractor_take) + " — маржа, яку винен підрядник: береться з його грошей у касі (стільки ж менше віддасте йому при звірці)");
+        if (!window.confirm("Забрати з каси " + money(r.take) + " за " + r.order_number + "?\n\n" + parts.join("\n")
+          + "\n\nКабінет сам зробить записи: готівки в касі стане менше на " + money(r.take)
+          + (r.contractor_take >= 1 ? ", а гроші підрядника в касі — на " + money(r.contractor_take) : "")
+          + ". Помилились — приберіть запис в «Інших записах каси».")) return;
+        await post({ action: "take", order_number: r.order_number, request_id: requestIdFor("take" + r.order_number + r.take), expect: r.take },
+          res => "Забрано " + money(res.taken) + " за " + r.order_number + ".");
+      }
       async function removeEntry(x) {
-        if (!window.confirm("Прибрати запис «" + x.type + " " + money(Math.abs(x.amount)) + "»?")) return;
+        if (!window.confirm(isCashTake(x.type)
+          ? "Скасувати «" + cashTypeLabel(x.type) + "» " + money(Math.abs(x.amount)) + (x.order_number ? " за " + x.order_number : "") + "?\n\nМаржа за замовлення знову стане неотриманою, гроші повернуться в касу й до частки підрядника."
+          : "Прибрати запис «" + cashTypeLabel(x.type) + " " + money(Math.abs(x.amount)) + "»?")) return;
         await post({ action: "delete", row: x.row, request_id: x.request_id, type: x.type, amount: x.amount }, () => "Запис прибрано.");
       }
       async function doSettle() {
@@ -5978,57 +6000,64 @@ import pricing from '../../lib/avalon-pricing.js';
                 </div>
                 <div className="approval-label">З неї:</div>
                 <ul className="cash-split">
+                  <CashLine title="Ваша маржа — можна забрати" value={box.own_in_cash} className="ok"
+                    hint="з оплат, які клієнти внесли вам за замовлення в роботі; забирайте кнопкою в списку нижче" />
+                  <CashLine title="Гроші підрядника — віддати йому" value={box.contractor_pool} className="info"
+                    hint="його частка в цих оплатах; з неї ж можна забрати маржу, яку він винен вам за інші замовлення" />
                   <CashLine title="Передоплати клієнтів — ще не ваші" value={c.deposits}
-                    hint="замовлення ще не у «Виготовленні» або клієнт не доплатив: гроші можуть повернутись клієнту чи піти підряднику" />
-                  {(Number(c.cancelled) || 0) >= 1 && <CashLine title="Скасовані — повернути клієнтам" value={c.cancelled}
+                    hint="замовлення ще не у «Виготовленні»: гроші, можливо, доведеться повернути" />
+                  {(Number(c.cancelled) || 0) >= 1 && <CashLine title="Скасовані — повернути клієнтам" value={c.cancelled} className="neg"
                     hint="або компенсувати підряднику, якщо скасували після виготовлення" />}
-                  <CashLine title="Гроші підрядника — віддати йому" value={box.owner_owes}
-                    hint="його частка в оплатах, які клієнти внесли вам (залік боргів — нижче)" />
-                  <CashLine title="Ваші — можна взяти собі" value={Math.max(0, Number(c.free) || 0)} className={(Number(c.free) || 0) < 0 ? "neg" : ""}
-                    hint="орієнтовно: якщо частина боргу підряднику лежить на вашій картці, вільної готівки більше" />
                 </ul>
                 {(Number(c.free) || 0) < 0 && <p className="send-hint err">Готівки менше, ніж передоплат і частки підрядника: частину вже взято собі або борг лежить на картці. Перерахуйте касу.</p>}
-                <div className="cash-forms">
-                  <div className="cash-form">
-                    <div className="field"><label htmlFor="cash-type">Що зробили з готівкою</label>
-                      <select id="cash-type" value={entry.type} onChange={e => setEntry({ ...entry, type: e.target.value })}>
-                        {CASH_OUT_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                      </select></div>
-                    <div className="field"><label htmlFor="cash-amount">Сума, ₴</label>
-                      <input id="cash-amount" type="number" min="0" inputMode="decimal" value={entry.amount} onChange={e => setEntry({ ...entry, amount: e.target.value })} /></div>
-                    <div className="field"><label htmlFor="cash-note">Примітка</label>
-                      <input id="cash-note" value={entry.note} onChange={e => setEntry({ ...entry, note: e.target.value })} placeholder="На що / звідки" /></div>
-                    <button type="button" className="btn" disabled={busy} onClick={addEntry}>Записати</button>
-                  </div>
-                  <div className="cash-form">
-                    <div className="field"><label htmlFor="cash-count">Перерахували готівку? Скільки є насправді</label>
-                      <input id="cash-count" type="number" min="0" inputMode="decimal" value={counted} onChange={e => setCounted(e.target.value)} /></div>
-                    <button type="button" className="btn secondary" disabled={busy} onClick={recordCount}>Звірити з обліком</button>
-                  </div>
-                </div>
-                {c.ledger && c.ledger.length > 0 && (
-                  <div className="table-scroll" style={{ marginTop: 10 }}>
-                    <table>
-                      <thead><tr><th>Дата</th><th>Що зробили</th><th>Сума</th><th>Примітка</th><th /></tr></thead>
-                      <tbody>
-                        {c.ledger.map(x => (
-                          <tr key={x.row}>
-                            <td>{isoLabel(String(x.date).slice(0, 10))}</td><td>{(CASH_OUT_TYPES.find(t => t[0] === x.type) || [])[1] || (x.type === "Коригування після перерахунку" ? "Розбіжність після перерахунку" : x.type)}</td>
-                            <td><b>{(x.effect > 0 ? "+" : "") + money(x.effect)}</b></td><td>{x.note || "—"}</td>
-                            <td><IconButton icon="trash" label="Прибрати запис" disabled={busy} onClick={() => removeEntry(x)} /></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                <p className="margin-calc-note">
-                  Готівку від клієнтів кабінет бере з платежів у картках замовлень («Хто отримав гроші: Я», спосіб «Готівка»).
-                  Тут записуйте лише те, що не стосується замовлень: взяли собі, витратили, доклали.
-                </p>
               </>
             )}
           </div>
+
+          {box && (
+            <div className="panel">
+              <div className="panel-head"><h2>Маржа до отримання</h2></div>
+              <p className="margin-calc-note">Замовлення у «Виготовленні», «Готове», «Відправлено» й «Завершено», за якими ви ще не отримали маржу. Натисніть «Забрати» — кабінет сам зробить усі записи.</p>
+              <div className="cash-legend">
+                <span><i className="dot green" />можна забрати з каси</span>
+                <span><i className="dot amber" />готівки підрядника не вистачає — решту переказує він</span>
+                <span><i className="dot red" />маржу забрано, а замовлення скасоване</span>
+              </div>
+              {!(box.margin_list || []).length && !(box.cancelled_taken || []).length && <p className="chat-empty">Немає замовлень із неотриманою маржею.</p>}
+              <ul className="take-list">
+                {(box.margin_list || []).map(r => (
+                  <li key={r.order_number} className={"take-row " + r.color}>
+                    <div className="take-main">
+                      <button type="button" className="link-btn" onClick={() => onOpenOrder(r.order_number)}>{r.order_number}</button>
+                      <span className="take-client">{r.client}</span>
+                      <StatusChip status={r.status} />
+                      {r.client_left >= 1 && <span className="take-note">клієнт ще винен {money(r.client_left)}</span>}
+                    </div>
+                    <div className="take-sum">
+                      <span>маржа {money(r.own + r.contractor)}</span>
+                      {r.color === "amber" && <small>{r.take >= 1 ? "з каси — " + money(r.take) + ", решту " + money(r.own + r.contractor - r.take) + " переказує підрядник" : "переказує підрядник — у касі його грошей немає"}</small>}
+                    </div>
+                    {r.take >= 1 && (
+                      <button type="button" className={"btn small" + (r.color === "green" ? "" : " secondary")} disabled={busy} onClick={() => takeMargin(r)}>
+                        Забрати {money(r.take)}
+                      </button>
+                    )}
+                  </li>
+                ))}
+                {(box.cancelled_taken || []).map(r => (
+                  <li key={"x" + r.order_number} className="take-row red">
+                    <div className="take-main">
+                      <button type="button" className="link-btn" onClick={() => onOpenOrder(r.order_number)}>{r.order_number}</button>
+                      <span className="take-client">{r.client}</span>
+                      <StatusChip status="Скасовано" />
+                    </div>
+                    <div className="take-sum"><span>забрано {money(r.amount)}</span>
+                      <small>замовлення скасоване: приберіть запис «Забрав маржу» в історії нижче або поверніть суму</small></div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {box && (
             <div className="panel">
@@ -6087,6 +6116,50 @@ import pricing from '../../lib/avalon-pricing.js';
                     підрядника несете ви: внесіть у картці «Частка підряднику» на погоджену суму.</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {box && (
+            <div className="panel">
+              <div className="panel-head"><h2>Інші записи каси</h2></div>
+                <div className="cash-forms">
+                  <div className="cash-form">
+                    <div className="field"><label htmlFor="cash-type">Що зробили з готівкою</label>
+                      <select id="cash-type" value={entry.type} onChange={e => setEntry({ ...entry, type: e.target.value })}>
+                        {CASH_OUT_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select></div>
+                    <div className="field"><label htmlFor="cash-amount">Сума, ₴</label>
+                      <input id="cash-amount" type="number" min="0" inputMode="decimal" value={entry.amount} onChange={e => setEntry({ ...entry, amount: e.target.value })} /></div>
+                    <div className="field"><label htmlFor="cash-note">Примітка</label>
+                      <input id="cash-note" value={entry.note} onChange={e => setEntry({ ...entry, note: e.target.value })} placeholder="На що / звідки" /></div>
+                    <button type="button" className="btn" disabled={busy} onClick={addEntry}>Записати</button>
+                  </div>
+                  <div className="cash-form">
+                    <div className="field"><label htmlFor="cash-count">Перерахували готівку? Скільки є насправді</label>
+                      <input id="cash-count" type="number" min="0" inputMode="decimal" value={counted} onChange={e => setCounted(e.target.value)} /></div>
+                    <button type="button" className="btn secondary" disabled={busy} onClick={recordCount}>Звірити з обліком</button>
+                  </div>
+                </div>
+                {c.ledger && c.ledger.length > 0 && (
+                  <div className="table-scroll" style={{ marginTop: 10 }}>
+                    <table>
+                      <thead><tr><th>Дата</th><th>Що зробили</th><th>Сума</th><th>Примітка</th><th /></tr></thead>
+                      <tbody>
+                        {c.ledger.map(x => (
+                          <tr key={x.row}>
+                            <td>{isoLabel(String(x.date).slice(0, 10))}</td><td>{cashTypeLabel(x.type)}{x.order_number ? " · " + x.order_number : ""}</td>
+                            <td><b>{(x.effect > 0 ? "+" : "") + money(x.effect)}</b></td><td>{x.note || "—"}</td>
+                            <td><IconButton icon="trash" label="Прибрати запис" disabled={busy} onClick={() => removeEntry(x)} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <p className="margin-calc-note">
+                  Готівку від клієнтів кабінет бере з платежів у картках замовлень («Хто отримав гроші: Я», спосіб «Готівка»).
+                  Маржу забирайте кнопкою «Забрати» в «Маржі до отримання». Тут — лише те, що не стосується замовлень: витратили на справи, доклали.
+                </p>
             </div>
           )}
 
