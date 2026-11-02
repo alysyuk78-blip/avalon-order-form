@@ -20,6 +20,7 @@ const authPath = require.resolve("../lib/admin-auth");
 require(authPath);
 require.cache[authPath].exports = {
   requireAdmin: () => true,
+  roleOf: () => "owner",
   setAdminCors: () => {},
   handleOptions: (req, res) => res.status(204).end(),
 };

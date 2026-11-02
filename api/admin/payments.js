@@ -1,4 +1,4 @@
-const { requireAdmin, requireOwner, setAdminCors, handleOptions } = require("../../lib/admin-auth");
+const { requireAdmin, requireOwner, roleOf, setAdminCors, handleOptions } = require("../../lib/admin-auth");
 const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
 const cashHandler = require("../../lib/admin-cash-handler");
 
@@ -72,6 +72,8 @@ module.exports = async function handler(req, res) {
         payment_request_id: paymentRequestId,
         payment_type: paymentType,
         payment_amount: paymentAmount,
+        // «Частку підряднику» видаляє лише власник — скрипт таблиці перевіряє за фактичним типом рядка.
+        is_owner: roleOf(req) !== "manager",
       });
       console.log(JSON.stringify({ level: "info", msg: "done", route: "/api/admin/payments", method: req.method, ms: Date.now() - startedAt, requestId }));
       return res.status(200).json(data);

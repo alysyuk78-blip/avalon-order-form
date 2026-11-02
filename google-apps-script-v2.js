@@ -3377,8 +3377,11 @@ function setupPayments(ss) {
         .setFontWeight("bold").setBackground(RAL7016).setFontColor(HDR_TEXT)
         .setFontFamily(HDR_FONT).setHorizontalAlignment("center").setVerticalAlignment("middle");
       existing.setColumnWidth(PAYMENT_RECIPIENT_COL, 120);
-      var typeRule = SpreadsheetApp.newDataValidation().requireValueInList(PAYMENT_TYPES).setAllowInvalid(false).build();
-      existing.getRange(2, 3, Math.max(1000, existing.getMaxRows() - 1), 1).setDataValidation(typeRule);
+      try {
+        var typeRule = SpreadsheetApp.newDataValidation().requireValueInList(PAYMENT_TYPES).setAllowInvalid(false).build();
+        var typeRows = Math.max(1, existing.getMaxRows() - 1);
+        existing.getRange(2, 3, typeRows, 1).setDataValidation(typeRule);
+      } catch (ruleErr) { console.error("Список типів платежів: " + ruleErr); }
     }
     return existing;
   }
@@ -3421,7 +3424,8 @@ function readPayments_(orderNumber) {
       method: String(r[4] || ""),
       note: String(r[5] || ""),
       request_id: String(r[6] || ""),
-      recipient: String(r[7] || "").trim() === PAYMENT_ME ? PAYMENT_ME : ""
+      // «Я», «я», «Я.» — власник (\b не працює з кирилицею, тому дивимось, що далі не літера).
+      recipient: /^я(?![а-яіїєґa-z])/i.test(String(r[7] || "").trim()) ? PAYMENT_ME : ""
     });
   }
   return out;
@@ -3463,13 +3467,20 @@ function orderSettlement_(revenue, profit, marginCommission, commissionPct, tota
   var clientPaid = Number(t.client_paid) || 0;
   var ownerReceived = Number(t.owner_received) || 0;
   var share = Number(t.share_paid) || 0;
-  var ownerFrac = clientPaid > 0 ? Math.min(1, Math.max(0, ownerReceived / clientPaid)) : 0;
+  // Частка грошей у власника — від суми замовлення (до повної оплати прогноз не «стрибає»:
+  // решту, найімовірніше, клієнт заплатить підряднику) або від сплаченого, якщо сплатив більше.
+  var base = Math.max(clientPaid, rev);
+  var ownerFrac = base > 0 ? Math.min(1, Math.max(0, ownerReceived / base)) : 0;
   var commission = Math.round((Number(marginCommission) || 0) * (1 - ownerFrac) * 100) / 100;
   var due = marginDue_(profit, commission, commissionPct);
   var held = ownerReceived - share;
   var received = Number(t.margin_paid_sum) || 0;
   var settled = rev > 0 && clientPaid >= rev;
   var balance = Math.round((Number(due) - received - held) * 100) / 100;   // >0 — винен підрядник
+  // Борг власника — лише там, де гроші клієнта справді були в нього: збиткове замовлення чи
+  // переплачена підрядником маржа без грошей власника лишаються як раніше (без боргу).
+  var hasOwnerMoney = ownerReceived !== 0 || share !== 0;
+  var counts = owed && settled;
   return {
     margin_due: due,
     margin_commission_eff: commission,
@@ -3478,7 +3489,10 @@ function orderSettlement_(revenue, profit, marginCommission, commissionPct, tota
     held: held,
     settled: settled,
     margin_left: owed ? marginLeft_(due, received + held) : 0,
-    owner_owes: owed && settled && -balance >= 1 ? -balance : 0
+    owner_owes: counts && hasOwnerMoney && -balance >= 1 ? -balance : 0,
+    // Маржа, яку власник уже має в грошах клієнта (для «Зведення»: отримана маржа).
+    margin_kept: counts && held > 0 ? Math.max(0, Math.min(held, Number(due) - received)) : 0,
+    counts: counts
   };
 }
 
@@ -3588,8 +3602,9 @@ function syncOrderPaymentState_(orderNumber) {
   var totals = paymentTotals_(payments);
   var st = orderSettlement_(revenue, profit, marginCommission, commissionPct, totals, owed);
   var clientDone = revenue > 0 && totals.client_paid >= revenue;
-  // «Маржу отримано ✓» — коли підрядник нічого не винен (маржу переказав або гроші в мене).
-  var marginDone = st.margin_due > 0 && marginLeft_(st.margin_due, totals.margin_paid_sum + st.held) === 0;
+  // «Маржу отримано ✓» — коли підрядник нічого не винен: маржу переказав, або (за тими ж правилами,
+  // що й борг: клієнт сплатив повністю, статус від «Виготовлення») гроші клієнта в мене.
+  var marginDone = st.margin_due > 0 && marginLeft_(st.margin_due, totals.margin_paid_sum + (st.counts ? st.held : 0)) === 0;
   rows.forEach(function (r) {
     if (!!sh.getRange(r, 33).getValue() !== clientDone) sh.getRange(r, 33).setValue(clientDone);
     if (!!sh.getRange(r, 34).getValue() !== marginDone) sh.getRange(r, 34).setValue(marginDone);
@@ -3599,7 +3614,8 @@ function syncOrderPaymentState_(orderNumber) {
     margin_commission_eff: st.margin_commission_eff,
     client_paid: totals.client_paid, client_left: Math.max(0, revenue - totals.client_paid),
     margin_received: totals.margin_paid_sum, margin_left: st.margin_left,
-    owner_received: st.owner_received, share_paid: st.share_paid, owner_owes: st.owner_owes
+    owner_received: st.owner_received, share_paid: st.share_paid, owner_owes: st.owner_owes,
+    margin_kept: st.margin_kept
   };
 }
 
@@ -3625,7 +3641,8 @@ function adminAddPayment_(data) {
   var type = String(p.type || "Передоплата").trim();
   if (PAYMENT_TYPES.indexOf(type) < 0) throw new Error("Невідомий тип платежу: " + type);
   var requestId = String(p.request_id || "").trim();
-  if (requestId.indexOf(SETTLE_PREFIX) === 0 && !data.from_settlement) throw new Error("Недопустимий ID запиту");
+  // ID розрахунку з підрядником пише лише сам розрахунок (adminCashSettle_), не платіж вручну.
+  if (requestId.indexOf(SETTLE_PREFIX) === 0) throw new Error("Недопустимий ID запиту");
   // «Хто отримав» має сенс лише для грошей клієнта (оплата чи повернення).
   var recipient = (type !== PAYMENT_MARGIN && type !== PAYMENT_SHARE && String(p.recipient || "").trim() === PAYMENT_ME) ? PAYMENT_ME : "";
 
@@ -3636,7 +3653,8 @@ function adminAddPayment_(data) {
     for (var pi = 0; pi < allPayments.length; pi++) {
       var existing = allPayments[pi];
       if (existing.request_id !== requestId) continue;
-      if (existing.order_number !== num || existing.type !== type || Number(existing.amount) !== amount) {
+      if (existing.order_number !== num || existing.type !== type || Number(existing.amount) !== amount
+          || existing.recipient !== recipient) {
         throw new Error("ID запиту вже використано для іншого платежу");
       }
       return {
@@ -3687,6 +3705,9 @@ function adminDeletePayment_(data) {
   if (actualRequestId.indexOf(SETTLE_PREFIX) === 0) {
     throw new Error("Цей запис зроблено розрахунком із підрядником — скасуйте весь розрахунок у розділі «Каса»");
   }
+  if (String(actual[1] || "").trim() === PAYMENT_SHARE && !(data && data.is_owner === true)) {
+    throw new Error("«Частку підряднику» видаляє лише власник");
+  }
   if (expectedRequestId && actualRequestId !== expectedRequestId) {
     throw new Error("Список платежів змінився. Оновіть картку й повторіть видалення");
   }
@@ -3733,6 +3754,19 @@ function setupCash(ss) {
 }
 function cashSheet_() { return setupCash(SpreadsheetApp.getActiveSpreadsheet()); }
 
+/** План розрахунку: цілі гривні по замовленнях — так само, як їх потім запише розрахунок. */
+function cashSettlePlan_(contractorOrders, ownerOrders) {
+  var sumC = 0, sumO = 0;
+  contractorOrders.forEach(function (x) { sumC += Math.round(x.amount); });
+  ownerOrders.forEach(function (x) { sumO += Math.round(x.amount); });
+  return {
+    contractor: sumC, owner: sumO,
+    netting: Math.min(sumC, sumO),
+    rest: Math.abs(sumC - sumO),
+    direction: sumO > sumC ? "to_contractor" : sumC > sumO ? "to_owner" : "even"
+  };
+}
+
 /** Записи аркуша «Каса». Сума — зі знаком руху: «Взяв собі» і витрата — мінус. */
 function readCash_() {
   var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_CASH);
@@ -3775,7 +3809,7 @@ function adminCashBox_() {
     if (p.type !== PAYMENT_MARGIN) cashByOrder[p.order_number] = (cashByOrder[p.order_number] || 0) + e;
   });
   var fromLedger = cash.reduce(function (sum, x) { return sum + x.effect; }, 0);
-  var contractorOwes = [], ownerOwes = [], deposits = [], cancelledHeld = [];
+  var contractorOwes = [], ownerOwes = [], deposits = [], cancelledHeld = [], cancelledRefunded = [];
   groups.forEach(function (g) {
     var settled = (Number(g.revenue) || 0) > 0 && (Number(g.client_left) || 0) === 0;
     var base = { order_number: g.order_number, client: g.client || "", created_at: g.created_at, status: g.status,
@@ -3783,12 +3817,17 @@ function adminCashBox_() {
                  owner_received: Number(g.owner_received) || 0, share_paid: Number(g.share_paid) || 0 };
     if (g.status === "Скасовано") {
       var heldC = (Number(g.owner_received) || 0) - (Number(g.share_paid) || 0);
-      if (heldC >= 1) cancelledHeld.push(Object.assign(base, { amount: heldC }));
+      // Гроші клієнта ще у вас — повернути клієнту або компенсувати підряднику (правило 3).
+      if (heldC >= 1) cancelledHeld.push(Object.assign({}, base, { amount: heldC }));
+      // Ви повернули клієнту більше, ніж отримали самі: решту клієнт платив підряднику — він винен вам.
+      if (heldC <= -1) cancelledRefunded.push(Object.assign({}, base, { amount: -heldC }));
       return;
     }
     if (g.margin_owed && settled && Number(g.margin_left) >= 1) contractorOwes.push(Object.assign({}, base, { amount: Number(g.margin_left) }));
     if (Number(g.owner_owes) >= 1) ownerOwes.push(Object.assign({}, base, { amount: Number(g.owner_owes) }));
-    if (!g.margin_owed && (cashByOrder[g.order_number] || 0) >= 1) deposits.push(Object.assign({}, base, { amount: cashByOrder[g.order_number] }));
+    // Готівка за замовлення, де борги ще не рахуються (до «Виготовлення» або клієнт не доплатив):
+    // це не вільні гроші — їх, можливо, доведеться повернути чи віддати підряднику.
+    if (!(g.margin_owed && settled) && (cashByOrder[g.order_number] || 0) >= 1) deposits.push(Object.assign({}, base, { amount: cashByOrder[g.order_number] }));
   });
   function total(list) { return Math.round(list.reduce(function (s, x) { return s + x.amount; }, 0) * 100) / 100; }
   var settlements = {};
@@ -3803,15 +3842,20 @@ function adminCashBox_() {
   });
   var expected = Math.round((fromPayments + fromLedger) * 100) / 100;
   var contractorTotal = total(contractorOwes), ownerTotal = total(ownerOwes), depositsTotal = total(deposits);
+  var cancelledTotal = total(cancelledHeld);
   return {
     status: "ok",
     cash: {
       expected: expected,
       deposits: depositsTotal,
+      cancelled: cancelledTotal,
       // Орієнтовно: ваш борг підряднику може лежати й на картці — тоді вільної готівки більше.
-      free: Math.round((expected - depositsTotal - ownerTotal) * 100) / 100,
+      free: Math.round((expected - depositsTotal - ownerTotal - cancelledTotal) * 100) / 100,
       ledger: cash.slice(-100).reverse()
     },
+    // Точно ті числа, з якими проведеться розрахунок (цілі гривні по замовленнях).
+    settle: cashSettlePlan_(contractorOwes, ownerOwes),
+    cancelled_refunded: cancelledRefunded,
     contractor_owes: contractorTotal,
     owner_owes: ownerTotal,
     net: Math.round((contractorTotal - ownerTotal) * 100) / 100,   // >0 — підрядник доплачує вам
@@ -3848,8 +3892,12 @@ function adminCashDelete_(data) {
   var requestId = String((data && data.request_id) || "").trim();
   var sh = cashSheet_();
   if (!(row >= 2) || row > sh.getLastRow()) throw new Error("Запис уже видалено або список змінився");
-  var actualId = String(sh.getRange(row, 5).getValue() || "").trim();
+  var actual = sh.getRange(row, 1, 1, 5).getValues()[0];
+  var actualId = String(actual[4] || "").trim();
   if (requestId && actualId !== requestId) throw new Error("Список змінився — оновіть сторінку");
+  // Записи без ID звіряємо за типом і сумою — щоб не прибрати сусідній після зсуву рядків.
+  if (data.type != null && String(actual[1] || "").trim() !== String(data.type).trim()) throw new Error("Список змінився — оновіть сторінку");
+  if (data.amount != null && Number(actual[2]) !== Number(data.amount)) throw new Error("Список змінився — оновіть сторінку");
   sh.deleteRow(row);
   SpreadsheetApp.flush();
   return { status: "ok", box: adminCashBox_() };
@@ -3872,6 +3920,13 @@ function adminCashSettle_(data) {
   if (existing.length) return { status: "ok", duplicate: true, box: adminCashBox_() };
 
   var box = adminCashBox_();
+  // Борги з часу, коли власник відкрив «Касу», могли змінитись (хтось вніс платіж) — тоді розрахунок
+  // не проводимо: інакше гроші могли б записатись не в той бік.
+  var plan = box.settle;
+  if (data && data.expect && (Number(data.expect.contractor) !== plan.contractor || Number(data.expect.owner) !== plan.owner
+      || String(data.expect.direction || "") !== plan.direction)) {
+    throw new Error("Борги змінились, поки була відкрита «Каса», — оновіть сторінку й перевірте суми");
+  }
   function byDate(a, b) { return orderDateMs_(a.created_at) - orderDateMs_(b.created_at); }
   var cOrders = box.contractor_orders.slice().sort(byDate);
   var oOrders = box.owner_orders.slice().sort(byDate);
@@ -3972,6 +4027,8 @@ function settlementData_(data) {
 
   var listed = adminListOrders_({});
   var due = [], waiting = [], ownerDue = [];
+  // Менеджер формує акт без грошей власника (рішення власника 02.11.2026).
+  var forManager = !!(data && data.for_manager);
 
   (listed.groups || []).forEach(function (g) {
     if (g.status === "Скасовано") return;
@@ -3981,7 +4038,7 @@ function settlementData_(data) {
       if (toMs && ms > toMs) return;
     }
     // Клієнт заплатив Avalon (готівка тощо), і частку підрядника ще не передано.
-    if (Number(g.owner_owes) >= 1) {
+    if (!forManager && Number(g.owner_owes) >= 1) {
       ownerDue.push({
         order_number: g.order_number, created_at: g.created_at, date_label: orderDateLabel_(g.created_at),
         client: g.client || "", city: g.city || "", revenue: Number(g.revenue) || 0,
@@ -4008,6 +4065,8 @@ function settlementData_(data) {
       client_paid: Number(g.client_paid_sum) || 0,
       client_left: Number(g.client_left) || 0,
       margin_received: Number(g.margin_received) || 0,
+      // Гроші клієнта, що лишились у Avalon (зменшують маржу, яку переказує підрядник).
+      held: forManager ? 0 : Math.max(0, (Number(g.owner_received) || 0) - (Number(g.share_paid) || 0)),
       margin_left: Number(g.margin_left) || 0
     };
     // Головне правило: до виплати — лише повністю оплачені клієнтом замовлення.
@@ -4033,11 +4092,14 @@ function settlementData_(data) {
     status: "ok",
     from: fromISO, to: toISO,
     generated_at: Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm"),
-    due: due, waiting: waiting, payments: payments, owner_due: ownerDue,
+    due: due, waiting: waiting, payments: forManager ? payments.filter(function (p) { return p.type !== PAYMENT_SHARE; }) : payments,
+    owner_due: ownerDue, for_manager: forManager,
     totals: {
+      due_held: sum(due, "held"),
+      waiting_held: sum(waiting, "held"),
       owner_due_orders: ownerDue.length,
       owner_due_left: sum(ownerDue, "owner_owes"),        // ← борг Avalon підряднику
-      net: sum(due, "margin_left") - sum(ownerDue, "owner_owes"),
+      net: Math.round((sum(due, "margin_left") - sum(ownerDue, "owner_owes")) * 100) / 100,
       payments_sum: sum(payments.filter(function (p) { return p.type !== PAYMENT_SHARE; }), "amount"),
       share_sum: sum(payments.filter(function (p) { return p.type === PAYMENT_SHARE; }), "amount"),
       due_orders: due.length,
@@ -4070,9 +4132,11 @@ function buildActSheet_(d) {
   // виглядав би точно так само, як і раніше, але з зайвими нулями.
   var hasCom = (Number(d.totals.due_commission) || 0) > 0
             || (Number(d.totals.waiting_commission) || 0) > 0;
-  var width = hasCom ? 9 : 8;
+  // Колонка «У Avalon» — гроші клієнта, які отримала Avalon: без неї рядок не складався б.
+  var hasHeld = (Number(d.totals.due_held) || 0) > 0 || (Number(d.totals.waiting_held) || 0) > 0;
+  var width = 8 + (hasCom ? 1 : 0) + (hasHeld ? 1 : 0);
   function line(cells) { return cells; }
-  function com(r) { return hasCom ? [Number(r.commission) || 0] : []; }
+  function com(r) { return (hasCom ? [Number(r.commission) || 0] : []).concat(hasHeld ? [Number(r.held) || 0] : []); }
 
   var rows = [];
   rows.push(["АКТ ЗВІРКИ З ПІДРЯДНИКОМ"]);
@@ -4082,7 +4146,7 @@ function buildActSheet_(d) {
   rows.push(["МАРЖА ДО ВИПЛАТИ (клієнт сплатив 100%)"]);
   rows.push(line(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив\nклієнт, ₴",
                   "Підряднику, ₴", "Маржа\nAvalon, ₴"]
-    .concat(hasCom ? ["Комісія, ₴"] : [])
+    .concat(hasCom ? ["Комісія, ₴"] : []).concat(hasHeld ? ["У Avalon\n(від клієнта), ₴"] : [])
     .concat(["Отримано, ₴", "До виплати, ₴"])));
   d.due.forEach(function (r) {
     rows.push([r.order_number, r.date_label || fmtDate_(r.delivery_date) || "",
@@ -4092,7 +4156,7 @@ function buildActSheet_(d) {
       .concat([r.margin_received, r.margin_left]));
   });
   rows.push(["", "", "РАЗОМ ДО ВИПЛАТИ:", d.totals.due_revenue, d.totals.due_cost, d.totals.due_margin]
-    .concat(hasCom ? [d.totals.due_commission] : [])
+    .concat(hasCom ? [d.totals.due_commission] : []).concat(hasHeld ? [d.totals.due_held] : [])
     .concat([d.totals.due_received, d.totals.due_left]));
 
   if (d.waiting.length) {
@@ -4100,7 +4164,7 @@ function buildActSheet_(d) {
     rows.push(["ДОВІДКОВО: очікує повної оплати клієнтом — у борг НЕ входить"]);
     rows.push(line(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив\nклієнт, ₴",
                     "Не сплачено\nклієнтом, ₴", "Маржа\nAvalon, ₴"]
-      .concat(hasCom ? ["Комісія, ₴"] : [])
+      .concat(hasCom ? ["Комісія, ₴"] : []).concat(hasHeld ? ["У Avalon\n(від клієнта), ₴"] : [])
       .concat(["Отримано, ₴", "Потенційно, ₴"])));
     d.waiting.forEach(function (r) {
       rows.push([r.order_number, r.date_label || fmtDate_(r.delivery_date) || "",
@@ -4110,7 +4174,7 @@ function buildActSheet_(d) {
         .concat([r.margin_received, r.margin_left]));
     });
     var waitTotals = ["", "", "Разом (довідково):", "", d.totals.waiting_client_left, ""]
-      .concat(hasCom ? [d.totals.waiting_commission] : [])
+      .concat(hasCom ? [d.totals.waiting_commission] : []).concat(hasHeld ? [""] : [])
       .concat(["", d.totals.waiting_margin_left]);
     rows.push(waitTotals);
   }
@@ -4120,7 +4184,7 @@ function buildActSheet_(d) {
     rows.push([""]);
     rows.push(["ГРОШІ КЛІЄНТІВ, ОТРИМАНІ AVALON — частка підрядника до передачі"]);
     rows.push(["№ замовлення", "Дата", "Клієнт / місто", "Сума\nзамовлення, ₴", "Отримала\nAvalon, ₴",
-               "Маржа\nAvalon, ₴", "Передано, ₴", "Avalon винна, ₴"]);
+               "Маржа Avalon\n(до виплати), ₴", "Передано, ₴", "Avalon винна, ₴"]);
     ownerDue.forEach(function (r) {
       rows.push([r.order_number, r.date_label || "", (r.client + (r.city ? " · " + r.city : "")).trim(),
                  r.revenue, r.owner_received, r.margin_due, r.share_paid, r.owner_owes]);
@@ -4270,7 +4334,12 @@ function adminSettlementSend_(data) {
   var caption = "📄 <b>Акт звірки</b>"
     + (d.from || d.to ? "\nПеріод: " + (d.from || "…") + " — " + (d.to || "…") : "")
     + "\nЗамовлень до виплати: <b>" + d.totals.due_orders + "</b>"
-    + "\nМаржа до виплати: <b>" + money_(d.totals.due_left) + " ₴</b>";
+    + "\nМаржа до виплати: <b>" + money_(d.totals.due_left) + " ₴</b>"
+    + ((Number(d.totals.owner_due_left) || 0) > 0
+      ? "\nAvalon винна за гроші клієнтів у себе: <b>" + money_(d.totals.owner_due_left) + " ₴</b>"
+        + "\nПідсумок: <b>" + ((Number(d.totals.net) || 0) >= 0 ? "підрядник доплачує Avalon " + money_(d.totals.net)
+          : "Avalon доплачує підряднику " + money_(-d.totals.net)) + " ₴</b>"
+      : "");
   if (d.totals.waiting_orders) {
     caption += "\n\n<i>Довідково: ще " + d.totals.waiting_orders
       + " замовл. чекають повної оплати клієнтом — у борг не входять.</i>";
@@ -4868,6 +4937,7 @@ function adminGroupOrders_(orders, payments) {
     g.owner_received = st.owner_received;
     g.share_paid = st.share_paid;
     g.owner_owes = st.owner_owes;
+    g.margin_kept = st.margin_kept;
     return g;
   });
   groups.sort(function (a, b) {
@@ -4916,6 +4986,7 @@ function adminGetOrder_(data) {
         client_paid: t.client_paid, client_left: Math.max(0, rev - t.client_paid),
         margin_received: t.margin_paid_sum, margin_left: st.margin_left,
         owner_received: st.owner_received, share_paid: st.share_paid, owner_owes: st.owner_owes,
+        margin_kept: st.margin_kept,
         legacy: !pay.length
       };
     })()

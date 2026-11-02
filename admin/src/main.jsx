@@ -669,6 +669,7 @@ import pricing from '../../lib/avalon-pricing.js';
           owner_received: Number(order.owner_received) || 0,
           share_paid: Number(order.share_paid) || 0,
           owner_owes: Number(order.owner_owes) || 0,
+          margin_kept: Number(order.margin_kept) || 0,
           margin_owed: marginOwed(order),
           legacy: !(Number(order.payments_count) > 0),
         },
@@ -760,7 +761,7 @@ import pricing from '../../lib/avalon-pricing.js';
       const margin = due > 0 || received > 0 ? Math.round(received - Math.max(0, due)) : 0;
       return { client: client >= 1 ? client : 0, margin: margin >= 1 ? margin : 0 };
     }
-    function buildReminders(groups) {
+    function buildReminders(groups, isOwner) {
       // Без дати доставки нагадуємо, коли вона вже потрібна; в опрацюванні її ще може не бути.
       const needsDelivery = ["Нове", STATUS_PRODUCTION, "Готове", "Відправлено"];
       const byOrder = {};
@@ -777,7 +778,7 @@ import pricing from '../../lib/avalon-pricing.js';
           tag = "Статус";
           tagClass = "data";
         }
-        if (Number(g.owner_owes) >= 1) {
+        if (isOwner && Number(g.owner_owes) >= 1) {
           reasons.push("Гроші клієнта у вас — частка підрядника " + money(g.owner_owes) + ": розрахуйтесь у «Касі»");
           if (priority > 3) { priority = 3; tag = "Каса"; tagClass = "ship"; }
         }
@@ -855,7 +856,9 @@ import pricing from '../../lib/avalon-pricing.js';
         const rev = Number(g.revenue) || 0;
         const cst = Number(g.cost_total) || 0;
         const pr = Number(g.profit) || 0;
-        const com = Number(g.commission) || 0;
+        // Комісія ТОВ не береться з грошей, які клієнт заплатив власнику (правило 02.11.2026).
+        const com = Math.max(0, (Number(g.commission) || 0)
+          - (g.margin_commission_eff != null ? Math.max(0, (Number(g.margin_commission) || 0) - (Number(g.margin_commission_eff) || 0)) : 0));
         const payment = groupPaymentMetrics(g);
         revenue += rev;
         cost += cst;
@@ -907,6 +910,8 @@ import pricing from '../../lib/avalon-pricing.js';
         // Для старих замовлень без журналу точна дата надходження невідома.
         // Зберігаємо сумісність і відносимо їхню отриману маржу до місяця замовлення.
         if (!(Number(g.payments_count) > 0)) m.margin_received += payment.marginReceived;
+        // Маржа, яку власник уже має в грошах клієнта (каса), — до місяця замовлення.
+        else m.margin_received += Number(g.margin_kept) || 0;
       });
       (payments || []).forEach(payment => {
         if (payment.type !== "Маржа від підрядника") return;
@@ -2105,7 +2110,7 @@ import pricing from '../../lib/avalon-pricing.js';
             </div>
           </div>
 
-          {(Number(s.owner_received) || 0) >= 1 && (
+          {isOwner && (Number(s.owner_received) || 0) >= 1 && (
             <div className="owner-money-note" role="status">
               <p>
                 <b>Гроші клієнта у вас: {money((Number(s.owner_received) || 0) - (Number(s.share_paid) || 0))}</b>
@@ -4801,7 +4806,7 @@ import pricing from '../../lib/avalon-pricing.js';
                             {g.margin_left > 0 && g.client_left === 0 && (
                               <div className="card-payment margin">Маржа до отримання: {money(g.margin_left)}</div>
                             )}
-                            {Number(g.owner_owes) >= 1 && (
+                            {Number(g.owner_owes) >= 1 && tokenRole(token) !== "manager" && (
                               <div className="card-payment owe">Ви винні підряднику: {money(g.owner_owes)}</div>
                             )}
                             {g.status === "Скасовано" && g.cancel_reason && (
@@ -5144,12 +5149,15 @@ import pricing from '../../lib/avalon-pricing.js';
           if (!eligibleOrderNumbers.has(String(payment.order_number || ""))) return sum;
           return sum + (Number(payment.amount) || 0);
         }, 0);
-        let legacy = 0;
+        let legacy = 0, kept = 0;
         (filteredGroups || []).forEach(group => {
-          if (group.status === "Скасовано" || Number(group.payments_count) > 0) return;
+          if (group.status === "Скасовано") return;
+          // Маржа в грошах клієнта, які отримали ви (каса), — уже ваша, хоч підрядник її не переказував.
+          kept += Number(group.margin_kept) || 0;
+          if (Number(group.payments_count) > 0) return;
           legacy += groupPaymentMetrics(group).marginReceived;
         });
-        return { ledger, legacy, total: ledger + legacy };
+        return { ledger, legacy, kept, total: ledger + legacy + kept };
       }, [filteredPayments, filteredGroups, eligibleOrderNumbers]);
       const marginCashReceived = marginCashSplit.total;
 
@@ -5170,7 +5178,7 @@ import pricing from '../../lib/avalon-pricing.js';
         [filteredGroups, filteredExpenses, filteredPayments, filteredPayouts, eligibleOrderNumbers]
       );
 
-      const reminders = useMemo(() => buildReminders(groups), [groups]);
+      const reminders = useMemo(() => buildReminders(groups, tokenRole(token) !== "manager"), [groups, token]);
 
       if (error && !groups.length) return <ErrorBar text={error} onRetry={onRetry} />;
       if (loading && !groups.length) return <div className="empty">Завантаження зведення…</div>;
@@ -5886,10 +5894,12 @@ import pricing from '../../lib/avalon-pricing.js';
         } catch (e) { setError(e.message); return null; } finally { setBusy(false); }
       }
       const c = (box && box.cash) || {};
-      const net = Number(box && box.net) || 0;          // >0 — підрядник доплачує вам
-      const rest = Math.abs(Math.round(net));
-      const nothing = box && !(Number(box.contractor_owes) >= 1) && !(Number(box.owner_owes) >= 1);
-      const netting = box ? Math.round(Math.min(Number(box.contractor_owes) || 0, Number(box.owner_owes) || 0)) : 0;
+      // Точні суми розрахунку — від сервера (цілі гривні по замовленнях, як і запишуться).
+      const plan = (box && box.settle) || { contractor: 0, owner: 0, netting: 0, rest: 0, direction: "even" };
+      const net = plan.direction === "to_owner" ? plan.rest : plan.direction === "to_contractor" ? -plan.rest : 0;
+      const rest = plan.rest;
+      const nothing = box && !(plan.contractor >= 1) && !(plan.owner >= 1);
+      const netting = plan.netting;
       const settleAmount = settle.amount === "" ? rest : Math.round(Number(settle.amount) || 0);
       const methodLabel = (SETTLE_METHODS.find(m => m[0] === settle.method) || [])[1] || settle.method;
 
@@ -5916,7 +5926,7 @@ import pricing from '../../lib/avalon-pricing.js';
       }
       async function removeEntry(x) {
         if (!window.confirm("Прибрати запис «" + x.type + " " + money(Math.abs(x.amount)) + "»?")) return;
-        await post({ action: "delete", row: x.row, request_id: x.request_id }, () => "Запис прибрано.");
+        await post({ action: "delete", row: x.row, request_id: x.request_id, type: x.type, amount: x.amount }, () => "Запис прибрано.");
       }
       async function doSettle() {
         if (settleAmount > rest) return setError("Більше, ніж винні: " + money(rest));
@@ -5927,8 +5937,9 @@ import pricing from '../../lib/avalon-pricing.js';
         if (rest - settleAmount >= 1) lines.push("Лишиться " + (toContractor ? "винні підряднику: " : "підрядник винен вам: ") + money(rest - settleAmount) + ".");
         if (!lines.length) return setError("Нема чого записувати");
         if (!window.confirm("Провести розрахунок із підрядником?\n\n" + lines.join("\n") + "\n\nЗаписи зʼявляться в платежах замовлень; помилковий розрахунок можна скасувати цілком.")) return;
-        const key = JSON.stringify([settleAmount, settle.method, settle.date, box.contractor_owes, box.owner_owes]);
-        const res = await post({ action: "settle", settlement_id: requestIdFor(key), amount: settleAmount, method: settle.method, date: settle.date },
+        const key = JSON.stringify([settleAmount, settle.method, settle.date, plan.contractor, plan.owner]);
+        const res = await post({ action: "settle", settlement_id: requestIdFor(key), amount: settleAmount, method: settle.method, date: settle.date,
+          expect: { contractor: plan.contractor, owner: plan.owner, direction: plan.direction } },
           r => "Розрахунок проведено" + (r.left >= 1 ? ", лишилось " + money(r.left) : "") + ".");
         if (res) setSettle(x => ({ ...x, amount: "" }));
       }
@@ -5952,7 +5963,8 @@ import pricing from '../../lib/avalon-pricing.js';
                   <b>{money(c.expected)}</b>
                 </div>
                 <ul className="cash-split">
-                  <li><span>Передоплати за замовлення до «Виготовлення» (можуть повернутись)</span><b>{money(c.deposits)}</b></li>
+                  <li><span>Передоплати й неповні оплати — замовлення до «Виготовлення» або клієнт ще не доплатив (можуть повернутись чи піти підряднику)</span><b>{money(c.deposits)}</b></li>
+                  {(Number(c.cancelled) || 0) >= 1 && <li><span>Скасовані замовлення — гроші клієнта ще у вас</span><b>{money(c.cancelled)}</b></li>}
                   <li><span>Частка підрядника — ви йому винні</span><b>{money(box.owner_owes)}</b></li>
                   <li className={(Number(c.free) || 0) < 0 ? "neg" : ""}><span>Вільно взяти собі (орієнтовно)</span><b>{money(Math.max(0, Number(c.free) || 0))}</b></li>
                 </ul>
@@ -6034,6 +6046,13 @@ import pricing from '../../lib/avalon-pricing.js';
                   <div className="field"><label htmlFor="settle-date">Дата (порожньо = сьогодні)</label>
                     <input id="settle-date" type="date" value={settle.date} onChange={e => setSettle({ ...settle, date: e.target.value })} /></div>
                   <button type="button" className="btn" disabled={busy} onClick={doSettle}>Провести розрахунок</button>
+                </div>
+              )}
+              {box.cancelled_refunded && box.cancelled_refunded.length > 0 && (
+                <div className="overpay-note">
+                  <p><b>Скасовані замовлення: ви повернули клієнту гроші, які отримав підрядник.</b> Він винен їх вам:</p>
+                  <CashOrders list={box.cancelled_refunded} onOpenOrder={onOpenOrder} empty="" />
+                  <p>Коли підрядник поверне — внесіть у картці «Маржа від підрядника» на цю суму.</p>
                 </div>
               )}
               {box.cancelled_held && box.cancelled_held.length > 0 && (
@@ -6767,6 +6786,11 @@ import pricing from '../../lib/avalon-pricing.js';
           margin_due: summary.margin_due ?? detail.order.margin_due,
           commission: summary.commission ?? detail.order.commission,
           margin_owed: summary.margin_owed ?? detail.order.margin_owed,
+          owner_received: summary.owner_received ?? detail.order.owner_received,
+          share_paid: summary.share_paid ?? detail.order.share_paid,
+          owner_owes: summary.owner_owes ?? detail.order.owner_owes,
+          margin_kept: summary.margin_kept ?? detail.order.margin_kept,
+          margin_commission_eff: summary.margin_commission_eff ?? detail.order.margin_commission_eff,
         });
 
         setGroups(current => {
