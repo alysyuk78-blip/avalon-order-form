@@ -2,7 +2,7 @@
 // аркуша, щоб у файл не потрапили інші аркуші книги), надсилання в Telegram — теж
 // у Apps Script, бо саме там зберігається chat_id групи підрядника.
 const ExcelJS = require("exceljs");
-const { requireAdmin, setAdminCors, handleOptions } = require("../../lib/admin-auth");
+const { requireAdmin, roleOf, setAdminCors, handleOptions } = require("../../lib/admin-auth");
 const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
 
 const MONEY = "#,##0 ₴";
@@ -47,8 +47,11 @@ async function buildXlsx(d) {
   // Комісію утримує підрядник, тож вона зменшує його борг. Колонку показуємо
   // лише коли комісія справді є — інакше акт лишається таким, як був.
   const hasCom = (Number(t.due_commission) || 0) > 0 || (Number(t.waiting_commission) || 0) > 0;
-  const width = hasCom ? 9 : 8;
-  const com = (r) => (hasCom ? [Number(r.commission) || 0] : []);
+  // «У Avalon» — гроші клієнта, які отримала Avalon (готівка тощо): без неї рядок не складався б.
+  const hasHeld = (Number(t.due_held) || 0) > 0 || (Number(t.waiting_held) || 0) > 0;
+  const width = 8 + (hasCom ? 1 : 0) + (hasHeld ? 1 : 0);
+  const com = (r) => [...(hasCom ? [Number(r.commission) || 0] : []), ...(hasHeld ? [Number(r.held) || 0] : [])];
+  const extraHeads = [...(hasCom ? ["Комісія"] : []), ...(hasHeld ? ["У Avalon (від клієнта)"] : [])];
 
   const wb = new ExcelJS.Workbook();
   wb.creator = "Avalon Metal Design";
@@ -60,6 +63,7 @@ async function buildXlsx(d) {
     { width: 18 }, { width: 12 }, { width: 34 }, { width: 14 },
     { width: 16 }, { width: 14 },
     ...(hasCom ? [{ width: 13 }] : []),
+    ...(hasHeld ? [{ width: 15 }] : []),
     { width: 13 }, { width: 14 },
   ];
 
@@ -79,7 +83,7 @@ async function buildXlsx(d) {
   styleHeader(ws.addRow([
     "№ замовлення", "Дата", "Клієнт / місто", "Сплатив клієнт",
     "Підряднику", "Маржа Avalon",
-    ...(hasCom ? ["Комісія"] : []),
+    ...extraHeads,
     "Отримано", "До виплати",
   ]));
   (d.due || []).forEach((r) => {
@@ -95,6 +99,7 @@ async function buildXlsx(d) {
   const dueTotal = ws.addRow([
     "", "", "РАЗОМ ДО ВИПЛАТИ:", t.due_revenue || 0, t.due_cost || 0, t.due_margin || 0,
     ...(hasCom ? [t.due_commission || 0] : []),
+    ...(hasHeld ? [t.due_held || 0] : []),
     t.due_received || 0, t.due_left || 0,
   ]);
   dueTotal.font = { bold: true };
@@ -107,7 +112,7 @@ async function buildXlsx(d) {
     styleHeader(ws.addRow([
       "№ замовлення", "Дата", "Клієнт / місто", "Сплатив клієнт",
       "Не сплачено клієнтом", "Маржа Avalon",
-      ...(hasCom ? ["Комісія"] : []),
+      ...extraHeads,
       "Отримано", "Потенційно",
     ]));
     d.waiting.forEach((r) => {
@@ -123,22 +128,49 @@ async function buildXlsx(d) {
     const wRow = ws.addRow([
       "", "", "Разом (довідково):", "", t.waiting_client_left || 0, "",
       ...(hasCom ? [t.waiting_commission || 0] : []),
+      ...(hasHeld ? [""] : []),
       "", t.waiting_margin_left || 0,
     ]);
     wRow.font = { bold: true, italic: true };
   }
 
-  // ── Що вже отримано від підрядника за період ──
-  if ((d.payments || []).length) {
+  // ── Гроші клієнтів, які отримала Avalon (каса): частка підрядника до передачі ──
+  const ownerDue = d.owner_due || [];
+  if (ownerDue.length) {
     ws.addRow([]);
-    styleSection(ws.addRow(["ОТРИМАНО ВІД ПІДРЯДНИКА ЗА ПЕРІОД"]));
+    styleSection(ws.addRow(["ГРОШІ КЛІЄНТІВ, ОТРИМАНІ AVALON — частка підрядника до передачі"]));
+    styleHeader(ws.addRow(["№ замовлення", "Дата", "Клієнт / місто", "Сума замовлення", "Отримала Avalon",
+      "Маржа Avalon (до виплати)", "Передано", "Avalon винна"]));
+    ownerDue.forEach((r) => {
+      ws.addRow([r.order_number, r.date_label || "", [r.client, r.city].filter(Boolean).join(" · "),
+        r.revenue, r.owner_received, r.margin_due, r.share_paid, r.owner_owes]);
+    });
+    const oRow = ws.addRow(["", "", "РАЗОМ AVALON ВИННА:", "", "", "", "", t.owner_due_left || 0]);
+    oRow.font = { bold: true };
+    const net = Number(t.net) || 0;
+    ws.addRow([]);
+    const nRow = ws.addRow([`ВЗАЄМОЗАЛІК: підрядник винен ${Math.round(t.due_left || 0)} ₴, Avalon винна ${Math.round(t.owner_due_left || 0)} ₴ → `
+      + (net >= 0 ? `підрядник доплачує Avalon ${Math.round(net)} ₴` : `Avalon доплачує підряднику ${Math.round(-net)} ₴`)]);
+    styleSection(nRow);
+    ws.mergeCells(nRow.number, 1, nRow.number, width);
+  }
+
+  // ── Що вже отримано від підрядника за період (і передано йому — окремо) ──
+  const share = (p) => p.type === "Частка підряднику";
+  const received = (d.payments || []).filter((p) => !share(p));
+  const passed = (d.payments || []).filter(share);
+  [[received, "ОТРИМАНО ВІД ПІДРЯДНИКА ЗА ПЕРІОД", "Разом отримано:", t.payments_sum],
+   [passed, "ПЕРЕДАНО ПІДРЯДНИКУ ЗА ПЕРІОД", "Разом передано:", t.share_sum]].forEach(([list, head, label, total]) => {
+    if (!list.length) return;
+    ws.addRow([]);
+    styleSection(ws.addRow([head]));
     styleHeader(ws.addRow(["Дата", "№ замовлення", "Спосіб", "Примітка", "Сума"]));
-    d.payments.forEach((p) => {
+    list.forEach((p) => {
       ws.addRow([String(p.date || "").slice(0, 10), p.order_number, p.method || "—", p.note || "", p.amount]);
     });
-    const pRow = ws.addRow(["", "", "", "Разом отримано:", t.payments_sum || 0]);
+    const pRow = ws.addRow(["", "", "", label, total || 0]);
     pRow.font = { bold: true };
-  }
+  });
 
   ws.addRow([]);
   ws.addRow(["Avalon Metal Design: ____________________", "", "", "", "Підрядник: ____________________"]);
@@ -168,18 +200,20 @@ module.exports = async function handler(req, res) {
     const from = String(src.from || "").slice(0, 10);
     const to = String(src.to || "").slice(0, 10);
     const format = String(src.format || "xlsx").toLowerCase();
+    // Менеджер формує акт без грошей власника (каси) — рішення власника 02.11.2026.
+    const forManager = roleOf(req) === "manager";
 
     if (format === "send") {
-      const out = await callAdminSheets("settlement_send", { from, to });
+      const out = await callAdminSheets("settlement_send", { from, to, for_manager: forManager });
       return res.status(200).json(out);
     }
 
     if (format === "pdf") {
-      const out = await callAdminSheets("settlement_pdf", { from, to });
+      const out = await callAdminSheets("settlement_pdf", { from, to, for_manager: forManager });
       return res.status(200).json(out);
     }
 
-    const data = await callAdminSheets("settlement_data", { from, to });
+    const data = await callAdminSheets("settlement_data", { from, to, for_manager: forManager });
     const buf = await buildXlsx(data);
     return res.status(200).json({
       status: "ok",

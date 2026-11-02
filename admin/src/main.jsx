@@ -22,6 +22,7 @@ import {
   List,
   ListFilter,
   MessageCircle,
+  Wallet,
   LogOut,
   PanelTopClose,
   PanelTopOpen,
@@ -96,6 +97,13 @@ import pricing from '../../lib/avalon-pricing.js';
     const SERVICE_UNITS = ["шт.", "м²", "м.п.", "кг", "год", "комп."];
     // Платежі: оплати клієнта та надходження маржі від підрядника.
     const PAYMENT_TYPES = ["Передоплата","Доплата","Оплата повністю","Маржа від підрядника","Повернення клієнту"];
+    // «Частка підряднику» — власник передав підряднику його частину грошей клієнта (або компенсацію
+    // за скасоване після виготовлення замовлення). Вносить лише власник; розрахунки — у «Касі».
+    const PAYMENT_SHARE = "Частка підряднику";
+    const PAYMENT_ME = "Я";
+    // Для грошей клієнта: хто їх отримав (для повернення — хто повернув).
+    function paymentHasRecipient(type) { return type !== "Маржа від підрядника" && type !== PAYMENT_SHARE; }
+    function isSettlementPayment(p) { return String((p && p.request_id) || "").startsWith("settle:"); }
     const PAYMENT_METHODS = ["Готівка","На карту","На рахунок ФО-П","На рахунок ТОВ","Накладений платіж","Інше"];
     const TOKEN_KEY = "avalon_admin_token";
     const CARDS_COLLAPSED_KEY = "avalon_admin_cards_collapsed_v1";
@@ -130,6 +138,7 @@ import pricing from '../../lib/avalon-pricing.js';
       guide: BookOpen,
       clients: UsersRound,
       chats: MessageCircle,
+      cash: Wallet,
       dashboard: (props) => <MaskIcon src="/admin/icons/dashboard.png" size={props.size} className={props.className} />,
       // Шлях АБСОЛЮТНИЙ: кабінет відкривається і як /admin, і як /admin/ — відносний
       // "icons/..." у першому випадку резолвиться в корінь сайту і дає 404.
@@ -154,6 +163,7 @@ import pricing from '../../lib/avalon-pricing.js';
       { id: "partners", label: "Партнери", icon: "partners" },
       { id: "expenses", label: "Витрати", icon: "expenses" },
       { id: "rates", label: "Ставки", icon: "rates" },
+      { id: "cash", label: "Каса", icon: "cash", ownerOnly: true },
       { id: "guide", label: "Інструкція", icon: "guide" },
     ];
 
@@ -656,6 +666,10 @@ import pricing from '../../lib/avalon-pricing.js';
           client_left: Number(order.client_left) || 0,
           margin_received: Number(order.margin_received) || 0,
           margin_left: Number(order.margin_left) || 0,
+          owner_received: Number(order.owner_received) || 0,
+          share_paid: Number(order.share_paid) || 0,
+          owner_owes: Number(order.owner_owes) || 0,
+          margin_kept: Number(order.margin_kept) || 0,
           margin_owed: marginOwed(order),
           legacy: !(Number(order.payments_count) > 0),
         },
@@ -731,7 +745,23 @@ import pricing from '../../lib/avalon-pricing.js';
     }
     /** Одне нагадування на замовлення; пріоритет: статус → прострочене опрацювання /
      *  борг маржі → опрацювання й виготовлення → без дати доставки. */
-    function buildReminders(groups) {
+    /**
+     * Переплата за замовленням: клієнт сплатив більше за суму замовлення або підрядник переказав
+     * більше маржі, ніж належить. Часто це платіж, внесений не тим типом (маржа від підрядника як
+     * оплата клієнта). Менше гривні — округлення, не переплата.
+     * На вхід — і група з воронки (client_paid_sum), і підсумок платежів картки (client_paid).
+     */
+    function overpayments(g) {
+      const src = g || {};
+      const revenue = Number(src.revenue) || 0;
+      const paid = Number(src.client_paid_sum != null ? src.client_paid_sum : src.client_paid) || 0;
+      const due = Number(src.margin_due) || 0;
+      const received = Number(src.margin_received) || 0;
+      const client = revenue > 0 ? Math.round(paid - revenue) : 0;
+      const margin = due > 0 || received > 0 ? Math.round(received - Math.max(0, due)) : 0;
+      return { client: client >= 1 ? client : 0, margin: margin >= 1 ? margin : 0 };
+    }
+    function buildReminders(groups, isOwner) {
       // Без дати доставки нагадуємо, коли вона вже потрібна; в опрацюванні її ще може не бути.
       const needsDelivery = ["Нове", STATUS_PRODUCTION, "Готове", "Відправлено"];
       const byOrder = {};
@@ -747,6 +777,16 @@ import pricing from '../../lib/avalon-pricing.js';
           priority = 0;
           tag = "Статус";
           tagClass = "data";
+        }
+        if (isOwner && Number(g.owner_owes) >= 1) {
+          reasons.push("Гроші клієнта у вас — частка підрядника " + money(g.owner_owes) + ": розрахуйтесь у «Касі»");
+          if (priority > 3) { priority = 3; tag = "Каса"; tagClass = "ship"; }
+        }
+        const over = overpayments(g);
+        if (over.client || over.margin) {
+          if (over.client) reasons.push("Переплата клієнта: " + money(over.client) + " — перевірте платежі");
+          if (over.margin) reasons.push("Підрядник переплатив маржу: " + money(over.margin));
+          if (priority > 1) { priority = 1; tag = "Переплата"; tagClass = "debt"; }
         }
         if (payment.marginDebt > 0) {
           reasons.push("Маржа до отримання: " + money(payment.marginDebt));
@@ -816,7 +856,9 @@ import pricing from '../../lib/avalon-pricing.js';
         const rev = Number(g.revenue) || 0;
         const cst = Number(g.cost_total) || 0;
         const pr = Number(g.profit) || 0;
-        const com = Number(g.commission) || 0;
+        // Комісія ТОВ не береться з грошей, які клієнт заплатив власнику (правило 02.11.2026).
+        const com = Math.max(0, (Number(g.commission) || 0)
+          - (g.margin_commission_eff != null ? Math.max(0, (Number(g.margin_commission) || 0) - (Number(g.margin_commission_eff) || 0)) : 0));
         const payment = groupPaymentMetrics(g);
         revenue += rev;
         cost += cst;
@@ -868,6 +910,8 @@ import pricing from '../../lib/avalon-pricing.js';
         // Для старих замовлень без журналу точна дата надходження невідома.
         // Зберігаємо сумісність і відносимо їхню отриману маржу до місяця замовлення.
         if (!(Number(g.payments_count) > 0)) m.margin_received += payment.marginReceived;
+        // Маржа, яку власник уже має в грошах клієнта (каса), — до місяця замовлення.
+        else m.margin_received += Number(g.margin_kept) || 0;
       });
       (payments || []).forEach(payment => {
         if (payment.type !== "Маржа від підрядника") return;
@@ -918,6 +962,17 @@ import pricing from '../../lib/avalon-pricing.js';
           + normalized.slice(8, 10) + " " + normalized.slice(10, 12);
       }
       return String(raw || key || normalized).trim();
+    }
+    /** Службові позначки з таблиці не показуємо як є: «direct», «manual», «false» людині ні про що не кажуть. */
+    function sourceLabel(v) {
+      const s = String(v == null ? "" : v).trim();
+      if (s.toLowerCase() === "direct") return "Сайт (без реклами)";
+      if (s.toLowerCase() === "manual") return "";
+      return s;
+    }
+    function cleanNote(v) {
+      const s = typeof v === "boolean" ? "" : String(v == null ? "" : v).trim();
+      return /^(true|false)$/i.test(s) ? "" : s;
     }
     function telegramHandle(v) {
       return String(v || "").trim().replace(/^https?:\/\/(?:www\.)?t\.me\//i, "").replace(/^@/, "").replace(/\?.*$/, "");
@@ -1974,21 +2029,24 @@ import pricing from '../../lib/avalon-pricing.js';
 
     // Платежі замовлення: передоплати/доплати клієнта і виплати маржі підрядником.
     function PaymentsSection({ token, orderNumber, payments, summary, onChanged }) {
-      const [form, setForm] = useState({ type: "Передоплата", amount: "", method: "Готівка", date: "", note: "" });
+      const [form, setForm] = useState({ type: "Передоплата", amount: "", method: "Готівка", date: "", note: "", recipient: "" });
+      const isOwner = tokenRole(token) !== "manager";
+      const typeOptions = isOwner ? PAYMENT_TYPES.concat([PAYMENT_SHARE]) : PAYMENT_TYPES;
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
       const pendingRef = useRef({ fingerprint: "", requestId: "" });
       const list = payments || [];
       const s = summary || {};
-      const clientOverpaid = Math.max(0, (Number(s.client_paid) || 0) - (Number(s.revenue) || 0));
+      const clientOverpaid = (Number(s.revenue) || 0) > 0 ? Math.max(0, Math.round((Number(s.client_paid) || 0) - (Number(s.revenue) || 0))) : 0;
       // Підрядник утримує комісію, тож переказати він має валовий прибуток мінус її.
       const marginDue = Number(s.margin_due) || groupPaymentMetrics(s).marginDue;
-      const marginOverreceived = Math.max(0, (Number(s.margin_received) || 0) - marginDue);
+      const marginOverreceived = Math.max(0, Math.round((Number(s.margin_received) || 0) - Math.max(0, marginDue)));
 
       async function add() {
         setError("");
         if (!(Number(form.amount) > 0)) return setError("Вкажіть суму більшу за нуль");
-        const payment = { order_number: orderNumber, ...form, amount: Number(form.amount) };
+        const payment = { order_number: orderNumber, ...form, amount: Number(form.amount),
+          recipient: paymentHasRecipient(form.type) ? form.recipient : "" };
         const fingerprint = JSON.stringify(payment);
         if (pendingRef.current.fingerprint !== fingerprint) {
           pendingRef.current = { fingerprint, requestId: newRequestId() };
@@ -2034,7 +2092,7 @@ import pricing from '../../lib/avalon-pricing.js';
                 <b>{money(s.client_paid || 0)}</b> / {money(s.revenue || 0)}
                 <span className={(s.client_left || 0) > 0 ? "field-static-note debt" : "field-static-note"}>
                   {(s.client_left || 0) > 0 ? "борг " + money(s.client_left)
-                    : clientOverpaid > 0 ? "переплата " + money(clientOverpaid) : "повністю"}
+                    : clientOverpaid >= 1 ? "переплата " + money(clientOverpaid) : "повністю"}
                 </span>
               </div>
             </div>
@@ -2046,11 +2104,36 @@ import pricing from '../../lib/avalon-pricing.js';
                   {s.margin_owed === false && !(Number(s.margin_received) > 0)
                     ? "до виплати — після переходу у «Виготовлення»"
                     : (s.margin_left || 0) > 0 ? "до отримання " + money(s.margin_left)
-                    : marginOverreceived > 0 ? "понад нову маржу " + money(marginOverreceived) : "повністю"}
+                    : marginOverreceived >= 1 ? "переплата " + money(marginOverreceived) : "повністю"}
                 </span>
               </div>
             </div>
           </div>
+
+          {isOwner && (Number(s.owner_received) || 0) >= 1 && (
+            <div className="owner-money-note" role="status">
+              <p>
+                <b>Гроші клієнта у вас: {money((Number(s.owner_received) || 0) - (Number(s.share_paid) || 0))}</b>
+                {(Number(s.share_paid) || 0) >= 1 ? " (отримали " + money(s.owner_received) + ", з них підряднику передано чи зараховано " + money(s.share_paid) + ")" : ""}.
+                {" "}Підрядник маржу з них не переказує — вона вже у вас.
+              </p>
+              {(Number(s.owner_owes) || 0) >= 1
+                ? <p><b>Ви винні підряднику: {money(s.owner_owes)}</b> — його частка. Розрахуйтесь у розділі «Каса» (там же взаємозалік із маржею, яку він винен вам).</p>
+                : (Number(s.client_left) || 0) > 0 ? <p>Хто кому винен, порахується, коли клієнт сплатить повністю.</p> : null}
+            </div>
+          )}
+
+          {(clientOverpaid >= 1 || marginOverreceived >= 1) && (
+            <div className="overpay-note" role="status">
+              {clientOverpaid >= 1 && <p><b>Переплата клієнта: {money(clientOverpaid)}.</b> Внесено більше, ніж коштує замовлення.</p>}
+              {marginOverreceived >= 1 && <p><b>Підрядник переплатив маржу: {money(marginOverreceived)}.</b> Отримано більше, ніж належить за цим замовленням.</p>}
+              <p>
+                Якщо платіж внесено не тим типом (наприклад, маржу від підрядника — як оплату клієнта), видаліть
+                його в списку нижче й внесіть знову з правильним типом. Якщо переплата справжня — поверніть різницю
+                («Повернення клієнту») або врахуйте її в наступному розрахунку з підрядником.
+              </p>
+            </div>
+          )}
 
           {s.legacy && (
             <div style={{ margin: "8px 0 10px", padding: "10px 12px", borderRadius: 10, background: "#fff7e6", color: "#7a5410", fontSize: 12, lineHeight: 1.45 }}>
@@ -2066,11 +2149,13 @@ import pricing from '../../lib/avalon-pricing.js';
                   {list.map(p => (
                     <tr key={p.row}>
                       <td>{(p.date || "").slice(0, 10)}</td>
-                      <td>{p.type}</td>
+                      <td>{p.type}{p.recipient === PAYMENT_ME && <span className="pay-mine" title={p.type === "Повернення клієнту" ? "Повернули ви" : "Гроші отримали ви, а не підрядник"}>{p.type === "Повернення клієнту" ? "повернув я" : "отримав я"}</span>}</td>
                       <td><b>{money(p.amount)}</b></td>
                       <td>{p.method || "—"}</td>
                       <td>{p.note || "—"}</td>
-                      <td><IconButton icon="trash" label="Видалити платіж" disabled={busy} onClick={() => remove(p)} /></td>
+                      <td>{isSettlementPayment(p)
+                        ? <span className="pay-settle" title="Запис розрахунку з підрядником — скасовується цілим розрахунком у «Касі»">розрахунок</span>
+                        : <IconButton icon="trash" label="Видалити платіж" disabled={busy} onClick={() => remove(p)} />}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -2081,9 +2166,17 @@ import pricing from '../../lib/avalon-pricing.js';
           <div className="grid2" style={{ marginTop: 8 }}>
             <div className="field"><label htmlFor="payment-type">Тип платежу</label>
               <select id="payment-type" value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
-                {PAYMENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                {typeOptions.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
+            {paymentHasRecipient(form.type) && (
+              <div className="field"><label htmlFor="payment-recipient">{form.type === "Повернення клієнту" ? "Хто повернув гроші" : "Хто отримав гроші"}</label>
+                <select id="payment-recipient" value={form.recipient} onChange={e => setForm({ ...form, recipient: e.target.value })}>
+                  <option value="">Підрядник</option>
+                  <option value={PAYMENT_ME}>Я (готівка в касу, моя картка чи ФОП)</option>
+                </select>
+              </div>
+            )}
             <div className="field"><label htmlFor="payment-amount">Сума, ₴</label>
               <input id="payment-amount" type="number" inputMode="decimal" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
             <div className="field"><label htmlFor="payment-method">Спосіб</label>
@@ -3192,7 +3285,7 @@ import pricing from '../../lib/avalon-pricing.js';
           contact_method: (res.order && res.order.contact_method) || item.contact_method || "",
           contact_telegram: (res.order && res.order.contact_telegram) || item.contact_telegram || "",
           contact_email: (res.order && res.order.contact_email) || item.contact_email || "",
-          source: (res.order && res.order.source) || item.source || "",
+          source: sourceLabel((res.order && res.order.source) || item.source || ""),
           transport: (res.order && res.order.transport) || item.transport || "",
           address: (res.order && res.order.address) || item.address || "",
           basket_model: item.basket_model || "",
@@ -3207,7 +3300,7 @@ import pricing from '../../lib/avalon-pricing.js';
           unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
-          item_comment: item.item_comment || "",
+          item_comment: cleanNote(item.item_comment),
         });
       }
 
@@ -3377,7 +3470,7 @@ import pricing from '../../lib/avalon-pricing.js';
           unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
-          item_comment: item.item_comment || "",
+          item_comment: cleanNote(item.item_comment),
         }));
       }
 
@@ -3623,7 +3716,7 @@ import pricing from '../../lib/avalon-pricing.js';
                     <div className="item-row-main">
                       <strong>{itemTitle(it, i)}</strong>
                       <span>{(Number(it.quantity) || 1) + " " + (it.unit || "шт.") + " · " + money(it.revenue)}</span>
-                      {it.item_comment && <span className="item-row-comment" title={it.item_comment}>❗ {it.item_comment}</span>}
+                      {cleanNote(it.item_comment) && <span className="item-row-comment" title={cleanNote(it.item_comment)}>❗ {cleanNote(it.item_comment)}</span>}
                     </div>
                     <IconButton icon="edit" label={"Скорегувати «" + itemTitle(it, i) + "»"}
                       disabled={busy || stale} onClick={() => askEditItem(i)} />
@@ -4697,15 +4790,24 @@ import pricing from '../../lib/avalon-pricing.js';
                               );
                             })()}
                             {/* Оплати клієнта: видно борг просто на картці, без відкриття замовлення. */}
-                            {(g.client_paid_sum > 0 || g.client_left > 0) && (
-                              <div className={"card-payment " + (g.client_left > 0 ? "debt" : "paid")}>
-                                {g.client_left > 0
-                                  ? "Сплачено " + money(g.client_paid_sum) + " · борг " + money(g.client_left)
-                                  : "Сплачено повністю"}
-                              </div>
+                            {(g.client_paid_sum > 0 || g.client_left > 0) && (() => {
+                              const overClient = overpayments(g).client;
+                              return (
+                                <div className={"card-payment " + (g.client_left > 0 ? "debt" : overClient ? "over" : "paid")}>
+                                  {g.client_left > 0
+                                    ? "Сплачено " + money(g.client_paid_sum) + " · борг " + money(g.client_left)
+                                    : overClient ? "Переплата клієнта: " + money(overClient) : "Сплачено повністю"}
+                                </div>
+                              );
+                            })()}
+                            {overpayments(g).margin > 0 && (
+                              <div className="card-payment over">Підрядник переплатив маржу: {money(overpayments(g).margin)}</div>
                             )}
                             {g.margin_left > 0 && g.client_left === 0 && (
                               <div className="card-payment margin">Маржа до отримання: {money(g.margin_left)}</div>
+                            )}
+                            {Number(g.owner_owes) >= 1 && tokenRole(token) !== "manager" && (
+                              <div className="card-payment owe">Ви винні підряднику: {money(g.owner_owes)}</div>
                             )}
                             {g.status === "Скасовано" && g.cancel_reason && (
                               <div className="card-cancel-reason" title={g.cancel_reason}>Причина: {g.cancel_reason}</div>
@@ -4762,7 +4864,7 @@ import pricing from '../../lib/avalon-pricing.js';
                   <div>{money(g.revenue)}</div>
                   <div>{money(g.profit)}</div>
                   <div>{pct(g.margin_pct)}</div>
-                  <div style={{ color: "var(--muted)", fontSize: 12 }}>{g.source}</div>
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>{sourceLabel(g.source)}</div>
                 </div>
               ))}
             </div>
@@ -5047,12 +5149,15 @@ import pricing from '../../lib/avalon-pricing.js';
           if (!eligibleOrderNumbers.has(String(payment.order_number || ""))) return sum;
           return sum + (Number(payment.amount) || 0);
         }, 0);
-        let legacy = 0;
+        let legacy = 0, kept = 0;
         (filteredGroups || []).forEach(group => {
-          if (group.status === "Скасовано" || Number(group.payments_count) > 0) return;
+          if (group.status === "Скасовано") return;
+          // Маржа в грошах клієнта, які отримали ви (каса), — уже ваша, хоч підрядник її не переказував.
+          kept += Number(group.margin_kept) || 0;
+          if (Number(group.payments_count) > 0) return;
           legacy += groupPaymentMetrics(group).marginReceived;
         });
-        return { ledger, legacy, total: ledger + legacy };
+        return { ledger, legacy, kept, total: ledger + legacy + kept };
       }, [filteredPayments, filteredGroups, eligibleOrderNumbers]);
       const marginCashReceived = marginCashSplit.total;
 
@@ -5073,7 +5178,7 @@ import pricing from '../../lib/avalon-pricing.js';
         [filteredGroups, filteredExpenses, filteredPayments, filteredPayouts, eligibleOrderNumbers]
       );
 
-      const reminders = useMemo(() => buildReminders(groups), [groups]);
+      const reminders = useMemo(() => buildReminders(groups, tokenRole(token) !== "manager"), [groups, token]);
 
       if (error && !groups.length) return <ErrorBar text={error} onRetry={onRetry} />;
       if (loading && !groups.length) return <div className="empty">Завантаження зведення…</div>;
@@ -5503,6 +5608,7 @@ import pricing from '../../lib/avalon-pricing.js';
           ["Оплата клієнта", "«Платежі» → тип «Передоплата», «Доплата» або «Оплата повністю» → сума → «Внести платіж». Картка показує, скільки сплачено і скільки лишилось."],
           ["Маржа від підрядника", "Коли підрядник перерахував вашу частину — внесіть платіж типом «Маржа від підрядника». Кабінет рахує, скільки ще має надійти."],
           ["Повернення", "Гроші, повернуті клієнтові, вносьте типом «Повернення клієнту»."],
+          ["Переплата", "Якщо внесено більше, ніж належить, картка покаже помаранчеву позначку «Переплата клієнта» або «Підрядник переплатив маржу», а замовлення зʼявиться в «Нагадуваннях». Найчастіше це платіж не того типу: видаліть його в списку платежів і внесіть знову з правильним типом."],
           ["Скасування", "«Швидкі дії» → «Скасувати» → вкажіть причину. Причина потрібна завжди — за нею видно, чому втрачаються замовлення."],
           ["Завершення", "Кошик доставлено, клієнт розрахувався, маржу отримано — поставте статус «Завершено»."],
         ],
@@ -5530,6 +5636,23 @@ import pricing from '../../lib/avalon-pricing.js';
           ["Якщо клієнт мовчить понад добу", "Telegram дозволяє відповідати з кабінету лише протягом 24 годин після останнього повідомлення клієнта. Далі замість поля відповіді — кнопка «Написати в Telegram»: пишіть з телефону. Щойно клієнт відповість — кабінет знову дозволить."],
           ["Фото й файли", "Фото від клієнта видно прямо в переписці — натисніть, щоб відкрити більшим. Документи, голосові й відео кабінет лише позначає: відкривайте їх у Telegram. Корисні фото збережіть у «Файли замовлення»."],
           ["Історія", "Кабінет зберігає повідомлення від дня підключення бота; давніших Telegram не віддає. Повна історія — на аркуші «Чати» в таблиці."],
+        ],
+      },
+      {
+        id: "cash",
+        title: "Каса і розрахунок із підрядником",
+        lead: "Для власника. Коли клієнт платить вам (готівкою чи на картку), а не підряднику: кабінет рахує, скільки готівки має бути в касі і хто кому винен, і проводить розрахунок.",
+        steps: [
+          ["Клієнт заплатив вам", "У картці замовлення → «Платежі» → тип оплати, сума, спосіб (наприклад, «Готівка») → «Хто отримав гроші: Я» → «Внести платіж». Менеджер теж може так позначити платіж, але касу бачите лише ви."],
+          ["Що рахує кабінет", "Гроші клієнта у вас — ваша маржа вже у вас, а решта (частка підрядника) — ваш борг йому. Комісія ТОВ з грошей, отриманих вами, не береться. Ваш борг підряднику рахується з «Виготовлення», навіть якщо клієнт ще не доплатив; маржу, яку переказує сам підрядник (акт звірки), — лише за повністю оплаченими замовленнями."],
+          ["Скільки в касі", "«Каса» → «Готівка в касі за обліком» і з чого вона складається: «Ваша маржа — можна забрати», «Гроші підрядника — віддати йому» і «Передоплати клієнтів — ще не ваші»."],
+          ["Забрати маржу", "«Каса» → «Маржа до отримання»: замовлення в роботі, за якими маржу ще не отримано (навіть якщо клієнт не доплатив). Зелені — можна забрати з каси: натисніть «Забрати». Маржа з оплати, яку клієнт вніс вам, — ваша; маржа, яку винен підрядник, береться з його грошей у касі (стільки ж менше віддасте йому). Помаранчеві — його грошей у касі не вистачає: решту переказує підрядник. Кабінет сам робить усі записи; помилились — приберіть запис в історії каси."],
+          ["Витратили чи доклали", "«Каса» → «Що зробили з готівкою»: «Витратив на справи» або «Доклав у касу» → сума → «Записати». Лише те, що не стосується замовлень."],
+          ["Перерахували готівку", "Впишіть, скільки є насправді, і натисніть «Звірити з обліком». Якщо не сходиться — кабінет запропонує записати розбіжність."],
+          ["Розрахунок із підрядником", "«Каса» → «Розрахунок із підрядником». Спершу залік боргів: ваша маржа, яку винен підрядник за інші замовлення, зараховується в рахунок його грошей у вас — гроші не передаються. Різницю хтось віддає: впишіть, скільки віддаєте зараз і як («Готівкою з каси»), натисніть «Провести розрахунок». Можна віддати частину — решта лишиться боргом."],
+          ["Помилились", "«Проведені розрахунки» → «Скасувати» — зникнуть усі записи цього розрахунку. Окремі записи розрахунку в картці не видаляються."],
+          ["Повернення й скасування", "Повертаєте клієнту гроші з каси — «Повернення клієнту», «Хто повернув: Я». Замовлення скасували після виготовлення — витрати підрядника несете ви: у картці внесіть «Частка підряднику» на погоджену суму."],
+          ["Акт звірки", "Акт показує і маржу, яку винен підрядник, і гроші клієнтів, отримані вами, та підсумок взаємозаліку. Готівки у вашій касі підрядник в акті не бачить."],
         ],
       },
       {
@@ -5576,7 +5699,7 @@ import pricing from '../../lib/avalon-pricing.js';
       },
     ];
     // Розділи лише для власника — менеджерові їх не показуємо.
-    const GUIDE_OWNER_ONLY = ["rates", "access", "chats_setup"];
+    const GUIDE_OWNER_ONLY = ["rates", "access", "chats_setup", "cash"];
     const GUIDE_RULES = [
       "Ціну кошика рахує формула. Змінити її можна лише знижкою у полі «Знижка %» — не вписуйте іншу ціну руками.",
       "Розміри — у міліметрах і лише готового кошика: ширина, висота, глибина.",
@@ -5717,6 +5840,366 @@ import pricing from '../../lib/avalon-pricing.js';
     // Приклад для наочності: суцільний кошик 800×500×500 мм, чорний метал, без кришки.
     function examplePrice(rates) {
       return pricing.avalonPrice({ type: "solid", width: 800, height: 500, depth: 500, quantity: 1 }, rates).unitPrice;
+    }
+
+    // ── Каса готівки й взаємозалік із підрядником (лише власник) ─────────────────
+    // Клієнт інколи платить власнику (готівкою чи на картку) — такий платіж вносять у картці
+    // з «Хто отримав: Я». Тут видно, скільки готівки має бути в касі, хто кому винен, і тут же
+    // проводиться розрахунок: спершу взаємозалік (його маржа гасить вашу частку), потім — передана
+    // сума. Усе пишеться в журнал платежів таблиці, тож картки, акт звірки й зведення бачать те саме.
+    const CASH_API = "/api/admin/payments?resource=cash";
+    // Записи вручну — лише те, що не стосується замовлень. Маржу забирають кнопкою «Забрати» за замовленням.
+    const CASH_OUT_TYPES = [["Витрата з каси", "Витратив на справи"], ["Внесення в касу", "Доклав у касу"]];
+    const CASH_TAKE_LABELS = {
+      "Забрав свою маржу": "Забрав маржу (вашу, з оплати клієнта)",
+      "Забрав маржу з грошей підрядника": "Забрав маржу (з грошей підрядника)",
+      "Взяв собі": "Взяв собі (старий запис)",
+      "Коригування після перерахунку": "Розбіжність після перерахунку",
+    };
+    function cashTypeLabel(type) {
+      return CASH_TAKE_LABELS[type] || (CASH_OUT_TYPES.find(t => t[0] === type) || [])[1] || type;
+    }
+    function isCashTake(type) { return type === "Забрав свою маржу" || type === "Забрав маржу з грошей підрядника"; }
+    // Як гроші переходять під час розрахунку: «з каси» чи «в касу» залежить від того, хто віддає.
+    function settleMethods(toContractor) {
+      return [["Готівка", toContractor ? "Готівкою з каси" : "Готівкою в касу"], ["На карту", "Переказом на картку"],
+        ["На рахунок ФО-П", "На рахунок ФО-П"], ["Інше", "Інше"]];
+    }
+    // Рядок підсумку: коротка назва + пояснення дрібніше.
+    function CashLine({ title, hint, value, className }) {
+      return (
+        <li className={className || ""}>
+          <span><b className="cash-line-title">{title}</b>{hint && <small>{hint}</small>}</span>
+          <b>{money(value)}</b>
+        </li>
+      );
+    }
+    function CashOrders({ list, onOpenOrder, empty }) {
+      if (!list || !list.length) return <p className="margin-calc-note">{empty}</p>;
+      return (
+        <ul className="cash-orders">
+          {list.map(o => (
+            <li key={o.order_number}>
+              <button type="button" className="link-btn" onClick={() => onOpenOrder(o.order_number)}>{o.order_number}</button>
+              <span>{o.client}</span>
+              <b>{money(o.amount)}</b>
+            </li>
+          ))}
+        </ul>
+      );
+    }
+    function CashView({ token, onChanged, onOpenOrder }) {
+      const [box, setBox] = useState(null);
+      const [error, setError] = useState("");
+      const [busy, setBusy] = useState(false);
+      const [note, setNote] = useState("");
+      const [entry, setEntry] = useState({ type: "Витрата з каси", amount: "", note: "" });
+      const [counted, setCounted] = useState("");
+      const [settle, setSettle] = useState({ amount: "", method: "Готівка", date: "" });
+      const [showLists, setShowLists] = useState(false);
+      const pending = useRef({ key: "", id: "" });
+      function requestIdFor(key) {
+        if (pending.current.key !== key) pending.current = { key, id: newRequestId() };
+        return pending.current.id;
+      }
+      async function load() {
+        setError("");
+        try { setBox(await api(CASH_API, { token })); } catch (e) { setError(e.message); }
+      }
+      useEffect(() => { load(); }, []);
+      async function post(body, okText) {
+        setBusy(true); setError(""); setNote("");
+        try {
+          const res = await api(CASH_API, { method: "POST", token, body });
+          if (res.box) setBox(res.box); else await load();
+          pending.current = { key: "", id: "" };
+          setNote(okText(res));
+          onChanged && onChanged();
+          return res;
+        } catch (e) { setError(e.message); return null; } finally { setBusy(false); }
+      }
+      const c = (box && box.cash) || {};
+      // Точні суми розрахунку — від сервера (цілі гривні по замовленнях, як і запишуться).
+      const plan = (box && box.settle) || { contractor: 0, owner: 0, netting: 0, rest: 0, direction: "even" };
+      const net = plan.direction === "to_owner" ? plan.rest : plan.direction === "to_contractor" ? -plan.rest : 0;
+      const rest = plan.rest;
+      const nothing = box && !(plan.contractor >= 1) && !(plan.owner >= 1);
+      const netting = plan.netting;
+      const settleAmount = settle.amount === "" ? rest : Math.round(Number(settle.amount) || 0);
+      const methods = settleMethods(net < 0);
+      const methodLabel = (methods.find(m => m[0] === settle.method) || [])[1] || settle.method;
+
+      async function addEntry() {
+        const amount = Number(entry.amount);
+        if (!(amount > 0)) return setError("Вкажіть суму");
+        const key = JSON.stringify(entry);
+        const res = await post({ action: "add", type: entry.type, amount, note: entry.note, request_id: requestIdFor(key) },
+          () => entry.type + ": " + money(amount) + " — записано.");
+        if (res) setEntry(e => ({ ...e, amount: "", note: "" }));
+      }
+      async function recordCount() {
+        const actual = Number(counted);
+        if (!(counted !== "" && actual >= 0)) return setError("Вкажіть, скільки готівки ви нарахували");
+        const diff = Math.round((actual - (Number(c.expected) || 0)) * 100) / 100;
+        if (!diff) { setNote("Готівка сходиться з кабінетом."); return; }
+        if (!window.confirm("Нараховано " + money(actual) + ", а має бути " + money(c.expected) + ".\nЗаписати розбіжність " + (diff > 0 ? "+" : "") + money(diff) + "?")) return;
+        const res = await post({ action: "add", type: "Коригування після перерахунку", amount: diff, note: "Перерахунок: нараховано " + money(actual), request_id: requestIdFor("count" + actual) },
+          () => "Розбіжність записано — тепер у касі " + money(actual) + ".");
+        if (res) setCounted("");
+      }
+      async function takeMargin(r) {
+        const parts = [];
+        if (r.own >= 1) parts.push(money(r.own) + " — ваша маржа з оплати, яку клієнт вніс вам");
+        if (r.contractor_take >= 1) parts.push(money(r.contractor_take) + " — маржа, яку винен підрядник: береться з його грошей у касі (стільки ж менше віддасте йому при звірці)");
+        if (!window.confirm("Забрати з каси " + money(r.take) + " за " + r.order_number + "?\n\n" + parts.join("\n")
+          + "\n\nКабінет сам зробить записи: готівки в касі стане менше на " + money(r.take)
+          + (r.contractor_take >= 1 ? ", а гроші підрядника в касі — на " + money(r.contractor_take) : "")
+          + ". Помилились — приберіть запис в «Інших записах каси».")) return;
+        await post({ action: "take", order_number: r.order_number, request_id: requestIdFor("take" + r.order_number + r.own + ":" + r.contractor_take),
+          expect: { own: r.own, contractor: r.contractor_take } },
+          res => (res.duplicate ? "Уже забрано " : "Забрано ") + money(res.taken || r.take) + " за " + r.order_number + ".");
+      }
+      async function removeEntry(x) {
+        if (!window.confirm(isCashTake(x.type)
+          ? "Скасувати «" + cashTypeLabel(x.type) + "» " + money(Math.abs(x.amount)) + (x.order_number ? " за " + x.order_number : "") + "?\n\nМаржа за замовлення знову стане неотриманою, гроші повернуться в касу й до частки підрядника."
+          : "Прибрати запис «" + cashTypeLabel(x.type) + " " + money(Math.abs(x.amount)) + "»?")) return;
+        await post({ action: "delete", row: x.row, request_id: x.request_id, type: x.type, amount: x.amount }, () => "Запис прибрано.");
+      }
+      async function doSettle() {
+        if (settleAmount > rest) return setError("Більше, ніж винні: " + money(rest));
+        const toContractor = net < 0;
+        const lines = [];
+        if (netting >= 1) lines.push("Залік боргів: " + money(netting) + " — ваша маржа, яку винен підрядник, зараховується в рахунок його грошей у вас. Гроші при цьому не передаються.");
+        if (settleAmount > 0) lines.push((toContractor ? "Ви віддаєте підряднику " : "Підрядник віддає вам ") + money(settleAmount) + " — " + methodLabel.toLowerCase() + ".");
+        if (rest - settleAmount >= 1) lines.push("Лишиться " + (toContractor ? "ваш борг підряднику: " : "борг підрядника вам: ") + money(rest - settleAmount) + ".");
+        if (!lines.length) return setError("Нема чого записувати");
+        if (!window.confirm("Провести розрахунок із підрядником?\n\n" + lines.join("\n") + "\n\nЗаписи зʼявляться в платежах замовлень; помилковий розрахунок можна скасувати цілком.")) return;
+        const key = JSON.stringify([settleAmount, settle.method, settle.date, plan.contractor, plan.owner]);
+        const res = await post({ action: "settle", settlement_id: requestIdFor(key), amount: settleAmount, method: settle.method, date: settle.date,
+          expect: { contractor: plan.contractor, owner: plan.owner, direction: plan.direction } },
+          r => "Розрахунок проведено" + (r.left >= 1 ? ", лишилось " + money(r.left) : "") + ".");
+        if (res) setSettle(x => ({ ...x, amount: "" }));
+      }
+      async function undo(st) {
+        if (!window.confirm("Скасувати розрахунок від " + isoLabel(String(st.date).slice(0, 10)) + "?\n\nУсі його записи зникнуть із платежів замовлень, борги повернуться.")) return;
+        await post({ action: "undo", settlement_id: st.id }, r => "Розрахунок скасовано (" + r.removed + " записів).");
+      }
+
+      return (
+        <div className="cash-view">
+          <div className="panel">
+            <div className="panel-head"><h2>Каса <GuideLink section="cash" /></h2>
+              <button type="button" className="btn secondary small" disabled={busy} onClick={load}>Оновити</button></div>
+            {error && <ErrorBar text={error} onRetry={!box ? load : undefined} />}
+            {note && <p className="send-hint ok">{note}</p>}
+            {!box && !error && <p className="chat-empty">Рахую… (таблиця відповідає до пів хвилини)</p>}
+            {box && (
+              <>
+                <div className="cash-total">
+                  <span>Готівка в касі за обліком<small>скільки має бути — перерахуйте й звірте нижче</small></span>
+                  <b>{money(c.expected)}</b>
+                </div>
+                <div className="approval-label">З неї:</div>
+                <ul className="cash-split">
+                  <CashLine title="Ваша маржа — можна забрати" value={box.own_in_cash} className="ok"
+                    hint="з оплат, які клієнти внесли вам за замовлення в роботі; забирайте кнопкою в списку нижче" />
+                  <CashLine title="Гроші підрядника — віддати йому" value={box.contractor_pool} className="info"
+                    hint="його частка в цих оплатах; з неї ж можна забрати маржу, яку він винен вам за інші замовлення" />
+                  <CashLine title="Передоплати клієнтів — ще не ваші" value={c.deposits}
+                    hint="замовлення ще не у «Виготовленні»: гроші, можливо, доведеться повернути" />
+                  {(Number(c.cancelled) || 0) >= 1 && <CashLine title="Скасовані — повернути клієнтам" value={c.cancelled} className="neg"
+                    hint="або компенсувати підряднику, якщо скасували після виготовлення" />}
+                </ul>
+                {(Number(c.free) || 0) < 0 && <p className="send-hint err">Готівки менше, ніж передоплат і частки підрядника: частину вже взято собі або борг лежить на картці. Перерахуйте касу.</p>}
+              </>
+            )}
+          </div>
+
+          {box && (
+            <div className="panel">
+              <div className="panel-head"><h2>Маржа до отримання</h2></div>
+              <p className="margin-calc-note">Замовлення у «Виготовленні», «Готове», «Відправлено» й «Завершено», за якими ви ще не отримали маржу. Натисніть «Забрати» — кабінет сам зробить усі записи.</p>
+              <div className="cash-legend">
+                <span><i className="dot green" />можна забрати з каси</span>
+                <span><i className="dot amber" />готівки підрядника не вистачає — решту переказує він</span>
+                <span><i className="dot red" />забрано більше, ніж належить, або замовлення скасоване — повернути</span>
+              </div>
+              {!(box.margin_list || []).length && !(box.cancelled_taken || []).length && <p className="chat-empty">Немає замовлень із неотриманою маржею.</p>}
+              <ul className="take-list">
+                {(box.margin_list || []).map(r => (
+                  <li key={r.order_number} className={"take-row " + r.color}>
+                    <div className="take-main">
+                      <button type="button" className="link-btn" onClick={() => onOpenOrder(r.order_number)}>{r.order_number}</button>
+                      <span className="take-client">{r.client}</span>
+                      <StatusChip status={r.status} />
+                      {r.client_left >= 1 && <span className="take-note">клієнт ще винен {money(r.client_left)}</span>}
+                    </div>
+                    <div className="take-sum">
+                      {r.color === "red"
+                        ? <><span>забрано більше на {money(r.over)}</span>
+                            <small>{r.reason === "over_shared"
+                              ? "підряднику передано більше, ніж клієнт заплатив вам (повернення чи видалений платіж): перевірте платежі"
+                              : "маржу вже забрали, а потім було повернення клієнту чи видалено платіж: поверніть різницю в касу або приберіть зайвий запис нижче"}</small></>
+                        : <><span>маржа {money(r.own + r.contractor)}</span>
+                            {r.reason === "no_payments"
+                              ? <small>у кабінеті немає жодного платежу за замовленням — спершу внесіть оплату клієнта в картці</small>
+                              : r.color === "amber" && <small>{r.take >= 1 ? "з каси — " + money(r.take) + ", решту " + money(r.own + r.contractor - r.take) + " переказує підрядник" : "переказує підрядник — у касі його грошей немає"}</small>}</>}
+                    </div>
+                    {r.take >= 1 && (
+                      <button type="button" className={"btn small" + (r.color === "green" ? "" : " secondary")} disabled={busy} onClick={() => takeMargin(r)}>
+                        Забрати {money(r.take)}
+                      </button>
+                    )}
+                  </li>
+                ))}
+                {(box.cancelled_taken || []).map(r => (
+                  <li key={"x" + r.order_number} className="take-row red">
+                    <div className="take-main">
+                      <button type="button" className="link-btn" onClick={() => onOpenOrder(r.order_number)}>{r.order_number}</button>
+                      <span className="take-client">{r.client}</span>
+                      <StatusChip status="Скасовано" />
+                    </div>
+                    <div className="take-sum"><span>повернути {money(r.amount)}</span>
+                      <small>замовлення скасоване, а маржу за нього (чи з його грошей — за інші) вже забрано: приберіть ці записи в «Інших записах каси» або поверніть суму клієнту</small></div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {box && (
+            <div className="panel">
+              <div className="panel-head"><h2>Розрахунок із підрядником</h2></div>
+              <ul className="cash-split">
+                <CashLine title="Підрядник винен вам" value={box.contractor_owes}
+                  hint="ваша маржа за замовлення, які клієнти повністю оплатили йому" />
+                <CashLine title="Ви винні підряднику" value={box.owner_owes}
+                  hint="його частка в оплатах, які клієнти повністю внесли вам" />
+              </ul>
+              <div className="cash-total">
+                <span>{nothing ? "Ніхто нікому не винен"
+                  : net > 0 ? "Після заліку боргів підрядник віддає вам"
+                  : net < 0 ? "Після заліку боргів ви віддаєте підряднику"
+                  : "Борги рівні — досить заліку, гроші не передаються"}</span>
+                <b>{nothing || !rest ? "" : money(rest)}</b>
+              </div>
+              <button type="button" className="link-btn" onClick={() => setShowLists(v => !v)}>{showLists ? "Сховати замовлення" : "Показати замовлення"}</button>
+              {showLists && (
+                <div className="grid2" style={{ marginTop: 8 }}>
+                  <div><div className="approval-label">Підрядник винен вам</div>
+                    <CashOrders list={box.contractor_orders} onOpenOrder={onOpenOrder} empty="Немає." /></div>
+                  <div><div className="approval-label">Ви винні підряднику</div>
+                    <CashOrders list={box.owner_orders} onOpenOrder={onOpenOrder} empty="Немає." /></div>
+                </div>
+              )}
+              {!nothing && (
+                <div className="cash-form" style={{ marginTop: 12 }}>
+                  {rest >= 1 && (
+                    <>
+                      <div className="field"><label htmlFor="settle-amount">{net < 0 ? "Скільки віддаєте підряднику зараз, ₴" : "Скільки підрядник віддає вам зараз, ₴"}</label>
+                        <input id="settle-amount" type="number" min="0" max={rest} inputMode="decimal" placeholder={String(rest)} value={settle.amount} onChange={e => setSettle({ ...settle, amount: e.target.value })} /></div>
+                      <div className="field"><label htmlFor="settle-method">Як</label>
+                        <select id="settle-method" value={settle.method} onChange={e => setSettle({ ...settle, method: e.target.value })}>
+                          {methods.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select></div>
+                    </>
+                  )}
+                  <div className="field"><label htmlFor="settle-date">Дата (порожньо = сьогодні)</label>
+                    <input id="settle-date" type="date" value={settle.date} onChange={e => setSettle({ ...settle, date: e.target.value })} /></div>
+                  {(box.margin_list || []).some(r => r.take >= 1) && (
+                    <p className="send-hint err" style={{ flexBasis: "100%" }}>
+                      Спершу заберіть маржу в «Маржі до отримання»: розрахунок віддасть підряднику гроші, з яких її можна забрати.
+                    </p>
+                  )}
+                  <button type="button" className="btn" disabled={busy} onClick={doSettle}>{rest >= 1 ? "Провести розрахунок" : "Провести залік боргів"}</button>
+                </div>
+              )}
+              {box.cancelled_refunded && box.cancelled_refunded.length > 0 && (
+                <div className="overpay-note">
+                  <p><b>Скасовані замовлення: ви повернули клієнту гроші, які отримав підрядник.</b> Він винен їх вам:</p>
+                  <CashOrders list={box.cancelled_refunded} onOpenOrder={onOpenOrder} empty="" />
+                  <p>Коли підрядник поверне — внесіть у картці «Маржа від підрядника» на цю суму.</p>
+                </div>
+              )}
+              {box.cancelled_held && box.cancelled_held.length > 0 && (
+                <div className="overpay-note">
+                  <p><b>Скасовані замовлення, гроші клієнта ще у вас:</b></p>
+                  <CashOrders list={box.cancelled_held} onOpenOrder={onOpenOrder} empty="" />
+                  <p>Поверніть клієнту («Повернення клієнту», «Хто повернув: Я»). Якщо скасували після виготовлення — витрати
+                    підрядника несете ви: внесіть у картці «Частка підряднику» на погоджену суму.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {box && (
+            <div className="panel">
+              <div className="panel-head"><h2>Інші записи каси</h2></div>
+                <div className="cash-forms">
+                  <div className="cash-form">
+                    <div className="field"><label htmlFor="cash-type">Що зробили з готівкою</label>
+                      <select id="cash-type" value={entry.type} onChange={e => setEntry({ ...entry, type: e.target.value })}>
+                        {CASH_OUT_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select></div>
+                    <div className="field"><label htmlFor="cash-amount">Сума, ₴</label>
+                      <input id="cash-amount" type="number" min="0" inputMode="decimal" value={entry.amount} onChange={e => setEntry({ ...entry, amount: e.target.value })} /></div>
+                    <div className="field"><label htmlFor="cash-note">Примітка</label>
+                      <input id="cash-note" value={entry.note} onChange={e => setEntry({ ...entry, note: e.target.value })} placeholder="На що / звідки" /></div>
+                    <button type="button" className="btn" disabled={busy} onClick={addEntry}>Записати</button>
+                  </div>
+                  <div className="cash-form">
+                    <div className="field"><label htmlFor="cash-count">Перерахували готівку? Скільки є насправді</label>
+                      <input id="cash-count" type="number" min="0" inputMode="decimal" value={counted} onChange={e => setCounted(e.target.value)} /></div>
+                    <button type="button" className="btn secondary" disabled={busy} onClick={recordCount}>Звірити з обліком</button>
+                  </div>
+                </div>
+                {c.ledger && c.ledger.length > 0 && (
+                  <div className="table-scroll" style={{ marginTop: 10 }}>
+                    <table>
+                      <thead><tr><th>Дата</th><th>Що зробили</th><th>Сума</th><th>Примітка</th><th /></tr></thead>
+                      <tbody>
+                        {c.ledger.map(x => (
+                          <tr key={x.row}>
+                            <td>{isoLabel(String(x.date).slice(0, 10))}</td><td>{cashTypeLabel(x.type)}{x.order_number ? " · " + x.order_number : ""}</td>
+                            <td><b>{(x.effect > 0 ? "+" : "") + money(x.effect)}</b></td><td>{x.note || "—"}</td>
+                            <td><IconButton icon="trash" label="Прибрати запис" disabled={busy} onClick={() => removeEntry(x)} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <p className="margin-calc-note">
+                  Готівку від клієнтів кабінет бере з платежів у картках замовлень («Хто отримав гроші: Я», спосіб «Готівка»).
+                  Маржу забирайте кнопкою «Забрати» в «Маржі до отримання». Тут — лише те, що не стосується замовлень: витратили на справи, доклали.
+                </p>
+            </div>
+          )}
+
+          {box && box.settlements && box.settlements.length > 0 && (
+            <div className="panel">
+              <div className="panel-head"><h2>Проведені розрахунки</h2></div>
+              <div className="table-scroll">
+                <table>
+                  <thead><tr><th>Дата</th><th>Залік боргів</th><th>Віддано грошима</th><th>Як</th><th>Замовлень</th><th /></tr></thead>
+                  <tbody>
+                    {box.settlements.map(st => (
+                      <tr key={st.id}>
+                        <td>{isoLabel(String(st.date).slice(0, 10))}</td>
+                        <td>{money(st.netting)}</td>
+                        <td>{st.paid ? "ви → підряднику " + money(st.paid) : st.received ? "підрядник → вам " + money(st.received) : "—"}</td>
+                        <td>{st.method || "—"}</td>
+                        <td>{st.orders.length}</td>
+                        <td><button type="button" className="btn secondary small" disabled={busy} onClick={() => undo(st)}>Скасувати</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      );
     }
 
     function RatesView({ token, onSaved }) {
@@ -6413,6 +6896,11 @@ import pricing from '../../lib/avalon-pricing.js';
           margin_due: summary.margin_due ?? detail.order.margin_due,
           commission: summary.commission ?? detail.order.commission,
           margin_owed: summary.margin_owed ?? detail.order.margin_owed,
+          owner_received: summary.owner_received ?? detail.order.owner_received,
+          share_paid: summary.share_paid ?? detail.order.share_paid,
+          owner_owes: summary.owner_owes ?? detail.order.owner_owes,
+          margin_kept: summary.margin_kept ?? detail.order.margin_kept,
+          margin_commission_eff: summary.margin_commission_eff ?? detail.order.margin_commission_eff,
         });
 
         setGroups(current => {
@@ -6554,7 +7042,7 @@ import pricing from '../../lib/avalon-pricing.js';
               </div>
             </div>
             <nav className="nav" aria-label="Розділи CRM">
-              {NAV_ITEMS.map(item => (
+              {NAV_ITEMS.filter(item => !item.ownerOnly || tokenRole(token) !== "manager").map(item => (
                 <span key={item.id} className="nav-item">
                   <IconButton
                     icon={item.icon}
@@ -6634,6 +7122,9 @@ import pricing from '../../lib/avalon-pricing.js';
             </div>
             {tab === "rates" && (
               <RatesView token={token} onSaved={() => { const r = refreshData({ direct: true }); if (r && r.catch) r.catch(() => {}); }} />
+            )}
+            {tab === "cash" && tokenRole(token) !== "manager" && (
+              <CashView token={token} onChanged={() => { const r = refreshData({ direct: true }); if (r && r.catch) r.catch(() => {}); }} onOpenOrder={openOrder} />
             )}
             {tab === "guide" && <GuideView focus={guideFocus} role={tokenRole(token)} />}
           </main>

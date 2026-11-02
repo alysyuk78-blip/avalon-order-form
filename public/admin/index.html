@@ -512,6 +512,59 @@
     .card-payment.debt { background: rgba(180,72,66,.08); color: #b54842; }
     .card-payment.margin { background: rgba(143,115,64,.10); color: #8f7340; }
     .card-payment.paid { background: rgba(27,122,74,.09); color: #1b7a4a; }
+    /* Переплата — помітно, бо найчастіше це платіж, внесений не тим типом. */
+    .card-payment.over { background: rgba(217,119,6,.13); color: #9a5b00; font-weight: 700; }
+    /* Каса: гроші клієнтів у власника, борг підряднику, розділ «Каса» */
+    .card-payment.owe { background: rgba(37,99,235,.10); color: #1e40af; font-weight: 700; }
+    .pay-mine, .pay-settle { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: 10.5px; font-weight: 700; vertical-align: middle; }
+    .pay-mine { background: rgba(37,99,235,.12); color: #1e40af; }
+    .pay-settle { margin-left: 0; background: #eef1f3; color: var(--muted); }
+    .owner-money-note { margin: 8px 0 12px; padding: 10px 12px; border-radius: 10px; background: #eaf1ff; color: #1e3a8a; font-size: 12.5px; line-height: 1.45; }
+    .owner-money-note p { margin: 0 0 6px; }
+    .owner-money-note p:last-child { margin-bottom: 0; }
+    .cash-view { display: grid; gap: 16px; max-width: 980px; }
+    .cash-total { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 6px 0 10px; font-size: 14px; }
+    .cash-total b { font-size: 26px; font-variant-numeric: tabular-nums; }
+    .cash-split { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+    .cash-split li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 10px; border-radius: 8px; background: var(--control-bg); }
+    .cash-split li b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .cash-split li > span { display: grid; gap: 2px; min-width: 0; }
+    .cash-split li small, .cash-total small { display: block; font-size: 11.5px; line-height: 1.35; color: var(--muted); font-weight: 400; }
+    .cash-line-title { font-weight: 650; }
+    /* Кольори каси: зелений — ваше / можна забрати, синій — гроші підрядника, помаранчевий — бракує,
+       червоний — повернути. */
+    .cash-split li.ok { background: rgba(27,122,74,.10); }
+    .cash-split li.ok > b { color: #1b7a4a; }
+    .cash-split li.info { background: rgba(37,99,235,.09); }
+    .cash-split li.info > b { color: #1e40af; }
+    .cash-split li.neg > b { color: var(--danger); }
+    .cash-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 0 10px; font-size: 11.5px; color: var(--muted); }
+    .cash-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+    .cash-legend .dot { display: inline-block; flex: 0 0 10px; width: 10px; height: 10px; border-radius: 50%; }
+    .dot.green { background: #1b7a4a; } .dot.amber { background: #d97706; } .dot.red { background: var(--danger); }
+    .take-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .take-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center;
+      padding: 8px 10px; border-radius: 10px; border-left: 4px solid transparent; background: var(--control-bg); }
+    .take-row.green { border-left-color: #1b7a4a; background: rgba(27,122,74,.07); }
+    .take-row.amber { border-left-color: #d97706; background: rgba(217,119,6,.08); }
+    .take-row.red { border-left-color: var(--danger); background: #fdecea; }
+    .take-main { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; font-size: 13px; }
+    .take-client { color: var(--ink); }
+    .take-note { font-size: 11.5px; color: var(--muted); }
+    .take-sum { display: grid; text-align: right; font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .take-sum small { font-weight: 400; font-size: 11px; color: var(--muted); max-width: 240px; }
+    @media (max-width: 760px) { .take-row { grid-template-columns: 1fr auto; } .take-row .btn { grid-column: 1 / -1; } .take-sum { text-align: left; } }
+    .cash-total > span { display: grid; gap: 2px; }
+    .cash-split li.neg { background: #fdecea; color: var(--danger); }
+    .cash-forms { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; margin-top: 8px; }
+    .cash-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+    .cash-form .field { flex: 1 1 140px; margin: 0; }
+    .cash-orders { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; }
+    .cash-orders li { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; }
+    @media (max-width: 760px) { .cash-forms { grid-template-columns: 1fr; } .cash-total b { font-size: 22px; } .cash-form .field { flex-basis: 100%; } }
+    .overpay-note { margin: 8px 0 12px; padding: 10px 12px; border-radius: 10px; background: #fff3e0; color: #7a4a00; font-size: 12.5px; line-height: 1.45; }
+    .overpay-note p { margin: 0 0 6px; }
+    .overpay-note p:last-child { margin-bottom: 0; }
     /* Дата доставки/відправлення на картці; протермінована — червоним. */
     /* Заголовок «Що зробити сьогодні» — клікабельний, згортає список. */
     .todo-head {
