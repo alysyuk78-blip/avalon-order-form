@@ -1274,7 +1274,11 @@ function writeOrderToSheet_(data) {
       // Ціна за формулою: фіксуємо й прайс зі знижкою (AI–AK), щоб картка показувала ті самі числа.
       if (formulaPriced) sheet.getRange(lastRow, 35, 1, 3).setValues([[calc.listTotal, calc.discountPct, calc.discountAmount]]);
       var itemComment = String(it.item_comment || it.model_comment || "").trim().slice(0, 1000);
-      if (itemComment) sheet.getRange(lastRow, ITEM_COMMENT_COL).setValue(itemComment);
+      if (itemComment) {
+        var commentCell = sheet.getRange(lastRow, ITEM_COMMENT_COL);
+        try { commentCell.clearDataValidations(); } catch (cvErr) { /* перевірки немає — нічого знімати */ }
+        commentCell.setValue(itemComment);
+      }
       writtenRows.push(lastRow);
       var rr = sheet.getRange(lastRow, 1, 1, ROW_COLS);
       rr.setVerticalAlignment("middle").setWrap(true);
@@ -1425,7 +1429,7 @@ function addDeliveryEvent(order) {
       "\nТелефон: " + (order.phone || "") +
       "\nДоставка: " + transport +
       (order.delivery_address ? "\nАдреса: " + order.delivery_address : "") +
-      "\nДжерело: " + (order.referral_source || "direct");
+      "\nДжерело: " + sourceLabel_(order.referral_source);
 
     var cal = getCal();
     // Подія могла вже бути створена спробою, що обірвалась до запису позначки evt_<№>:
@@ -4158,6 +4162,14 @@ function ensureContactColumns_(sheet) {
   sheet.getRange(2, COMMISSION_PCT_COL, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat('0.##"%"');
 }
 
+/** Джерело заявки для людини: службові «direct» / «manual» — зрозумілими словами. */
+function sourceLabel_(v) {
+  var s = String(v == null ? "" : v).trim();
+  if (!s || s.toLowerCase() === "direct") return "сайт (без реклами)";
+  if (s.toLowerCase() === "manual") return "внесено вручну";
+  return s;
+}
+
 function parseContactFromNotes_(notes) {
   var out = { contact_method: "", contact_telegram: "", contact_email: "" };
   var n = String(notes || "");
@@ -4273,7 +4285,9 @@ function isItemNoteLine_(line) {
  * його в примітки рядка як «Коментар до моделі: …» — підхоплюємо й звідти.
  */
 function itemComment_(cell, rowNotes) {
-  var direct = String(cell == null ? "" : cell).trim();
+  // Галочка чи логічне значення в клітинці (TRUE/FALSE) — не коментар: людині показувало «false».
+  var direct = typeof cell === "boolean" ? "" : String(cell == null ? "" : cell).trim();
+  if (/^(true|false)$/i.test(direct)) direct = "";
   if (direct) return direct;
   var out = [];
   String(rowNotes || "").split(/\n+/).forEach(function (line) {
@@ -5011,7 +5025,10 @@ function adminUpdateOrder_(data) {
                     product_kind: 42, specs: 43, unit: 44, item_comment: ITEM_COMMENT_COL };
   Object.keys(ITEM_TEXT).forEach(function (key) {
     if (patch[key] == null) return;
-    sh.getRange(row, ITEM_TEXT[key]).setValue(String(patch[key]).slice(0, 1000));
+    var textCell = sh.getRange(row, ITEM_TEXT[key]);
+    // Галочка в клітинці (буває після ручних правок таблиці) не прийме текст — знімаємо її.
+    if (key === "item_comment") { try { textCell.clearDataValidations(); } catch (cvErr) { /* перевірки немає */ } }
+    textCell.setValue(String(patch[key]).slice(0, 1000));
     if (key === "item_comment") {
       // Коментар тепер живе в AX: старий рядок «Коментар до моделі: …» із приміток прибираємо,
       // інакше після очищення поля він підтягнувся б звідти знову.

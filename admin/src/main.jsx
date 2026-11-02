@@ -919,6 +919,17 @@ import pricing from '../../lib/avalon-pricing.js';
       }
       return String(raw || key || normalized).trim();
     }
+    /** Службові позначки з таблиці не показуємо як є: «direct», «manual», «false» людині ні про що не кажуть. */
+    function sourceLabel(v) {
+      const s = String(v == null ? "" : v).trim();
+      if (s.toLowerCase() === "direct") return "Сайт (без реклами)";
+      if (s.toLowerCase() === "manual") return "";
+      return s;
+    }
+    function cleanNote(v) {
+      const s = typeof v === "boolean" ? "" : String(v == null ? "" : v).trim();
+      return /^(true|false)$/i.test(s) ? "" : s;
+    }
     function telegramHandle(v) {
       return String(v || "").trim().replace(/^https?:\/\/(?:www\.)?t\.me\//i, "").replace(/^@/, "").replace(/\?.*$/, "");
     }
@@ -3192,7 +3203,7 @@ import pricing from '../../lib/avalon-pricing.js';
           contact_method: (res.order && res.order.contact_method) || item.contact_method || "",
           contact_telegram: (res.order && res.order.contact_telegram) || item.contact_telegram || "",
           contact_email: (res.order && res.order.contact_email) || item.contact_email || "",
-          source: (res.order && res.order.source) || item.source || "",
+          source: sourceLabel((res.order && res.order.source) || item.source || ""),
           transport: (res.order && res.order.transport) || item.transport || "",
           address: (res.order && res.order.address) || item.address || "",
           basket_model: item.basket_model || "",
@@ -3207,7 +3218,7 @@ import pricing from '../../lib/avalon-pricing.js';
           unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
-          item_comment: item.item_comment || "",
+          item_comment: cleanNote(item.item_comment),
         });
       }
 
@@ -3377,7 +3388,7 @@ import pricing from '../../lib/avalon-pricing.js';
           unit: item.unit || (item.product_kind === "Кронштейни" ? "комп." : "шт."),
           product_kind: item.product_kind || "",
           specs: item.specs || "",
-          item_comment: item.item_comment || "",
+          item_comment: cleanNote(item.item_comment),
         }));
       }
 
@@ -3623,7 +3634,7 @@ import pricing from '../../lib/avalon-pricing.js';
                     <div className="item-row-main">
                       <strong>{itemTitle(it, i)}</strong>
                       <span>{(Number(it.quantity) || 1) + " " + (it.unit || "шт.") + " · " + money(it.revenue)}</span>
-                      {it.item_comment && <span className="item-row-comment" title={it.item_comment}>❗ {it.item_comment}</span>}
+                      {cleanNote(it.item_comment) && <span className="item-row-comment" title={cleanNote(it.item_comment)}>❗ {cleanNote(it.item_comment)}</span>}
                     </div>
                     <IconButton icon="edit" label={"Скорегувати «" + itemTitle(it, i) + "»"}
                       disabled={busy || stale} onClick={() => askEditItem(i)} />
@@ -4762,7 +4773,7 @@ import pricing from '../../lib/avalon-pricing.js';
                   <div>{money(g.revenue)}</div>
                   <div>{money(g.profit)}</div>
                   <div>{pct(g.margin_pct)}</div>
-                  <div style={{ color: "var(--muted)", fontSize: 12 }}>{g.source}</div>
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>{sourceLabel(g.source)}</div>
                 </div>
               ))}
             </div>

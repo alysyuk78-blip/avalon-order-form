@@ -279,7 +279,8 @@ function formatTelegramMessage(order, rates) {
   if (order.pattern_file?.name) msg += `• Файл візерунку: <b>${e(order.pattern_file.name)}</b>\n`;
 
   // ── Джерело (мета) ──
-  msg += `\n🔖 Джерело заявки: ${e(order.referral_source || "direct")}\n`;
+  const ref = String(order.referral_source || "").trim();
+  msg += `\n🔖 Джерело заявки: ${e(!ref || ref.toLowerCase() === "direct" ? "сайт (без реклами)" : ref)}\n`;
   return msg;
 }
 
