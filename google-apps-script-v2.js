@@ -4034,7 +4034,9 @@ function adminCashBox_() {
       // Гроші клієнта ще у вас — повернути клієнту або компенсувати підряднику (правило 3).
       if (heldC >= 1) cancelledHeld.push(Object.assign({}, base, { amount: heldC }));
       // Ви повернули клієнту більше, ніж отримали самі: решту клієнт платив підряднику — він винен вам.
-      if (heldC <= -1) cancelledRefunded.push(Object.assign({}, base, { amount: -heldC }));
+      // Мінус те, що підрядник уже відшкодував (внесено як «Маржа від підрядника»).
+      var owedBack = -heldC - (Number(g.margin_received) || 0);
+      if (owedBack >= 1) cancelledRefunded.push(Object.assign({}, base, { amount: owedBack }));
       return;
     }
     if (g.margin_owed && settled && Number(g.margin_left) >= 1 && Number(g.payments_count) > 0) contractorOwes.push(Object.assign({}, base, { amount: Number(g.margin_left) }));

@@ -284,6 +284,11 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.equal(box.cash.expected, -10000);
   assert.equal(box.cancelled_refunded.length, 1);
   assert.equal(box.cancelled_refunded[0].amount, 10000);
+  // Підрядник відшкодував частину, потім усе — борг зменшується й зникає.
+  ctx.adminAddPayment_({ payment: { order_number: "ORD-011026-001", type: "Маржа від підрядника", amount: 4000, method: "На карту" } });
+  assert.equal(ctx.adminCashBox_().cancelled_refunded[0].amount, 6000);
+  ctx.adminAddPayment_({ payment: { order_number: "ORD-011026-001", type: "Маржа від підрядника", amount: 6000, method: "На карту" } });
+  assert.equal(ctx.adminCashBox_().cancelled_refunded.length, 0);
 }
 {
   // До «Виготовлення» «Маржу отримано ✓» не ставиться навіть якщо готівки у вас більше за маржу;
