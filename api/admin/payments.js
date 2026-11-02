@@ -1,7 +1,14 @@
-const { requireAdmin, setAdminCors, handleOptions } = require("../../lib/admin-auth");
+const { requireAdmin, requireOwner, setAdminCors, handleOptions } = require("../../lib/admin-auth");
 const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
+const cashHandler = require("../../lib/admin-cash-handler");
+
+// «Частка підряднику» — гроші власника, передані підряднику (зокрема компенсація за замовлення,
+// скасоване після виготовлення): вносить лише власник.
+const OWNER_ONLY_TYPES = ["Частка підряднику"];
 
 module.exports = async function handler(req, res) {
+  // Каса й взаємозалік із підрядником: /api/admin/payments?resource=cash (лише власник).
+  if (String((req.query && req.query.resource) || "") === "cash") return cashHandler(req, res);
   const startedAt = Date.now();
   const requestId = req.headers && req.headers["x-vercel-id"];
   console.log(JSON.stringify({ level: "info", msg: "start", route: "/api/admin/payments", method: req.method, requestId }));
@@ -35,7 +42,18 @@ module.exports = async function handler(req, res) {
       if (!(Number(payment.amount) > 0)) {
         return res.status(400).json({ error: "Сума платежу мусить бути більшою за нуль" });
       }
-      const data = await callAdminSheets("add_payment", { payment });
+      if (OWNER_ONLY_TYPES.includes(String(payment.type || "").trim()) && !requireOwner(req, res)) return;
+      if (String(payment.request_id || "").startsWith("settle:")) {
+        return res.status(400).json({ error: "Недопустимий ID запиту" });
+      }
+      const data = await callAdminSheets("add_payment", {
+        payment: {
+          order_number: String(payment.order_number).trim(),
+          type: payment.type, amount: payment.amount, method: payment.method, note: payment.note,
+          date: payment.date, request_id: payment.request_id,
+          recipient: payment.recipient === "Я" ? "Я" : "",
+        },
+      });
       console.log(JSON.stringify({ level: "info", msg: "done", route: "/api/admin/payments", method: req.method, ms: Date.now() - startedAt, requestId }));
       return res.status(201).json(data);
     }
