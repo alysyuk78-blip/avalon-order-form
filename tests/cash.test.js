@@ -364,7 +364,7 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.equal(item("ORD-011026-001").color, "green");
   assert.equal(item("ORD-021026-002").contractor_take, 1200);
   assert.equal(item("ORD-031026-003").contractor_take, 800, "клієнт не доплатив — забирати можна (рішення власника)");
-  assert.equal(item("ORD-041026-004").contractor_take, 1500, "лишок грошей підрядника — 3500 − 1200 − 800");
+  assert.equal(item("ORD-041026-004").contractor_take, 3500, "кожне замовлення — незалежно: скільки є грошей підрядника");
   assert.equal(item("ORD-041026-004").color, "amber");
   assert.equal(box.margin_list.some((r) => r.order_number === "ORD-051026-005"), false);
 
@@ -419,6 +419,127 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.equal(box.margin_list.length, 0);
   assert.equal(box.contractor_pool, 0);
   assert.equal(box.owner_owes, 3500, "частка підрядника на вашій картці — віддати при звірці");
+}
+
+// ── 10. Правки після перевірки «Забрати маржу» ──
+{
+  // Замовлення без жодного платежу в кабінеті (лише стара галочка) — «Забрати» не пропонується.
+  const { ctx, sheets } = setup(
+    [{ num: "ORD-011026-001", revenue: 5000, profit: 1500 },
+     { num: "ORD-021026-002", revenue: 4000, profit: 1200, status: "Готове" }],
+    [pay("ORD-011026-001", "Оплата повністю", 5000, { method: "Готівка", me: true })], []);
+  sheets["Замовлення"].data[2][32] = true;   // AG «Оплата клієнта ✓» без платежів
+  const box = ctx.adminCashBox_();
+  const r = box.margin_list.find((x) => x.order_number === "ORD-021026-002");
+  assert.equal(r.reason, "no_payments");
+  assert.equal(r.take, 0);
+  assert.equal(box.settle.contractor, 0, "і в розрахунок не йде");
+  assert.throws(() => ctx.adminCashTake_({ order_number: "ORD-021026-002", request_id: "take-1001" }), /немає жодного платежу/);
+  assert.equal(sheets["Замовлення"].data[2][32], true, "галочку оплати не чіпаємо");
+}
+{
+  // Оплата вам частково готівкою, частково на картку: гроші підрядника в касі не завищуються.
+  const { ctx } = setup(
+    [{ num: "ORD-011026-001", revenue: 5000, profit: 1000 },
+     { num: "ORD-021026-002", revenue: 8000, profit: 2000, status: "Готове" },
+     { num: "ORD-031026-003", revenue: 8000, profit: 2000, status: "Готове" }],
+    [pay("ORD-011026-001", "Передоплата", 3000, { method: "Готівка", me: true }),
+     pay("ORD-011026-001", "Доплата", 2000, { method: "На карту", me: true }),
+     pay("ORD-021026-002", "Оплата повністю", 8000),
+     pay("ORD-031026-003", "Оплата повністю", 8000)], []);
+  let box = ctx.adminCashBox_();
+  assert.equal(box.contractor_pool, 2000, "3000 готівки − 1000 вашої маржі");
+  ctx.adminCashTake_({ order_number: "ORD-021026-002", request_id: "take-1002" });
+  box = ctx.adminCashBox_();
+  assert.equal(box.contractor_pool, 0, "з готівки ORD-001 підрядникових грошей більше немає");
+  const c = box.margin_list.find((x) => x.order_number === "ORD-031026-003");
+  assert.equal(c.contractor_take, 0);
+  assert.equal(c.color, "amber");
+  assert.equal(box.cash.expected - box.own_in_cash - box.contractor_pool >= 0, true);
+}
+{
+  // Повернення клієнту після «Забрати»: червоний рядок, а не ще одна маржа з грошей підрядника.
+  const { ctx } = setup(
+    [{ num: "ORD-011026-001", revenue: 5000, profit: 1500 }],
+    [pay("ORD-011026-001", "Оплата повністю", 5000, { method: "Готівка", me: true })], []);
+  ctx.adminCashTake_({ order_number: "ORD-011026-001", request_id: "take-1003" });
+  ctx.adminAddPayment_({ payment: { order_number: "ORD-011026-001", type: "Повернення клієнту", amount: 4500, method: "Готівка", recipient: "Я" } });
+  const r = ctx.adminCashBox_().margin_list.find((x) => x.order_number === "ORD-011026-001");
+  assert.equal(r.color, "red");
+  assert.equal(r.over, 1000);
+  assert.equal(r.take, 0);
+}
+{
+  // Скасували замовлення, з грошей якого брали маржу за інше, — червоний рядок і повна сума до повернення.
+  const { ctx, sheets } = setup(
+    [{ num: "ORD-011026-001", revenue: 5000, profit: 1500 },
+     { num: "ORD-021026-002", revenue: 4000, profit: 1200, status: "Готове" }],
+    [pay("ORD-011026-001", "Оплата повністю", 5000, { method: "Готівка", me: true }),
+     pay("ORD-021026-002", "Оплата повністю", 4000)], []);
+  ctx.adminCashTake_({ order_number: "ORD-021026-002", request_id: "take-1004" });
+  sheets["Замовлення"].data[1][2] = "Скасовано";
+  const box = ctx.adminCashBox_();
+  assert.equal(box.cancelled_taken.find((x) => x.order_number === "ORD-011026-001").amount, 1200);
+  assert.equal(box.cancelled_held.find((x) => x.order_number === "ORD-011026-001").amount, 5000, "клієнту — усі 5000");
+}
+{
+  // Копійки: 0,50 ₴ маржі — не «Забрати 1 ₴»; суми забираються вниз до гривні.
+  const { ctx } = setup(
+    [{ num: "ORD-011026-001", revenue: 5000, profit: 1000.5 },
+     { num: "ORD-021026-002", revenue: 9000, profit: 2000.7, status: "Готове" }],
+    [pay("ORD-011026-001", "Оплата повністю", 5000, { method: "Готівка", me: true }),
+     pay("ORD-021026-002", "Оплата повністю", 9000),
+     pay("ORD-021026-002", "Маржа від підрядника", 2000)], []);
+  const box = ctx.adminCashBox_();
+  assert.equal(box.margin_list.find((x) => x.order_number === "ORD-011026-001").own, 1000);
+  assert.equal(box.margin_list.some((x) => x.order_number === "ORD-021026-002"), false, "0,70 ₴ — не борг");
+}
+{
+  // Зміна складу суми (своя/підрядника) при тій самій сумі — теж «змінились»; збій платежів — нічого не записано.
+  const { ctx, sheets } = setup(
+    [{ num: "ORD-011026-001", revenue: 5000, profit: 1500 },
+     { num: "ORD-021026-002", revenue: 4000, profit: 1200, status: "Готове" }],
+    [pay("ORD-011026-001", "Оплата повністю", 5000, { method: "Готівка", me: true }),
+     pay("ORD-021026-002", "Оплата повністю", 4000)], []);
+  assert.throws(() => ctx.adminCashTake_({ order_number: "ORD-021026-002", request_id: "take-1005", expect: { own: 1200, contractor: 0 } }), /змінились/);
+  // Збій саме під час запису нових рядків у «Платежі».
+  const ps = sheets["Платежі"];
+  const origRange = ps.getRange;
+  ps.getRange = function (r, c, nr, nc) {
+    const rg = origRange.call(ps, r, c, nr, nc);
+    if (typeof r === "number" && r > ps.data.length) {
+      return new Proxy(rg, { get: (t, k) => (k === "setValues" ? () => { throw new Error("Service Spreadsheets failed"); } : t[k]) });
+    }
+    return rg;
+  };
+  assert.throws(() => ctx.adminCashTake_({ order_number: "ORD-021026-002", request_id: "take-1006" }), /нічого не змінено/);
+  ps.getRange = origRange;
+  assert.equal(ctx.readCash_().length, 0, "запис каси прибрано");
+  assert.equal(ctx.readPayments_("").filter((p) => p.request_id.startsWith("take:")).length, 0);
+  const ok = ctx.adminCashTake_({ order_number: "ORD-021026-002", request_id: "take-1007", expect: { own: 0, contractor: 1200 } });
+  assert.equal(ok.taken, 1200);
+  const dup = ctx.adminCashTake_({ order_number: "ORD-021026-002", request_id: "take-1007" });
+  assert.equal(dup.duplicate, true);
+  assert.equal(dup.taken, 1200);
+}
+{
+  // Маржа, зарахована розрахунком чи принесена підрядником готівкою, — теж «Забрати».
+  const { ctx } = setup(
+    [{ num: "ORD-011026-001", revenue: 5000, profit: 1500 },
+     { num: "ORD-021026-002", revenue: 4000, profit: 1200, status: "Готове" },
+     { num: "ORD-031026-003", revenue: 3000, profit: 900, status: "Завершено" }],
+    [pay("ORD-011026-001", "Оплата повністю", 5000, { method: "Готівка", me: true }),
+     pay("ORD-021026-002", "Оплата повністю", 4000),
+     pay("ORD-031026-003", "Оплата повністю", 3000),
+     pay("ORD-031026-003", "Маржа від підрядника", 900, { method: "Готівка" })], []);
+  ctx.adminCashSettle_({ settlement_id: "sett-1008", amount: 0, method: "Готівка" });   // лише залік 1200
+  const box = ctx.adminCashBox_();
+  assert.equal(box.margin_list.find((x) => x.order_number === "ORD-021026-002").own, 1200, "маржа із заліку лежить у касі");
+  assert.equal(box.margin_list.find((x) => x.order_number === "ORD-031026-003").own, 900, "маржа, принесена готівкою");
+  assert.equal(box.margin_list.find((x) => x.order_number === "ORD-011026-001").own, 1500);
+  assert.equal(box.own_in_cash, 3600);
+  assert.equal(box.cash.expected, 5900);
+  assert.equal(box.contractor_pool, 2300, "5000 − 1500 вашої маржі − 1200 заліку");
 }
 
 // ── 7. Сервер кабінету: каса — лише власник; «Частка підряднику» — лише власник ──

@@ -3753,7 +3753,6 @@ var CASH_TAKE_OWN = "Забрав свою маржу";                 // ва�
 var CASH_TAKE_CONTR = "Забрав маржу з грошей підрядника"; // маржа, яку винен підрядник, — з його грошей у касі
 var CASH_ORDER_COL = 6;
 var TAKE_PREFIX = "take:";
-var CASH_TAKE_STATUSES = ["Виготовлення", "Готове", "Відправлено", "Завершено"];
 
 function setupCash(ss) {
   ss = ss || SpreadsheetApp.getActiveSpreadsheet();
@@ -3781,65 +3780,105 @@ function setupCash(ss) {
 function cashSheet_() { return setupCash(SpreadsheetApp.getActiveSpreadsheet()); }
 
 /**
- * Маржа до отримання за замовленнями в роботі («Виготовлення», «Готове», «Відправлено», «Завершено»),
- * навіть якщо клієнт ще не доплатив (рішення власника). По кожному замовленню:
- *  • own — ваша маржа, яка вже у вас у грошах клієнта, мінус уже забране (запис «Забрав свою маржу»);
- *  • contractor — маржа, яку винен підрядник; забрати її з каси можна лише з ГРОШЕЙ ПІДРЯДНИКА в касі
- *    (його частка в оплатах, які клієнти внесли вам за інші замовлення) — у порядку давності;
- *  • color: green — можна забрати все; amber — грошей підрядника не вистачає (частина або нічого).
- * pool — гроші підрядника у вас: Σ(отримали від клієнта − передано підряднику − ваша незабрана маржа).
+ * Маржа до отримання за замовленнями в роботі (статус від «Виготовлення»), навіть якщо клієнт ще не
+ * доплатив (рішення власника). По кожному замовленню (кожне — незалежно від інших):
+ *  • own — ваша маржа, яка вже лежить у касі готівкою: з оплати клієнта вам; принесена підрядником
+ *    готівкою; зарахована розрахунком (взаємозалік); мінус усе, що за цим замовленням уже забрано;
+ *  • contractor — маржа, яку ще винен підрядник; з каси її можна забрати лише з ГРОШЕЙ ПІДРЯДНИКА в касі
+ *    (pool — його частка в готівкових оплатах, які клієнти внесли вам);
+ *  • color: green — можна забрати все; amber — грошей підрядника бракує або в кабінеті немає жодного
+ *    платежу за замовленням; red — забрано більше, ніж належить (повернення, видалений платіж).
+ * Гроші клієнта, внесені понад суму замовлення (переплата), — не гроші підрядника.
  */
-function cashTakeList_(groups, cash, cashByOrder) {
+function cashTakeList_(groups, cash, payments, cashByOrder) {
   var takenOwn = {}, takenAny = {};
   (cash || []).forEach(function (x) {
     if (!x.order_number) return;
     if (x.type === CASH_TAKE_OWN) takenOwn[x.order_number] = (takenOwn[x.order_number] || 0) + Math.abs(x.amount);
     if (x.type === CASH_TAKE_OWN || x.type === CASH_TAKE_CONTR) takenAny[x.order_number] = (takenAny[x.order_number] || 0) + Math.abs(x.amount);
   });
-  var rows = [], pool = 0, poolOrders = [], cancelledTaken = [];
+  // Маржа, яка за замовленням уже «у касі» (крім оплати клієнта вам), і що з грошей замовлення забрано.
+  var marginInCash = {}, takeShares = {}, nettingShares = {}, realShares = {};
+  (payments || []).forEach(function (p) {
+    var n = p.order_number, a = Number(p.amount) || 0;
+    var isTake = p.request_id.indexOf(TAKE_PREFIX) === 0, isSettle = p.request_id.indexOf(SETTLE_PREFIX) === 0;
+    if (p.type === PAYMENT_MARGIN && (p.method === PAYMENT_CASH || isTake || (isSettle && p.method === PAYMENT_NETTING))) {
+      marginInCash[n] = (marginInCash[n] || 0) + a;
+    }
+    if (p.type === PAYMENT_SHARE) {
+      if (isTake) takeShares[n] = (takeShares[n] || 0) + a;
+      if (p.method === PAYMENT_NETTING) nettingShares[n] = (nettingShares[n] || 0) + a;
+      else realShares[n] = (realShares[n] || 0) + a;
+    }
+  });
+  var rows = [], pool = 0, poolOrders = [], cancelledTaken = [], ownTotal = 0;
   groups.forEach(function (g) {
     var num = g.order_number;
+    var rev = Number(g.revenue) || 0;
     if (g.status === "Скасовано") {
-      if ((takenAny[num] || 0) >= 1) cancelledTaken.push({ order_number: num, client: g.client || "", amount: takenAny[num] });
+      // Маржа за скасоване замовлення чи гроші цього замовлення, з яких забрано маржу за інші, —
+      // належить повернути (клієнту чи в касу).
+      var fromIt = (takenAny[num] || 0) + (nettingShares[num] || 0);
+      if (fromIt >= 1) cancelledTaken.push({ order_number: num, client: g.client || "", amount: Math.round(fromIt) });
       return;
     }
-    if (CASH_TAKE_STATUSES.indexOf(g.status) < 0) return;
+    if (!g.margin_owed) return;
     var due = Number(g.margin_due) || 0;
-    var left = Math.max(0, due - (Number(g.margin_received) || 0));   // маржа, яку ще не переказав підрядник
-    var held = (Number(g.owner_received) || 0) - (Number(g.share_paid) || 0);
-    var inHeld = Math.min(Math.max(0, held), left);                    // ваша маржа серед грошей клієнта у вас
-    var contrMoney = Math.max(0, held - left);                         // решта — гроші підрядника
-    // Забрати з каси можна лише ГОТІВКУ: що клієнт заплатив вам на картку, у касі немає.
+    var left = Math.max(0, due - (Number(g.margin_received) || 0));   // маржа, яку ще не отримано
+    var ownerReceived = Number(g.owner_received) || 0;
+    var clientPaid = Number(g.client_paid_sum) || 0;
+    // Переплата клієнта — не гроші підрядника: беремо лише ту частину, що в межах суми замовлення.
+    var ownerPart = Math.min(ownerReceived, Math.max(0, rev - (clientPaid - ownerReceived)));
+    var held = ownerPart - (Number(g.share_paid) || 0);
+    var inHeld = Math.min(Math.max(0, held), left);
+    var contrMoney = Math.max(0, held - left);
     var cashHere = Math.max(0, (cashByOrder || {})[num] || 0);
     var inHeldCash = Math.min(inHeld, cashHere);
-    var contrCash = Math.max(0, Math.min(contrMoney, cashHere - inHeldCash));
-    if (contrCash >= 1) { pool += contrCash; poolOrders.push({ order_number: num, created_at: g.created_at, amount: contrCash }); }
-    var own = Math.max(0, Math.round(inHeldCash - (takenOwn[num] || 0)));
-    var contr = Math.round(Math.max(0, left - inHeld));   // що винен підрядник (готівкою чи на картку — неважливо)
-    if (own < 1 && contr < 1) return;
-    rows.push({ order_number: num, client: g.client || "", status: g.status, created_at: g.created_at,
-                client_left: Number(g.client_left) || 0, margin_due: due, own: own, contractor: contr });
+    // Готівка цього замовлення фізично: мінус ваша забрана маржа з неї і маржа, забрана з неї за інші.
+    var ownTakenHere = Math.min(takenOwn[num] || 0, inHeldCash);
+    var cashPhys = cashHere - ownTakenHere - (takeShares[num] || 0);
+    var contrCash = Math.max(0, Math.min(contrMoney, cashPhys - (inHeldCash - ownTakenHere)));
+    var noPayments = !(Number(g.payments_count) > 0);
+    if (contrCash >= 1 && !noPayments) { pool += contrCash; poolOrders.push({ order_number: num, created_at: g.created_at, amount: Math.floor(contrCash) }); }
+    var ownRaw = inHeldCash + (marginInCash[num] || 0) - (takenAny[num] || 0);
+    var row = { order_number: num, client: g.client || "", status: g.status, created_at: g.created_at,
+                client_left: Number(g.client_left) || 0, margin_due: due, own: 0, contractor: 0, take: 0, contractor_take: 0 };
+    if (ownRaw <= -1 || held <= -1) {
+      row.color = "red";
+      row.over = Math.round(Math.max(-ownRaw, -held));
+      row.reason = ownRaw <= -1 ? "over_taken" : "over_shared";
+      rows.push(row);
+      return;
+    }
+    row.own = ownRaw >= 1 ? Math.floor(ownRaw) : 0;
+    var contrRaw = left - inHeld;
+    row.contractor = contrRaw >= 1 ? Math.floor(contrRaw) : 0;
+    if (noPayments) { row.own = 0; row.reason = "no_payments"; }
+    if (row.own < 1 && row.contractor < 1) return;
+    rows.push(row);
   });
+  // Обмеження готівкою: гроші підрядника в касі не можуть перевищувати фізичну готівку поза вашою маржею.
   rows.sort(function (a, b) { return orderDateMs_(a.created_at) - orderDateMs_(b.created_at); });
-  var poolLeft = Math.round(pool);
-  var ownTotal = 0;
+  rows.forEach(function (r) { ownTotal += r.own; });
+  var poolInt = Math.floor(pool);
   rows.forEach(function (r) {
-    r.contractor_take = Math.min(r.contractor, poolLeft);
-    poolLeft -= r.contractor_take;
+    if (r.color === "red") return;
+    // Кожне замовлення — незалежно: стільки, скільки дозволяють гроші підрядника в касі зараз.
+    r.contractor_take = r.reason === "no_payments" ? 0 : Math.min(r.contractor, poolInt);
     r.take = r.own + r.contractor_take;
-    r.color = r.take >= 1 && r.contractor_take >= r.contractor ? "green" : "amber";
-    ownTotal += r.own;
+    r.color = r.reason === "no_payments" ? "amber" : (r.take >= 1 && r.contractor_take >= r.contractor ? "green" : "amber");
   });
   poolOrders.sort(function (a, b) { return orderDateMs_(a.created_at) - orderDateMs_(b.created_at); });
-  return { list: rows, pool: Math.round(pool), pool_orders: poolOrders, own_total: ownTotal, cancelled_taken: cancelledTaken };
+  return { list: rows, pool: poolInt, pool_orders: poolOrders, own_total: ownTotal, cancelled_taken: cancelledTaken };
 }
 
 /**
  * «Забрати маржу» за одним замовленням: усі записи одним натиском.
- *  • ваша маржа в грошах клієнта → запис каси «Забрав свою маржу» (готівки в касі менше);
+ *  • ваша маржа, що лежить у касі, → запис каси «Забрав свою маржу» (готівки в касі менше);
  *  • маржа, яку винен підрядник, → у платежах замовлення «Маржа від підрядника» (Взаємозалік), на
  *    замовленнях, де лежать гроші підрядника, — «Частка підряднику» (Взаємозалік) на ту саму суму, і
  *    запис каси «Забрав маржу з грошей підрядника».
+ * Спершу пишеться каса, потім платежі; збій платежів прибирає й записи каси — половинчастого стану немає.
  * Повтор із тим самим ID нічого не дублює; скасовується видаленням запису каси (разом з усім іншим).
  */
 function adminCashTake_(data) {
@@ -3848,14 +3887,22 @@ function adminCashTake_(data) {
   if (!num) throw new Error("Не вказано замовлення");
   if (!/^[A-Za-z0-9_-]{6,60}$/.test(rid)) throw new Error("Немає ID запиту");
   var cash = readCash_();
-  if (cash.some(function (x) { return x.request_id === rid; })) return { status: "ok", duplicate: true, box: adminCashBox_() };
+  var done = cash.filter(function (x) { return x.request_id === rid; });
+  if (done.length) {
+    var already = done.reduce(function (sum, x) { return sum + Math.abs(x.amount); }, 0);
+    return { status: "ok", duplicate: true, taken: already, box: adminCashBox_() };
+  }
   var box = adminCashBox_();
   var item = (box.margin_list || []).filter(function (r) { return r.order_number === num; })[0];
+  if (item && item.reason === "no_payments") throw new Error("За " + num + " у кабінеті немає жодного платежу — спершу внесіть оплату клієнта в картці");
   if (!item || !(item.take >= 1)) throw new Error("За цим замовленням забирати з каси нічого");
-  if (data.expect != null && Math.round(Number(data.expect)) !== item.take) {
+  var exp = data && data.expect;
+  if (exp != null && (typeof exp === "object"
+      ? (Number(exp.own) !== item.own || Number(exp.contractor) !== item.contractor_take)
+      : Math.round(Number(exp)) !== item.take)) {
     throw new Error("Суми змінились, поки була відкрита «Каса», — оновіть сторінку");
   }
-  var available = Math.round((Number(box.cash.expected) || 0) - (Number(box.cash.deposits) || 0) - (Number(box.cash.cancelled) || 0));
+  var available = Math.floor((Number(box.cash.expected) || 0) - (Number(box.cash.deposits) || 0) - (Number(box.cash.cancelled) || 0));
   if (item.take > available) throw new Error("У касі немає стільки готівки: є близько " + money_(Math.max(0, available)) + " ₴ поза передоплатами");
   var date = toISODate(data && data.date) || Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd");
   var note = "Маржа за " + num;
@@ -3865,24 +3912,15 @@ function adminCashTake_(data) {
     var need = item.contractor_take;
     var pools = box.pool_orders || [];
     for (var i = 0; i < pools.length && need > 0; i++) {
-      var part = Math.min(Math.round(pools[i].amount), need);
+      if (pools[i].order_number === num) continue;
+      var part = Math.min(pools[i].amount, need);
       if (part <= 0) continue;
       need -= part;
       entries.push({ order_number: pools[i].order_number, type: PAYMENT_SHARE, amount: part });
     }
     if (need > 0) throw new Error("Грошей підрядника в касі не вистачає — оновіть сторінку");
   }
-  var touched = {};
-  if (entries.length) {
-    var psh = paymentsSheet_();
-    var start = psh.getLastRow() + 1;
-    psh.getRange(start, 1, entries.length, PAYMENT_RECIPIENT_COL).setValues(entries.map(function (e, k) {
-      touched[e.order_number] = true;
-      return [date, e.order_number, e.type, e.amount, PAYMENT_NETTING, note, TAKE_PREFIX + rid + ":" + (k + 1), ""];
-    }));
-    psh.getRange(start, 1, entries.length, 1).setNumberFormat("dd.MM.yyyy");
-    psh.getRange(start, 4, entries.length, 1).setNumberFormat("#,##0 ₴");
-  }
+  // 1) Каса.
   var csh = cashSheet_();
   var rowsOut = [];
   if (item.own >= 1) rowsOut.push([date, CASH_TAKE_OWN, item.own, note, rid, num]);
@@ -3890,6 +3928,23 @@ function adminCashTake_(data) {
   var crow = csh.getLastRow() + 1;
   csh.getRange(crow, 1, rowsOut.length, CASH_ORDER_COL).setValues(rowsOut);
   csh.getRange(crow, 1, rowsOut.length, 1).setNumberFormat("dd.MM.yyyy");
+  // 2) Платежі; збій — прибираємо все записане цим натиском.
+  var touched = {};
+  if (entries.length) {
+    try {
+      var psh = paymentsSheet_();
+      var start = psh.getLastRow() + 1;
+      psh.getRange(start, 1, entries.length, PAYMENT_RECIPIENT_COL).setValues(entries.map(function (e, k) {
+        touched[e.order_number] = true;
+        return [date, e.order_number, e.type, e.amount, PAYMENT_NETTING, note, TAKE_PREFIX + rid + ":" + (k + 1), ""];
+      }));
+      psh.getRange(start, 1, entries.length, 1).setNumberFormat("dd.MM.yyyy");
+      psh.getRange(start, 4, entries.length, 1).setNumberFormat("#,##0 ₴");
+    } catch (writeErr) {
+      try { cashTakeUndo_(rid); } catch (undoErr) { console.error("Відкат «Забрати»: " + undoErr); }
+      throw new Error("Не вдалося записати — нічого не змінено. Спробуйте ще раз (" + writeErr + ")");
+    }
+  }
   Object.keys(touched).forEach(function (n) { syncOrderPaymentState_(n); });
   SpreadsheetApp.flush();
   return { status: "ok", taken: item.take, own: item.own, contractor: item.contractor_take, box: adminCashBox_() };
@@ -3973,19 +4028,21 @@ function adminCashBox_() {
                  revenue: Number(g.revenue) || 0, margin_due: Number(g.margin_due) || 0,
                  owner_received: Number(g.owner_received) || 0, share_paid: Number(g.share_paid) || 0 };
     if (g.status === "Скасовано") {
-      var heldC = (Number(g.owner_received) || 0) - (Number(g.share_paid) || 0);
+      var nettedHere = payments.filter(function (p) { return p.order_number === g.order_number && p.type === PAYMENT_SHARE && p.method === PAYMENT_NETTING; })
+        .reduce(function (sum, p) { return sum + (Number(p.amount) || 0); }, 0);
+      var heldC = (Number(g.owner_received) || 0) - (Number(g.share_paid) || 0) + nettedHere;
       // Гроші клієнта ще у вас — повернути клієнту або компенсувати підряднику (правило 3).
       if (heldC >= 1) cancelledHeld.push(Object.assign({}, base, { amount: heldC }));
       // Ви повернули клієнту більше, ніж отримали самі: решту клієнт платив підряднику — він винен вам.
       if (heldC <= -1) cancelledRefunded.push(Object.assign({}, base, { amount: -heldC }));
       return;
     }
-    if (g.margin_owed && settled && Number(g.margin_left) >= 1) contractorOwes.push(Object.assign({}, base, { amount: Number(g.margin_left) }));
+    if (g.margin_owed && settled && Number(g.margin_left) >= 1 && Number(g.payments_count) > 0) contractorOwes.push(Object.assign({}, base, { amount: Number(g.margin_left) }));
     if (Number(g.owner_owes) >= 1) ownerOwes.push(Object.assign({}, base, { amount: Number(g.owner_owes) }));
     // Готівка за замовлення до «Виготовлення» — передоплата клієнта: його, можливо, доведеться повернути.
     if (!g.margin_owed && (cashByOrder[g.order_number] || 0) >= 1) deposits.push(Object.assign({}, base, { amount: cashByOrder[g.order_number] }));
   });
-  var take = cashTakeList_(groups, cash, cashByOrder);
+  var take = cashTakeList_(groups, cash, payments, cashByOrder);
   function total(list) { return Math.round(list.reduce(function (s, x) { return s + x.amount; }, 0) * 100) / 100; }
   var settlements = {};
   payments.forEach(function (p) {

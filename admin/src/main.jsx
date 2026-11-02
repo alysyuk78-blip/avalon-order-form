@@ -5644,7 +5644,7 @@ import pricing from '../../lib/avalon-pricing.js';
         lead: "Для власника. Коли клієнт платить вам (готівкою чи на картку), а не підряднику: кабінет рахує, скільки готівки має бути в касі і хто кому винен, і проводить розрахунок.",
         steps: [
           ["Клієнт заплатив вам", "У картці замовлення → «Платежі» → тип оплати, сума, спосіб (наприклад, «Готівка») → «Хто отримав гроші: Я» → «Внести платіж». Менеджер теж може так позначити платіж, але касу бачите лише ви."],
-          ["Що рахує кабінет", "Гроші клієнта у вас — ваша маржа вже у вас, а решта (частка підрядника) — ваш борг йому. Комісія ТОВ з грошей, отриманих вами, не береться. Хто кому винен, рахується лише коли клієнт сплатив повністю і замовлення вже у «Виготовленні»."],
+          ["Що рахує кабінет", "Гроші клієнта у вас — ваша маржа вже у вас, а решта (частка підрядника) — ваш борг йому. Комісія ТОВ з грошей, отриманих вами, не береться. Ваш борг підряднику рахується з «Виготовлення», навіть якщо клієнт ще не доплатив; маржу, яку переказує сам підрядник (акт звірки), — лише за повністю оплаченими замовленнями."],
           ["Скільки в касі", "«Каса» → «Готівка в касі за обліком» і з чого вона складається: «Ваша маржа — можна забрати», «Гроші підрядника — віддати йому» і «Передоплати клієнтів — ще не ваші»."],
           ["Забрати маржу", "«Каса» → «Маржа до отримання»: замовлення в роботі, за якими маржу ще не отримано (навіть якщо клієнт не доплатив). Зелені — можна забрати з каси: натисніть «Забрати». Маржа з оплати, яку клієнт вніс вам, — ваша; маржа, яку винен підрядник, береться з його грошей у касі (стільки ж менше віддасте йому). Помаранчеві — його грошей у касі не вистачає: решту переказує підрядник. Кабінет сам робить усі записи; помилились — приберіть запис в історії каси."],
           ["Витратили чи доклали", "«Каса» → «Що зробили з готівкою»: «Витратив на справи» або «Доклав у касу» → сума → «Записати». Лише те, що не стосується замовлень."],
@@ -5955,8 +5955,9 @@ import pricing from '../../lib/avalon-pricing.js';
           + "\n\nКабінет сам зробить записи: готівки в касі стане менше на " + money(r.take)
           + (r.contractor_take >= 1 ? ", а гроші підрядника в касі — на " + money(r.contractor_take) : "")
           + ". Помилились — приберіть запис в «Інших записах каси».")) return;
-        await post({ action: "take", order_number: r.order_number, request_id: requestIdFor("take" + r.order_number + r.take), expect: r.take },
-          res => "Забрано " + money(res.taken) + " за " + r.order_number + ".");
+        await post({ action: "take", order_number: r.order_number, request_id: requestIdFor("take" + r.order_number + r.own + ":" + r.contractor_take),
+          expect: { own: r.own, contractor: r.contractor_take } },
+          res => (res.duplicate ? "Уже забрано " : "Забрано ") + money(res.taken || r.take) + " за " + r.order_number + ".");
       }
       async function removeEntry(x) {
         if (!window.confirm(isCashTake(x.type)
@@ -6021,7 +6022,7 @@ import pricing from '../../lib/avalon-pricing.js';
               <div className="cash-legend">
                 <span><i className="dot green" />можна забрати з каси</span>
                 <span><i className="dot amber" />готівки підрядника не вистачає — решту переказує він</span>
-                <span><i className="dot red" />маржу забрано, а замовлення скасоване</span>
+                <span><i className="dot red" />забрано більше, ніж належить, або замовлення скасоване — повернути</span>
               </div>
               {!(box.margin_list || []).length && !(box.cancelled_taken || []).length && <p className="chat-empty">Немає замовлень із неотриманою маржею.</p>}
               <ul className="take-list">
@@ -6034,8 +6035,15 @@ import pricing from '../../lib/avalon-pricing.js';
                       {r.client_left >= 1 && <span className="take-note">клієнт ще винен {money(r.client_left)}</span>}
                     </div>
                     <div className="take-sum">
-                      <span>маржа {money(r.own + r.contractor)}</span>
-                      {r.color === "amber" && <small>{r.take >= 1 ? "з каси — " + money(r.take) + ", решту " + money(r.own + r.contractor - r.take) + " переказує підрядник" : "переказує підрядник — у касі його грошей немає"}</small>}
+                      {r.color === "red"
+                        ? <><span>забрано більше на {money(r.over)}</span>
+                            <small>{r.reason === "over_shared"
+                              ? "підряднику передано більше, ніж клієнт заплатив вам (повернення чи видалений платіж): перевірте платежі"
+                              : "маржу вже забрали, а потім було повернення клієнту чи видалено платіж: поверніть різницю в касу або приберіть зайвий запис нижче"}</small></>
+                        : <><span>маржа {money(r.own + r.contractor)}</span>
+                            {r.reason === "no_payments"
+                              ? <small>у кабінеті немає жодного платежу за замовленням — спершу внесіть оплату клієнта в картці</small>
+                              : r.color === "amber" && <small>{r.take >= 1 ? "з каси — " + money(r.take) + ", решту " + money(r.own + r.contractor - r.take) + " переказує підрядник" : "переказує підрядник — у касі його грошей немає"}</small>}</>}
                     </div>
                     {r.take >= 1 && (
                       <button type="button" className={"btn small" + (r.color === "green" ? "" : " secondary")} disabled={busy} onClick={() => takeMargin(r)}>
@@ -6051,8 +6059,8 @@ import pricing from '../../lib/avalon-pricing.js';
                       <span className="take-client">{r.client}</span>
                       <StatusChip status="Скасовано" />
                     </div>
-                    <div className="take-sum"><span>забрано {money(r.amount)}</span>
-                      <small>замовлення скасоване: приберіть запис «Забрав маржу» в історії нижче або поверніть суму</small></div>
+                    <div className="take-sum"><span>повернути {money(r.amount)}</span>
+                      <small>замовлення скасоване, а маржу за нього (чи з його грошей — за інші) вже забрано: приберіть ці записи в «Інших записах каси» або поверніть суму клієнту</small></div>
                   </li>
                 ))}
               </ul>
@@ -6098,6 +6106,11 @@ import pricing from '../../lib/avalon-pricing.js';
                   )}
                   <div className="field"><label htmlFor="settle-date">Дата (порожньо = сьогодні)</label>
                     <input id="settle-date" type="date" value={settle.date} onChange={e => setSettle({ ...settle, date: e.target.value })} /></div>
+                  {(box.margin_list || []).some(r => r.take >= 1) && (
+                    <p className="send-hint err" style={{ flexBasis: "100%" }}>
+                      Спершу заберіть маржу в «Маржі до отримання»: розрахунок віддасть підряднику гроші, з яких її можна забрати.
+                    </p>
+                  )}
                   <button type="button" className="btn" disabled={busy} onClick={doSettle}>{rest >= 1 ? "Провести розрахунок" : "Провести залік боргів"}</button>
                 </div>
               )}
