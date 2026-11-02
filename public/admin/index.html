@@ -528,13 +528,17 @@
     .cash-split { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; font-size: 13px; }
     .cash-split li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 10px; border-radius: 8px; background: var(--control-bg); }
     .cash-split li b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .cash-split li > span { display: grid; gap: 2px; min-width: 0; }
+    .cash-split li small, .cash-total small { display: block; font-size: 11.5px; line-height: 1.35; color: var(--muted); font-weight: 400; }
+    .cash-line-title { font-weight: 650; }
+    .cash-total > span { display: grid; gap: 2px; }
     .cash-split li.neg { background: #fdecea; color: var(--danger); }
     .cash-forms { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; margin-top: 8px; }
     .cash-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
     .cash-form .field { flex: 1 1 140px; margin: 0; }
     .cash-orders { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; }
     .cash-orders li { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; }
-    @media (max-width: 760px) { .cash-forms { grid-template-columns: 1fr; } .cash-total b { font-size: 22px; } }
+    @media (max-width: 760px) { .cash-forms { grid-template-columns: 1fr; } .cash-total b { font-size: 22px; } .cash-form .field { flex-basis: 100%; } }
     .overpay-note { margin: 8px 0 12px; padding: 10px 12px; border-radius: 10px; background: #fff3e0; color: #7a4a00; font-size: 12.5px; line-height: 1.45; }
     .overpay-note p { margin: 0 0 6px; }
     .overpay-note p:last-child { margin-bottom: 0; }
