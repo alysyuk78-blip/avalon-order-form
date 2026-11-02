@@ -540,11 +540,32 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   ctx.adminCashSettle_({ settlement_id: "sett-1008", amount: 0, method: "Готівка" });   // лише залік 1200
   const box = ctx.adminCashBox_();
   assert.equal(box.margin_list.find((x) => x.order_number === "ORD-021026-002").own, 1200, "маржа із заліку лежить у касі");
-  assert.equal(box.margin_list.find((x) => x.order_number === "ORD-031026-003").own, 900, "маржа, принесена готівкою");
+  assert.equal(box.margin_list.some((x) => x.order_number === "ORD-031026-003"), false,
+    "маржу, яку підрядник віддав вам сам (платіж у картці), ви вже маєте — у касі її немає");
   assert.equal(box.margin_list.find((x) => x.order_number === "ORD-011026-001").own, 1500);
-  assert.equal(box.own_in_cash, 3600);
-  assert.equal(box.cash.expected, 5900);
+  assert.equal(box.own_in_cash, 2700);
+  assert.equal(box.cash.expected, 5000);
   assert.equal(box.contractor_pool, 2300, "5000 − 1500 вашої маржі − 1200 заліку");
+}
+
+// ── 11. Давня маржа готівкою (до каси) — не в касі й не «Забрати» ──
+{
+  const { ctx } = setup(
+    [{ num: "ORD-210726-012", revenue: 3000, profit: 600, status: "Завершено" },
+     { num: "ORD-110926-009", revenue: 81396, profit: 20196, status: "Відправлено" }],
+    [pay("ORD-210726-012", "Оплата повністю", 3000),
+     pay("ORD-210726-012", "Маржа від підрядника", 600, { method: "Готівка" }),
+     pay("ORD-110926-009", "Передоплата", 70000),
+     pay("ORD-110926-009", "Маржа від підрядника", 20160, { method: "Готівка" })], []);
+  const box = ctx.adminCashBox_();
+  assert.equal(box.cash.expected, 0, "давня маржа готівкою — не в касі");
+  assert.equal(box.own_in_cash, 0);
+  assert.equal(box.margin_list.some((x) => x.order_number === "ORD-210726-012"), false);
+  const r = box.margin_list.find((x) => x.order_number === "ORD-110926-009");
+  assert.equal(r.own, 0);
+  assert.equal(r.contractor, 36, "лишок, який ще винен підрядник");
+  assert.equal(r.take, 0);
+  assert.equal(r.color, "amber");
 }
 
 // ── 7. Сервер кабінету: каса — лише власник; «Частка підряднику» — лише власник ──
