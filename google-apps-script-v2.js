@@ -3802,7 +3802,9 @@ function cashTakeList_(groups, cash, payments, cashByOrder) {
   (payments || []).forEach(function (p) {
     var n = p.order_number, a = Number(p.amount) || 0;
     var isTake = p.request_id.indexOf(TAKE_PREFIX) === 0, isSettle = p.request_id.indexOf(SETTLE_PREFIX) === 0;
-    if (p.type === PAYMENT_MARGIN && (p.method === PAYMENT_CASH || isTake || (isSettle && p.method === PAYMENT_NETTING))) {
+    // Маржа, що лежить у касі: зарахована розрахунком чи «Забрати», або доплачена підрядником готівкою під час
+    // розрахунку. Маржу, яку підрядник віддав вам сам (платіж у картці), ви вже маєте — її не «забирають».
+    if (p.type === PAYMENT_MARGIN && (isTake || (isSettle && (p.method === PAYMENT_NETTING || p.method === PAYMENT_CASH)))) {
       marginInCash[n] = (marginInCash[n] || 0) + a;
     }
     if (p.type === PAYMENT_SHARE) {
@@ -4002,7 +4004,10 @@ function cashEffect_(type, amount) {
 function paymentCashEffect_(p) {
   if (String(p.method || "").trim() !== PAYMENT_CASH) return 0;
   var a = Number(p.amount) || 0;
-  if (p.type === PAYMENT_MARGIN) return a;                          // підрядник віддав маржу готівкою
+  // Маржа, яку підрядник віддав вам сам (платіж у картці), — ваші гроші, а не каса: у касу вона не йде,
+  // інакше вся давня маржа готівкою «лежала б у касі». У касу — лише доплата підрядника під час
+  // розрахунку в розділі «Каса» (ID settle:).
+  if (p.type === PAYMENT_MARGIN) return String(p.request_id || "").indexOf(SETTLE_PREFIX) === 0 ? a : 0;
   if (p.type === PAYMENT_SHARE) return -a;                          // я віддав підряднику з каси
   if (p.recipient !== PAYMENT_ME) return 0;                         // гроші клієнта взяв підрядник
   return p.type === PAYMENT_REFUND ? -a : a;
