@@ -3483,11 +3483,14 @@ function orderSettlement_(revenue, profit, marginCommission, commissionPct, tota
   var share = Number(t.share_paid) || 0;
   // Частка грошей у власника — від суми замовлення (до повної оплати прогноз не «стрибає»:
   // решту, найімовірніше, клієнт заплатить підряднику) або від сплаченого, якщо сплатив більше.
+  // Переплата клієнта (понад суму замовлення) частку не збільшує — це не гроші замовлення.
+  var ownerPart = ownerPart_(rev, clientPaid, ownerReceived);
   var base = Math.max(clientPaid, rev);
-  var ownerFrac = base > 0 ? Math.min(1, Math.max(0, ownerReceived / base)) : 0;
+  var ownerFrac = rev > 0 ? Math.min(1, Math.max(0, ownerPart / rev))
+    : (base > 0 ? Math.min(1, Math.max(0, ownerReceived / base)) : 0);
   var commission = Math.round((Number(marginCommission) || 0) * (1 - ownerFrac) * 100) / 100;
   var due = marginDue_(profit, commission, commissionPct);
-  var held = ownerPart_(rev, clientPaid, ownerReceived) - share;
+  var held = ownerPart - share;
   var received = Number(t.margin_paid_sum) || 0;
   var settled = rev > 0 && clientPaid >= rev;
   var balance = Math.round((Number(due) - received - held) * 100) / 100;   // >0 — винен підрядник
@@ -3495,7 +3498,8 @@ function orderSettlement_(revenue, profit, marginCommission, commissionPct, tota
   // маржа, яку підрядник переплатив, боргом не стає (її видно в картці як переплату).
   // Старі замовлення без жодного платежу в кабінеті розраховані поза ним — їх не чіпаємо.
   var hasOwnerMoney = ownerReceived !== 0 || share !== 0;
-  var loss = !t.legacy && Number(due) < 0 ? Math.round(-Number(due) * 100) / 100 : 0;
+  // Збиток — лише коли ціна вже є: «мінус» без суми замовлення означає, що ціну ще не внесли.
+  var loss = !t.legacy && rev > 0 && Number(due) < 0 ? Math.round(-Number(due) * 100) / 100 : 0;
   var ownerOwes = hasOwnerMoney ? -balance : loss;
   // Друге рішення власника (02.11.2026): «якщо не доплатив, можу забирати» — гроші клієнта у власника
   // ділимо на його маржу й частку підрядника вже з «Виготовлення», не чекаючи повної оплати.
@@ -3863,9 +3867,11 @@ function cashTakeList_(groups, cash, payments, cashByOrder, freeCash) {
     var ownRaw = inHeldCash + (marginInCash[num] || 0) - (takenAny[num] || 0);
     var row = { order_number: num, client: g.client || "", status: g.status, created_at: g.created_at,
                 client_left: Number(g.client_left) || 0, margin_due: due, own: 0, contractor: 0, take: 0, contractor_take: 0 };
-    if (ownDue <= -1 || held <= -1) {
+    // Частка підряднику понад гроші клієнта у вас — норма, якщо це покритий збиток замовлення (правило 4).
+    var heldNet = held + (rev > 0 ? Math.max(0, -due) : 0);
+    if (ownDue <= -1 || heldNet <= -1) {
       row.color = "red";
-      row.over = Math.round(Math.max(-ownDue, -held));
+      row.over = Math.round(Math.max(-ownDue, -heldNet));
       row.reason = ownDue <= -1 ? "over_taken" : "over_shared";
       rows.push(row);
       return;
@@ -4115,6 +4121,12 @@ function adminCashBox_() {
     if (st.orders.indexOf(p.order_number) < 0) st.orders.push(p.order_number);
   });
   var contractorTotal = total(contractorOwes), ownerTotal = total(ownerOwes), depositsTotal = total(deposits);
+  // Для «вільної» готівки — лише той ваш борг, що лежить у грошах клієнта (збиток із каси не віднімаємо).
+  var ownerHeldTotal = Math.round(ownerOwes.reduce(function (s, x) {
+    var g = groups.filter(function (y) { return y.order_number === x.order_number; })[0] || {};
+    var heldG = ownerPart_(g.revenue, g.client_paid_sum, g.owner_received) - (Number(g.share_paid) || 0);
+    return s + Math.min(x.amount, Math.max(0, heldG));
+  }, 0) * 100) / 100;
   var cancelledTotal = total(cancelledHeld);
   return {
     status: "ok",
@@ -4125,7 +4137,7 @@ function adminCashBox_() {
       // Скільки можна віддати підряднику готівкою з каси (поза передоплатами й скасованими).
       settle_limit: Math.max(0, Math.floor(expected - depositsTotal - cancelledTotal)),
       // Орієнтовно: ваш борг підряднику може лежати й на картці — тоді вільної готівки більше.
-      free: Math.round((expected - depositsTotal - ownerTotal - cancelledTotal) * 100) / 100,
+      free: Math.round((expected - depositsTotal - ownerHeldTotal - cancelledTotal) * 100) / 100,
       ledger: cash.slice(-100).reverse()
     },
     // Точно ті числа, з якими проведеться розрахунок (цілі гривні по замовленнях).
@@ -4360,7 +4372,7 @@ function settlementData_(data) {
       client_left: Number(g.client_left) || 0,
       margin_received: Number(g.margin_received) || 0,
       // Гроші клієнта, що лишились у Avalon (зменшують маржу, яку переказує підрядник).
-      held: forManager ? 0 : Math.max(0, (Number(g.owner_received) || 0) - (Number(g.share_paid) || 0)),
+      held: forManager ? 0 : Math.max(0, ownerPart_(g.revenue, g.client_paid_sum, g.owner_received) - (Number(g.share_paid) || 0)),
       margin_left: Number(g.margin_left) || 0
     };
     // Головне правило: до виплати — лише повністю оплачені клієнтом замовлення.
@@ -4382,11 +4394,15 @@ function settlementData_(data) {
   function sum(arr, key) {
     return arr.reduce(function (s, x) { return s + (Number(x[key]) || 0); }, 0);
   }
+  // Менеджер не бачить грошей власника: ні частки підряднику, ні записів заліку й «Забрати» з «Каси».
+  if (forManager) payments = payments.filter(function (p) {
+    return p.type !== PAYMENT_SHARE && p.request_id.indexOf(TAKE_PREFIX) !== 0 && p.request_id.indexOf(SETTLE_PREFIX) !== 0;
+  });
   return {
     status: "ok",
     from: fromISO, to: toISO,
     generated_at: Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm"),
-    due: due, waiting: waiting, payments: forManager ? payments.filter(function (p) { return p.type !== PAYMENT_SHARE; }) : payments,
+    due: due, waiting: waiting, payments: payments,
     owner_due: ownerDue, for_manager: forManager,
     totals: {
       due_held: sum(due, "held"),

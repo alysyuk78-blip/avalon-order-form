@@ -681,11 +681,43 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.equal(group(setup([{ num: "ORD-011026-001", revenue: 2700, profit: -400, status: "Нове" }],
     [pay("ORD-011026-001", "Передоплата", 1000)], []).ctx, "ORD-011026-001").owner_owes, 0);
   assert.equal(group(setup([{ num: "ORD-011026-001", revenue: 2700, profit: -400, status: "Завершено" }], [], []).ctx, "ORD-011026-001").owner_owes, 0);
-  // Розрахунок закриває борг.
+  // Без ціни (сума 0) «мінус» — не збиток: ціну ще не внесли.
+  assert.equal(group(setup([{ num: "ORD-011026-001", revenue: 0, profit: -500 }],
+    [pay("ORD-011026-001", "Передоплата", 1000)], []).ctx, "ORD-011026-001").owner_owes, 0);
+  // Розрахунок закриває борг; збиток у касі не лежить — «вільна» готівка не мінусова.
   const { ctx } = loss([pay("ORD-011026-001", "Оплата повністю", 2700)]);
+  assert.equal(ctx.adminCashBox_().cash.free, 0, "борг за збиток не віднімається від готівки");
   const box = ctx.adminCashSettle_({ settlement_id: "sett-2010", amount: 400, method: "На карту" }).box;
   assert.equal(box.owner_owes, 0);
   assert.equal(group(ctx, "ORD-011026-001").owner_owes, 0);
+  assert.equal(box.margin_list.filter((r) => r.color === "red").length, 0, "покритий збиток — не червоне");
+}
+{
+  // Переплата клієнта вам не зменшує комісію ТОВ; акт не рахує її грошима клієнта у вас.
+  const { ctx } = setup([{ num: "ORD-011026-001", revenue: 5000, profit: 1500, pct: 30 }],
+    [pay("ORD-011026-001", "Оплата повністю", 5000, { method: "На рахунок ТОВ" }),
+     pay("ORD-011026-001", "Доплата", 1000, { method: "Готівка", me: true })], []);
+  const g = group(ctx, "ORD-011026-001");
+  assert.equal(g.margin_due, 1050, "1500 − 30%: переплата частки ТОВ не зменшує");
+  assert.equal(g.margin_left, 1050);
+  const act = ctx.settlementData_({});
+  assert.equal(act.due[0].held, 0, "переплата — не гроші клієнта у вас");
+}
+{
+  // Акт для менеджера: без частки підряднику й записів заліку з «Каси».
+  const { ctx } = setup(
+    [{ num: "ORD-011026-001", revenue: 5000, profit: 1500 },
+     { num: "ORD-021026-002", revenue: 4000, profit: 1200 }],
+    [pay("ORD-011026-001", "Оплата повністю", 5000, { method: "Готівка", me: true }),
+     pay("ORD-021026-002", "Оплата повністю", 4000)], []);
+  ctx.adminCashSettle_({ settlement_id: "sett-2011", amount: 2300, method: "Готівка" });
+  const mgr = ctx.settlementData_({ for_manager: true });
+  assert.equal(mgr.totals.share_sum, 0);
+  assert.equal(mgr.payments.filter((p) => /^(take|settle):/.test(p.request_id) || p.type === "Частка підряднику").length, 0);
+  assert.equal(mgr.totals.payments_sum, 0, "маржу зараховано заліком — менеджер її в акті не бачить");
+  const own = ctx.settlementData_({});
+  assert.equal(own.totals.share_sum, 3500);
+  assert.equal(own.totals.payments_sum, 1200);
 }
 
 // ── 7. Сервер кабінету: каса — лише власник; «Частка підряднику» — лише власник ──

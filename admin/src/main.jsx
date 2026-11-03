@@ -784,7 +784,9 @@ import pricing from '../../lib/avalon-pricing.js';
           tagClass = "data";
         }
         if (isOwner && Number(g.owner_owes) >= 1) {
-          reasons.push("Гроші клієнта у вас — частка підрядника " + money(g.owner_owes) + ": розрахуйтесь у «Касі»");
+          reasons.push(((Number(g.owner_received) || 0) - (Number(g.share_paid) || 0) >= 1
+            ? "Гроші клієнта у вас — частка підрядника " : "Збиток за замовленням — ви винні підряднику ")
+            + money(g.owner_owes) + ": розрахуйтесь у «Касі»");
           if (priority > 3) { priority = 3; tag = "Каса"; tagClass = "ship"; }
         }
         const over = overpayments(g);
@@ -2125,6 +2127,11 @@ import pricing from '../../lib/avalon-pricing.js';
               {(Number(s.owner_owes) || 0) >= 1
                 ? <p><b>Ви винні підряднику: {money(s.owner_owes)}</b> — його частка. Розрахуйтесь у розділі «Каса» (там же взаємозалік із маржею, яку він винен вам).</p>
                 : (Number(s.client_left) || 0) > 0 ? <p>Хто кому винен, порахується, коли клієнт сплатить повністю.</p> : null}
+            </div>
+          )}
+          {isOwner && !((Number(s.owner_received) || 0) >= 1) && (Number(s.owner_owes) || 0) >= 1 && (
+            <div className="owner-money-note" role="status">
+              <p><b>Ви винні підряднику: {money(s.owner_owes)}</b> — збиток: замовлення продане дешевше, ніж робота підрядника за ставками. Його несете ви. Розрахуйтесь у розділі «Каса».</p>
             </div>
           )}
 
@@ -6085,7 +6092,7 @@ import pricing from '../../lib/avalon-pricing.js';
                 <CashLine title="Підрядник винен вам" value={box.contractor_owes}
                   hint="ваша маржа за замовлення, які клієнти повністю оплатили йому" />
                 <CashLine title="Ви винні підряднику" value={box.owner_owes}
-                  hint="його частка в оплатах, які клієнти внесли вам за замовлення в роботі" />
+                  hint="його частка в оплатах, які клієнти внесли вам за замовлення в роботі, і збиток за замовленнями, проданими дешевше за його роботу" />
               </ul>
               <div className="cash-total">
                 <span>{nothing ? "Ніхто нікому не винен"
