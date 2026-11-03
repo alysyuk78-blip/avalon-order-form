@@ -45,6 +45,11 @@ import pricing from '../../lib/avalon-pricing.js';
       if (!group || marginOwed(group)) return group;
       return { ...group, margin_left: 0 };
     }
+    // Борг клієнта — лише з «Виготовлення» (рішення власника 03.11.2026). Поки замовлення в опрацюванні чи
+    // на погодженні, несплачена сума — ще не борг: показуємо її як «до оплати», без червоного і без підсумків боргу.
+    function clientDebt(g) {
+      return g && marginOwed(g) ? Number(g.client_left) || 0 : 0;
+    }
 
     // «В опрацюванні підрядником» — підрядник рахує вартість / розробляє конструктив;
     // «Погодження клієнтом» — клієнт отримав ціну й думає;
@@ -2097,8 +2102,9 @@ import pricing from '../../lib/avalon-pricing.js';
               <label>Клієнт сплатив</label>
               <div className="field-static">
                 <b>{money(s.client_paid || 0)}</b> / {money(s.revenue || 0)}
-                <span className={(s.client_left || 0) > 0 ? "field-static-note debt" : "field-static-note"}>
-                  {(s.client_left || 0) > 0 ? "борг " + money(s.client_left)
+                <span className={clientDebt(s) > 0 ? "field-static-note debt" : "field-static-note"}>
+                  {clientDebt(s) > 0 ? "борг " + money(s.client_left)
+                    : (s.client_left || 0) > 0 ? "до оплати " + money(s.client_left)
                     : clientOverpaid >= 1 ? "переплата " + money(clientOverpaid) : "повністю"}
                 </span>
               </div>
@@ -2126,7 +2132,7 @@ import pricing from '../../lib/avalon-pricing.js';
               </p>
               {(Number(s.owner_owes) || 0) >= 1
                 ? <p><b>Ви винні підряднику: {money(s.owner_owes)}</b> — його частка. Розрахуйтесь у розділі «Каса» (там же взаємозалік із маржею, яку він винен вам).</p>
-                : (Number(s.client_left) || 0) > 0 ? <p>Хто кому винен, порахується, коли клієнт сплатить повністю.</p> : null}
+                : !marginOwed(s) ? <p>Хто кому винен, порахується з «Виготовлення».</p> : null}
             </div>
           )}
           {isOwner && !((Number(s.owner_received) || 0) >= 1) && (Number(s.owner_owes) || 0) >= 1 && (
@@ -4548,7 +4554,7 @@ import pricing from '../../lib/avalon-pricing.js';
           if (g.status !== "Скасовано") {
             map[g.status].revenue += Number(g.revenue) || 0;
             map[g.status].profit += Number(g.profit) || 0;
-            map[g.status].client_left += Number(g.client_left) || 0;
+            map[g.status].client_left += clientDebt(g);
             map[g.status].margin_left += Number(g.margin_left) || 0;
           }
         });
@@ -4570,7 +4576,7 @@ import pricing from '../../lib/avalon-pricing.js';
           count += 1;
           revenue += Number(g.revenue) || 0;
           profit += Number(g.profit) || 0;
-          clientLeft += Number(g.client_left) || 0;
+          clientLeft += clientDebt(g);
           marginLeft += Number(g.margin_left) || 0;
         });
         return { revenue, profit, count, clientLeft, marginLeft };
@@ -4802,13 +4808,17 @@ import pricing from '../../lib/avalon-pricing.js';
                               );
                             })()}
                             {/* Оплати клієнта: видно борг просто на картці, без відкриття замовлення. */}
-                            {(g.client_paid_sum > 0 || g.client_left > 0) && (() => {
+                            {(g.client_paid_sum > 0 || clientDebt(g) > 0) && (() => {
                               const overClient = overpayments(g).client;
+                              const debt = clientDebt(g);
+                              // Часткова оплата до «Виготовлення» чи оплата без ціни — передоплата, а не борг і не «повністю».
+                              const prepaid = !debt && !overClient && (g.client_left > 0 || !(Number(g.revenue) > 0));
                               return (
-                                <div className={"card-payment " + (g.client_left > 0 ? "debt" : overClient ? "over" : "paid")}>
-                                  {g.client_left > 0
-                                    ? "Сплачено " + money(g.client_paid_sum) + " · борг " + money(g.client_left)
-                                    : overClient ? "Переплата клієнта: " + money(overClient) : "Сплачено повністю"}
+                                <div className={"card-payment " + (debt > 0 ? "debt" : overClient ? "over" : prepaid ? "prepaid" : "paid")}>
+                                  {debt > 0
+                                    ? "Сплачено " + money(g.client_paid_sum) + " · борг " + money(debt)
+                                    : overClient ? "Переплата клієнта: " + money(overClient)
+                                    : prepaid ? "Передоплата " + money(g.client_paid_sum) : "Сплачено повністю"}
                                 </div>
                               );
                             })()}
@@ -5617,7 +5627,7 @@ import pricing from '../../lib/avalon-pricing.js';
         title: "Оплата, скасування, завершення",
         lead: "Кожен платіж — у розділ «Платежі» того ж дня.",
         steps: [
-          ["Оплата клієнта", "«Платежі» → тип «Передоплата», «Доплата» або «Оплата повністю» → сума → «Внести платіж». Картка показує, скільки сплачено і скільки лишилось."],
+          ["Оплата клієнта", "«Платежі» → тип «Передоплата», «Доплата» або «Оплата повністю» → сума → «Внести платіж». Картка показує, скільки сплачено і скільки лишилось. Борг клієнта рахується лише з «Виготовлення»: поки замовлення в опрацюванні чи на погодженні, несплачене — «до оплати», а сплачене — «Передоплата»."],
           ["Маржа від підрядника", "Коли підрядник перерахував вашу частину — внесіть платіж типом «Маржа від підрядника». Кабінет рахує, скільки ще має надійти."],
           ["Повернення", "Гроші, повернуті клієнтові, вносьте типом «Повернення клієнту»."],
           ["Переплата", "Якщо внесено більше, ніж належить, картка покаже помаранчеву позначку «Переплата клієнта» або «Підрядник переплатив маржу», а замовлення зʼявиться в «Нагадуваннях». Найчастіше це платіж не того типу: видаліть його в списку платежів і внесіть знову з правильним типом."],
