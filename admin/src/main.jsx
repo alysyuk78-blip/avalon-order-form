@@ -680,6 +680,7 @@ import pricing from '../../lib/avalon-pricing.js';
           share_paid: Number(order.share_paid) || 0,
           owner_owes: Number(order.owner_owes) || 0,
           margin_kept: Number(order.margin_kept) || 0,
+          ...(order.margin_overpaid != null ? { margin_overpaid: Number(order.margin_overpaid) || 0 } : {}),
           margin_owed: marginOwed(order),
           legacy: !(Number(order.payments_count) > 0),
         },
@@ -768,8 +769,30 @@ import pricing from '../../lib/avalon-pricing.js';
       const due = Number(src.margin_due) || 0;
       const received = Number(src.margin_received) || 0;
       const client = revenue > 0 ? Math.round(paid - revenue) : 0;
-      const margin = due > 0 || received > 0 ? Math.round(received - Math.max(0, due)) : 0;
+      // Сервер знає, скільки з отриманого — повернення вашої переплати підряднику (це не переплата маржі).
+      const margin = src.margin_overpaid != null ? Number(src.margin_overpaid) || 0
+        : due > 0 || received > 0 ? Math.round(received - Math.max(0, due)) : 0;
       return { client: client >= 1 ? client : 0, margin: margin >= 1 ? margin : 0 };
+    }
+    /** Скільки з «Маржі від підрядника» за замовленням — повернення вашої переплати йому (не маржа). */
+    function advanceReturned(groups) {
+      const map = {};
+      (groups || []).forEach(g => {
+        const back = (Number(g.advance_paid) || 0) - (Number(g.advance_left) || 0);
+        if (back >= 1) map[g.order_number] = back;
+      });
+      return map;
+    }
+    /** Платежі маржі без повернень переплати: їх віднімаємо від найновіших платежів замовлення. */
+    function marginPaymentsNet(payments, returned) {
+      const left = { ...returned };
+      const list = (payments || []).filter(p => p.type === "Маржа від підрядника")
+        .map(p => ({ ...p, amount: Number(p.amount) || 0 }));
+      list.slice().sort((a, b) => String(b.date).localeCompare(String(a.date))).forEach(p => {
+        const cut = Math.min(p.amount, left[p.order_number] || 0);
+        if (cut > 0) { p.amount -= cut; left[p.order_number] -= cut; }
+      });
+      return list.filter(p => p.amount > 0);
     }
     function buildReminders(groups, isOwner) {
       // Без дати доставки нагадуємо, коли вона вже потрібна; в опрацюванні її ще може не бути.
@@ -925,13 +948,13 @@ import pricing from '../../lib/avalon-pricing.js';
         // Маржа, яку власник уже має в грошах клієнта (каса), — до місяця замовлення.
         else m.margin_received += Number(g.margin_kept) || 0;
       });
-      (payments || []).forEach(payment => {
-        if (payment.type !== "Маржа від підрядника") return;
+      const returned = advanceReturned(groups);
+      marginPaymentsNet(payments, returned).forEach(payment => {
         if (eligibleOrderNumbers && !eligibleOrderNumbers.has(String(payment.order_number || ""))) return;
         const d = parseUaDateTime(payment.date) || (payment.date ? new Date(payment.date) : null);
         const key = monthKeyFromDate(d);
         if (!key) return;
-        ensureMonth(key).margin_received += Number(payment.amount) || 0;
+        ensureMonth(key).margin_received += payment.amount;
       });
       (expenses || []).forEach(ex => {
         const d = parseUaDateTime(ex.date) || (ex.date ? new Date(ex.date) : null);
@@ -2052,7 +2075,8 @@ import pricing from '../../lib/avalon-pricing.js';
       const clientOverpaid = (Number(s.revenue) || 0) > 0 ? Math.max(0, Math.round((Number(s.client_paid) || 0) - (Number(s.revenue) || 0))) : 0;
       // Підрядник утримує комісію, тож переказати він має валовий прибуток мінус її.
       const marginDue = Number(s.margin_due) || groupPaymentMetrics(s).marginDue;
-      const marginOverreceived = Math.max(0, Math.round((Number(s.margin_received) || 0) - Math.max(0, marginDue)));
+      const marginOverreceived = s.margin_overpaid != null ? Number(s.margin_overpaid) || 0
+        : Math.max(0, Math.round((Number(s.margin_received) || 0) - Math.max(0, marginDue)));
 
       async function add() {
         setError("");
@@ -5207,10 +5231,10 @@ import pricing from '../../lib/avalon-pricing.js';
       // ledger — платежі з журналу (мають реальну дату), legacy — старі замовлення,
       // де стоїть лише галочка «Маржу отримано» і дати платежу не існує.
       const marginCashSplit = useMemo(() => {
-        const ledger = (filteredPayments || []).reduce((sum, payment) => {
-          if (payment.type !== "Маржа від підрядника") return sum;
+        // Повернення переплати підряднику — не маржа (віднімаємо від найновіших платежів замовлення).
+        const ledger = marginPaymentsNet(filteredPayments, advanceReturned(filteredGroups)).reduce((sum, payment) => {
           if (!eligibleOrderNumbers.has(String(payment.order_number || ""))) return sum;
-          return sum + (Number(payment.amount) || 0);
+          return sum + payment.amount;
         }, 0);
         let legacy = 0, kept = 0;
         (filteredGroups || []).forEach(group => {
@@ -6053,7 +6077,10 @@ import pricing from '../../lib/avalon-pricing.js';
         if (res) setSettle(x => ({ ...x, amount: "" }));
       }
       async function undo(st) {
-        if (!window.confirm("Скасувати розрахунок від " + isoLabel(String(st.date).slice(0, 10)) + "?\n\nУсі його записи зникнуть із платежів замовлень, борги повернуться.")) return;
+        // Після цього розрахунку були інші — вони рахувались уже з урахуванням цього; скасовувати — від найновішого.
+        const later = (box.settlements || []).findIndex(x => x.id === st.id) > 0;
+        if (!window.confirm("Скасувати розрахунок від " + isoLabel(String(st.date).slice(0, 10)) + "?\n\nУсі його записи зникнуть із платежів замовлень, борги повернуться."
+          + (later ? "\n\nУвага: після нього вже були інші розрахунки, зроблені з урахуванням цього. Скасовуйте від найновішого, інакше борги можуть розійтися з тим, що було насправді." : ""))) return;
         await post({ action: "undo", settlement_id: st.id }, r => "Розрахунок скасовано (" + r.removed + " записів).");
       }
 
@@ -6144,7 +6171,7 @@ import pricing from '../../lib/avalon-pricing.js';
               <div className="panel-head"><h2>Розрахунок із підрядником</h2></div>
               <ul className="cash-split">
                 <CashLine title="Підрядник винен вам" value={box.contractor_owes}
-                  hint="ваша маржа за замовлення, які клієнти повністю оплатили йому" />
+                  hint="ваша маржа за замовлення, які клієнти повністю оплатили йому, і ваша переплата йому під час розрахунку" />
                 <CashLine title="Ви винні підряднику" value={box.owner_owes}
                   hint="його частка в оплатах, які клієнти внесли вам за замовлення в роботі, і збиток за замовленнями, проданими дешевше за його роботу" />
               </ul>

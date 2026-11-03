@@ -3440,21 +3440,33 @@ function readPayments_(orderNumber) {
   return out;
 }
 
+function marginAfterAdvance_(payments) {
+  var first = Infinity;
+  (payments || []).forEach(function (p) { if (isAdvanceShare_(p) && Number(p.row) < first) first = Number(p.row); });
+  if (first === Infinity) return 0;
+  return (payments || []).reduce(function (s, p) {
+    return s + (p.type === PAYMENT_MARGIN && Number(p.row) > first ? Number(p.amount) || 0 : 0);
+  }, 0);
+}
 /** Підсумки платежів: скільно вніс клієнт і скільки маржі отримано. */
 function paymentTotals_(payments) {
-  var client = 0, margin = 0, owner = 0, share = 0;
+  var client = 0, margin = 0, owner = 0, share = 0, advance = 0;
   (payments || []).forEach(function (p) {
     var amt = Number(p.amount) || 0;
     var mine = p.recipient === PAYMENT_ME;
     if (p.type === PAYMENT_MARGIN) margin += amt;
-    else if (p.type === PAYMENT_SHARE) share += amt;
+    else if (p.type === PAYMENT_SHARE) { share += amt; if (isAdvanceShare_(p)) advance += amt; }
     else if (p.type === PAYMENT_REFUND) { client -= amt; if (mine) owner -= amt; }
     else { client += amt; if (mine) owner += amt; }
   });
   return {
     client_paid: Math.round(client), margin_paid_sum: Math.round(margin),
     owner_received: Math.round(owner),   // гроші клієнта, які взяв власник (мінус його повернення)
-    share_paid: Math.round(share)        // з них уже передано підряднику
+    share_paid: Math.round(share),       // з них уже передано підряднику
+    advance_paid: Math.round(advance),   // з них — переплата підряднику під час розрахунку (його борг вам)
+    // Маржа, внесена ПІСЛЯ першої переплати (рядком нижче в «Платежах»): для замовлення без суми (скасоване)
+    // лише вона може бути поверненням переплати — маржа заліку того ж розрахунку стоїть вище.
+    margin_after_advance: Math.round(marginAfterAdvance_(payments))
   };
 }
 
@@ -3513,7 +3525,19 @@ function orderSettlement_(revenue, profit, marginCommission, commissionPct, tota
   // Друге рішення власника (02.11.2026): «якщо не доплатив, можу забирати» — гроші клієнта у власника
   // ділимо на його маржу й частку підрядника вже з «Виготовлення», не чекаючи повної оплати.
   var counts = owed;
+  // Переплата підряднику під час розрахунку: скільки з неї ще не повернуто (маржею чи заліком) і скільки маржі
+  // підрядник справді переплатив (без повернення вашої переплати). Не залежить від статусу: борг лишається,
+  // навіть якщо замовлення скасують чи клієнту щось повернуть.
+  var advance = Number(t.advance_paid) || 0;
+  var dueOwn = Math.max(0, Number(due) || 0);
+  // Зі сумою замовлення — що отримано понад маржу; без суми (скасоване) — лише маржа після переплати.
+  var returned = rev > 0 ? Math.max(0, received + (held + advance) - dueOwn) : (Number(t.margin_after_advance) || 0);
+  var advanceLeft = Math.max(0, Math.round((advance - returned) * 100) / 100);
+  var marginOverpaid = Math.max(0, Math.round(received - dueOwn - advance));
   return {
+    advance_paid: advance,
+    advance_left: advanceLeft >= 1 ? advanceLeft : 0,
+    margin_overpaid: marginOverpaid >= 1 ? marginOverpaid : 0,
     margin_due: due,
     margin_commission_eff: commission,
     owner_received: ownerReceived,
@@ -4103,7 +4127,9 @@ function adminCashBox_() {
     if (g.status === "Скасовано") {
       var nettedHere = payments.filter(function (p) { return p.order_number === g.order_number && p.type === PAYMENT_SHARE && p.method === PAYMENT_NETTING; })
         .reduce(function (sum, p) { return sum + (Number(p.amount) || 0); }, 0);
-      var heldC = (Number(g.owner_received) || 0) - (Number(g.share_paid) || 0) + nettedHere;
+      var heldC = (Number(g.owner_received) || 0) - ((Number(g.share_paid) || 0) - (Number(g.advance_paid) || 0)) + nettedHere;
+      // Переплата підряднику, записана на це замовлення до скасування, — досі його борг вам.
+      if (Number(g.advance_left) >= 1) contractorOwes.push(Object.assign({}, base, { amount: Number(g.advance_left), advance: true }));
       // Гроші клієнта ще у вас — повернути клієнту або компенсувати підряднику (правило 3).
       if (heldC >= 1) cancelledHeld.push(Object.assign({}, base, { amount: heldC }));
       // Ви повернули клієнту більше, ніж отримали самі: решту клієнт платив підряднику — він винен вам.
@@ -4114,6 +4140,9 @@ function adminCashBox_() {
       return;
     }
     if (g.margin_owed && settled && Number(g.margin_left) >= 1 && Number(g.payments_count) > 0) contractorOwes.push(Object.assign({}, base, { amount: Number(g.margin_left) }));
+    // Переплата підряднику на замовленні, яке ще не потрапило в «Підрядник винен вам» (клієнт не доплатив,
+    // повернення), — показуємо одразу: це не маржа, вона не чекає повної оплати.
+    else if (Number(g.advance_left) >= 1) contractorOwes.push(Object.assign({}, base, { amount: Number(g.advance_left), advance: true }));
     if (Number(g.owner_owes) >= 1) ownerOwes.push(Object.assign({}, base, { amount: Number(g.owner_owes) }));
     // Готівка за замовлення до «Виготовлення» — передоплата клієнта: його, можливо, доведеться повернути.
     if (!g.margin_owed && (cashByOrder[g.order_number] || 0) >= 1) deposits.push(Object.assign({}, base, { amount: cashByOrder[g.order_number] }));
@@ -4255,17 +4284,10 @@ function adminCashSettle_(data) {
   var advanceOrder = "";
   if (advance > 0) {
     // На яке замовлення записати: за яким підрядник саме винен вам маржу (найновіше в цьому заліку),
-    // інакше — найновіше замовлення в роботі, яке клієнт оплатив повністю (там борг підрядника видно одразу).
-    var cand = box.contractor_orders.slice().sort(byDate);
-    if (cand.length) advanceOrder = cand[cand.length - 1].order_number;
-    else {
-      var settledGroups = (adminListOrders_({}).groups || []).filter(function (g) {
-        return g.margin_owed && g.status !== "Скасовано" && (Number(g.revenue) || 0) > 0
-          && (Number(g.client_left) || 0) === 0 && Number(g.payments_count) > 0;
-      }).sort(byDate);
-      if (settledGroups.length) advanceOrder = settledGroups[settledGroups.length - 1].order_number;
-    }
-    if (!advanceOrder) throw new Error("Сума більша, ніж винні (" + money_(rest) + " ₴), а записати переплату немає на яке замовлення: потрібне замовлення в роботі, повністю оплачене клієнтом");
+    // інакше — найновіше з тих, за які ви зараз віддаєте. Борг за переплатою видно в «Підрядник винен вам»
+    // незалежно від статусу й оплати замовлення.
+    var cand = cOrders.length ? cOrders : oOrders;
+    advanceOrder = cand[cand.length - 1].order_number;
   }
   // Віддати підряднику готівкою з каси можна лише те, що в касі є поза передоплатами клієнтів і грошима
   // скасованих замовлень: ваш борг може лежати й на картці.
@@ -4404,7 +4426,9 @@ function settlementData_(data) {
       client_left: Number(g.client_left) || 0,
       margin_received: Number(g.margin_received) || 0,
       // Гроші клієнта, що лишились у Avalon (зменшують маржу, яку переказує підрядник).
-      held: forManager ? 0 : Math.max(0, ownerPart_(g.revenue, g.client_paid_sum, g.owner_received) - (Number(g.share_paid) || 0)),
+      held: forManager ? 0 : Math.max(0, ownerPart_(g.revenue, g.client_paid_sum, g.owner_received) - ((Number(g.share_paid) || 0) - (Number(g.advance_paid) || 0))),
+      // Переплата Avalon підряднику (її він теж винен): без неї рядок «до виплати» не складався б.
+      advance: forManager ? 0 : Number(g.advance_left) || 0,
       margin_left: Number(g.margin_left) || 0
     };
     // Головне правило: до виплати — лише повністю оплачені клієнтом замовлення.
@@ -4439,6 +4463,8 @@ function settlementData_(data) {
     totals: {
       due_held: sum(due, "held"),
       waiting_held: sum(waiting, "held"),
+      due_advance: sum(due, "advance"),
+      waiting_advance: sum(waiting, "advance"),
       owner_due_orders: ownerDue.length,
       owner_due_left: sum(ownerDue, "owner_owes"),        // ← борг Avalon підряднику
       net: Math.round((sum(due, "margin_left") - sum(ownerDue, "owner_owes")) * 100) / 100,
@@ -4476,9 +4502,10 @@ function buildActSheet_(d) {
             || (Number(d.totals.waiting_commission) || 0) > 0;
   // Колонка «У Avalon» — гроші клієнта, які отримала Avalon: без неї рядок не складався б.
   var hasHeld = (Number(d.totals.due_held) || 0) > 0 || (Number(d.totals.waiting_held) || 0) > 0;
-  var width = 8 + (hasCom ? 1 : 0) + (hasHeld ? 1 : 0);
+  var hasAdv = (Number(d.totals.due_advance) || 0) > 0 || (Number(d.totals.waiting_advance) || 0) > 0;
+  var width = 8 + (hasCom ? 1 : 0) + (hasHeld ? 1 : 0) + (hasAdv ? 1 : 0);
   function line(cells) { return cells; }
-  function com(r) { return (hasCom ? [Number(r.commission) || 0] : []).concat(hasHeld ? [Number(r.held) || 0] : []); }
+  function com(r) { return (hasCom ? [Number(r.commission) || 0] : []).concat(hasHeld ? [Number(r.held) || 0] : []).concat(hasAdv ? [Number(r.advance) || 0] : []); }
 
   var rows = [];
   rows.push(["АКТ ЗВІРКИ З ПІДРЯДНИКОМ"]);
@@ -4489,6 +4516,7 @@ function buildActSheet_(d) {
   rows.push(line(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив\nклієнт, ₴",
                   "Підряднику, ₴", "Маржа\nAvalon, ₴"]
     .concat(hasCom ? ["Комісія, ₴"] : []).concat(hasHeld ? ["У Avalon\n(від клієнта), ₴"] : [])
+    .concat(hasAdv ? ["Переплата\nAvalon, ₴"] : [])
     .concat(["Отримано, ₴", "До виплати, ₴"])));
   d.due.forEach(function (r) {
     rows.push([r.order_number, r.date_label || fmtDate_(r.delivery_date) || "",
@@ -4499,6 +4527,7 @@ function buildActSheet_(d) {
   });
   rows.push(["", "", "РАЗОМ ДО ВИПЛАТИ:", d.totals.due_revenue, d.totals.due_cost, d.totals.due_margin]
     .concat(hasCom ? [d.totals.due_commission] : []).concat(hasHeld ? [d.totals.due_held] : [])
+    .concat(hasAdv ? [d.totals.due_advance] : [])
     .concat([d.totals.due_received, d.totals.due_left]));
 
   if (d.waiting.length) {
@@ -4507,6 +4536,7 @@ function buildActSheet_(d) {
     rows.push(line(["№ замовлення", "Дата", "Клієнт / місто", "Сплатив\nклієнт, ₴",
                     "Не сплачено\nклієнтом, ₴", "Маржа\nAvalon, ₴"]
       .concat(hasCom ? ["Комісія, ₴"] : []).concat(hasHeld ? ["У Avalon\n(від клієнта), ₴"] : [])
+      .concat(hasAdv ? ["Переплата\nAvalon, ₴"] : [])
       .concat(["Отримано, ₴", "Потенційно, ₴"])));
     d.waiting.forEach(function (r) {
       rows.push([r.order_number, r.date_label || fmtDate_(r.delivery_date) || "",
@@ -4516,7 +4546,7 @@ function buildActSheet_(d) {
         .concat([r.margin_received, r.margin_left]));
     });
     var waitTotals = ["", "", "Разом (довідково):", "", d.totals.waiting_client_left, ""]
-      .concat(hasCom ? [d.totals.waiting_commission] : []).concat(hasHeld ? [""] : [])
+      .concat(hasCom ? [d.totals.waiting_commission] : []).concat(hasHeld ? [""] : []).concat(hasAdv ? [""] : [])
       .concat(["", d.totals.waiting_margin_left]);
     rows.push(waitTotals);
   }
@@ -5283,6 +5313,9 @@ function adminGroupOrders_(orders, payments) {
     g.share_paid = st.share_paid;
     g.owner_owes = st.owner_owes;
     g.margin_kept = st.margin_kept;
+    g.advance_paid = st.advance_paid;
+    g.advance_left = st.advance_left;
+    g.margin_overpaid = st.margin_overpaid;
     return g;
   });
   groups.sort(function (a, b) {
@@ -5332,6 +5365,7 @@ function adminGetOrder_(data) {
         margin_received: t.margin_paid_sum, margin_left: st.margin_left,
         owner_received: st.owner_received, share_paid: st.share_paid, owner_owes: st.owner_owes,
         margin_kept: st.margin_kept,
+        advance_paid: st.advance_paid, advance_left: st.advance_left, margin_overpaid: st.margin_overpaid,
         legacy: !pay.length
       };
     })()

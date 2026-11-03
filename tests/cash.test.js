@@ -767,7 +767,7 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.equal(sheets["Платежі"].data.length, 3);
 }
 {
-  // Заліку немає: переплату записуємо на найновіше повністю оплачене замовлення в роботі.
+  // Заліку немає: переплату записуємо на замовлення, за яке ви віддаєте; борг видно, хоч клієнт і не доплатив.
   const { ctx } = setup(
     [{ num: "ORD-011026-001", date: "01.10.2026 10:00", revenue: 10000, profit: 3000, status: "Відправлено" },
      { num: "ORD-021026-002", date: "02.10.2026 10:00", revenue: 4000, profit: 1000, status: "Завершено" }],
@@ -778,18 +778,71 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.throws(() => ctx.adminCashSettle_({ settlement_id: "sett-3004", amount: 99999, method: "Готівка" }), /У касі лише/);
   const res = ctx.adminCashSettle_({ settlement_id: "sett-3003", amount: 7200, method: "Готівка" });
   assert.equal(res.advance, 200);
-  assert.equal(res.advance_order, "ORD-021026-002");
+  assert.equal(res.advance_order, "ORD-011026-001");
   assert.equal(res.box.contractor_owes, 200);
+  assert.deepEqual(res.box.contractor_orders.map((x) => [x.order_number, x.amount]), [["ORD-011026-001", 200]]);
   assert.equal(res.box.margin_list.filter((r) => r.color === "red").length, 0);
 }
 {
-  // Немає жодного повністю оплаченого замовлення — переплату не записуємо (зрозуміла відмова).
+  // Клієнт ще не доплатив: переплата — на це ж замовлення, борг підрядника видно одразу.
   const { ctx } = setup([{ num: "ORD-011026-001", revenue: 10000, profit: 3000 }],
     [pay("ORD-011026-001", "Передоплата", 8000, { method: "Готівка", me: true })], []);
-  assert.throws(() => ctx.adminCashSettle_({ settlement_id: "sett-3005", amount: 6000, method: "Готівка" }), /немає на яке замовлення/);
+  const r5 = ctx.adminCashSettle_({ settlement_id: "sett-3005", amount: 6000, method: "Готівка" });
+  assert.equal(r5.advance, 1000);
+  assert.equal(r5.box.contractor_owes, 1000);
+  assert.equal(r5.box.cash.expected, 2000);
   // Підрядник «доплачує» більше за свій борг — помилка введення.
   const two = setup([{ num: "ORD-011026-001", revenue: 4000, profit: 1000 }], [pay("ORD-011026-001", "Оплата повністю", 4000)], []);
   assert.throws(() => two.ctx.adminCashSettle_({ settlement_id: "sett-3006", amount: 1500, method: "Готівка" }), /більша, ніж винні/);
+}
+
+{
+  // Повернення переплати — не «підрядник переплатив маржу» і не маржа у зведенні; скасування замовлення борг не губить.
+  const fin = require("../lib/admin-finance");
+  const mk = () => setup(
+    [{ num: "ORD-011026-001", date: "01.10.2026 10:00", revenue: 10000, profit: 3000 },
+     { num: "ORD-021026-002", date: "02.10.2026 10:00", revenue: 4000, profit: 1000 }],
+    [pay("ORD-011026-001", "Оплата повністю", 10000, { method: "Готівка", me: true }),
+     pay("ORD-021026-002", "Оплата повністю", 4000)], []);
+  {
+    const { ctx } = mk();
+    ctx.adminCashSettle_({ settlement_id: "sett-3101", amount: 6500, method: "Готівка" });
+    let g = group(ctx, "ORD-021026-002");
+    assert.equal(g.advance_paid, 500);
+    assert.equal(g.advance_left, 500);
+    assert.equal(g.margin_overpaid, 0);
+    let m = fin.groupPaymentMetrics(g);
+    assert.equal(m.marginReceived, 1000, "отримано маржу 1000 (заліком), переплата — не маржа");
+    assert.equal(m.marginDebt, 0, "переплата — не «борг маржі»");
+    // Підрядник повернув 500 готівкою наступним розрахунком.
+    ctx.adminCashSettle_({ settlement_id: "sett-3102", amount: 500, method: "Готівка" });
+    g = group(ctx, "ORD-021026-002");
+    assert.equal(g.margin_received, 1500);
+    assert.equal(g.advance_left, 0);
+    assert.equal(g.margin_overpaid, 0, "повернення переплати — не «підрядник переплатив маржу»");
+    m = fin.groupPaymentMetrics(g);
+    assert.equal(m.marginReceived, 1000, "у зведенні — лише маржа");
+    assert.equal(m.marginDebt, 0);
+    // Справжня переплата маржі понад повернення — видно.
+    ctx.adminAddPayment_({ payment: { order_number: "ORD-021026-002", type: "Маржа від підрядника", amount: 300, method: "На карту" } });
+    assert.equal(group(ctx, "ORD-021026-002").margin_overpaid, 300);
+  }
+  {
+    // Замовлення з переплатою скасували — підрядник усе одно винен 500.
+    const { ctx, sheets } = mk();
+    ctx.adminCashSettle_({ settlement_id: "sett-3103", amount: 6500, method: "Готівка" });
+    sheets["Замовлення"].data[2][2] = "Скасовано";
+    const box = ctx.adminCashBox_();
+    assert.deepEqual(box.contractor_orders.map((x) => [x.order_number, x.amount]), [["ORD-021026-002", 500]]);
+    assert.equal(box.cancelled_held.length, 0);
+    // Акт звірки: колонка переплати — і рядок складається.
+    sheets["Замовлення"].data[2][2] = "Виготовлення";
+    const act = ctx.settlementData_({});
+    const row = act.due.find((r) => r.order_number === "ORD-021026-002");
+    assert.equal(row.advance, 500);
+    assert.equal(row.margin_due - row.margin_received - row.held + row.advance, row.margin_left);
+    assert.equal(ctx.settlementData_({ for_manager: true }).due.find((r) => r.order_number === "ORD-021026-002").advance, 0);
+  }
 }
 
 // ── 7. Сервер кабінету: каса — лише власник; «Частка підряднику» — лише власник ──
