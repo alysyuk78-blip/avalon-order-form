@@ -2872,12 +2872,14 @@ import pricing from '../../lib/avalon-pricing.js';
      * Повертає { amount, state }: "in_order" — позиція вже є; "will_add" — додасться при збереженні;
      * "none" — у цьому замовленні її не беруть (позицію видалили чи замовлення вже у виробництві).
      */
-    function colorSurchargeInfo(form, saved, items, orderStatus, rates) {
+    function colorSurchargeInfo(form, items, orderStatus, colorWaived, rates) {
       if (pricing.avalonIsBaseColor(form.color)) return null;
       const existing = (items || []).filter(isColorSurchargeItem);
       if (existing.length) return { state: "in_order", amount: existing.reduce((sum, it) => sum + (Number(it.revenue) || 0), 0) };
       const amount = pricing.avalonColorSurcharge(form.color, rates);
       if (!(amount > 0)) return null;
+      // Позначку «доплату зняли» зберігає таблиця — вона головна: тоді доплата не додасться.
+      if (colorWaived) return { state: "none", amount };
       const beforeProduction = ["Нове", "В опрацюванні підрядником", "Погодження клієнтом"].includes(orderStatus);
       // Уже був порахований кошик небазового кольору, а доплати немає — її свідомо зняли.
       const pricedNonBase = (items || []).some(it => !isColorSurchargeItem(it)
@@ -2885,7 +2887,7 @@ import pricing from '../../lib/avalon-pricing.js';
         && (Number(it.revenue) || 0) > 0 && !pricing.avalonIsBaseColor(it.color));
       return { state: beforeProduction && !pricedNonBase ? "will_add" : "none", amount };
     }
-    function PricingBlock({ form, setForm, saved, savedCommission, disabled, onApply, orderNumber, ratesFrom, canReprice, onReprice, items, orderStatus }) {
+    function PricingBlock({ form, setForm, saved, savedCommission, disabled, onApply, orderNumber, ratesFrom, canReprice, onReprice, items, orderStatus, colorWaived }) {
       usePricingInfo();   // ставки оновились — перерахувати показане
       const rates = ratesFor(ratesFrom);
       const type = pricing.avalonModelType(form.construction, form.basket_model);
@@ -2917,7 +2919,7 @@ import pricing from '../../lib/avalon-pricing.js';
       const moneySaved = !!calc && num(saved.cost_total) === calc.costTotal && num(saved.revenue) === calc.total
         && (num(saved.list_price) || num(saved.revenue)) === calc.listTotal;
       const lines = calc ? pricing.avalonCostLines(calc) : [];
-      const surcharge = colorSurchargeInfo(form, saved, items, orderStatus, rates);
+      const surcharge = colorSurchargeInfo(form, items, orderStatus, colorWaived, rates);
       const surchargeCounted = surcharge && surcharge.state !== "none";
       const sizeNote = calc && (calc.width !== num(form.size_w) || calc.height !== num(form.size_h) || calc.depth !== num(form.size_d));
       return (
@@ -3908,7 +3910,7 @@ import pricing from '../../lib/avalon-pricing.js';
               <PricingBlock form={form} setForm={setForm} saved={currentItem}
                 savedCommission={order.commission_pct ?? currentItem.commission_pct}
                 disabled={busy || stale} onApply={applyCalculation} orderNumber={orderNumber}
-                items={items} orderStatus={order.status}
+                items={items} orderStatus={order.status} colorWaived={!!order.color_waived}
                 ratesFrom={order.rates_from} onReprice={repriceByCurrentRates}
                 canReprice={order.status !== "Завершено" && order.status !== "Скасовано"} />
             )}

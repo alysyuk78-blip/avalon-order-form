@@ -1303,10 +1303,13 @@ function testAuditFixes() {
   // Калькулятор явно переносить доплату після відмови — вона додається, відмова скасовується.
   t.ctx.adminDeleteOrderItem_({ order_number: ORD, row: 3 });
   assert.equal(t.props.getProperty("color_waived_" + ORD), "1");
+  // Кабінет бачить відмову (блок розрахунку не обіцяє доплату, якої не буде).
+  assert.equal(t.ctx.adminGroupOrders_(t.sh.getRange(2, 1, t.sh.getLastRow() - 1, t.ctx.ADMIN_ORDER_COLS).getValues().map((v, i) => t.ctx.mapOrderRow_(i + 2, v)).filter((o) => o.order_number === ORD), [])[0].color_waived, true);
   t.ctx.adminAddOrderItem_({ order_number: ORD, request_id: "calc-color-2",
     item: { product_type: "service", basket_model_name: "Доплата за колір", construction_type: "Доплата за колір", basket_type: "Доплата за колір", quantity: 1, unit: "шт.", cost_total: 200, price_total: 200 } });
   assert.equal(surcharges(t.raw).length, 1);
   assert.equal(t.props.getProperty("color_waived_" + ORD), null);
+  assert.equal(t.ctx.adminGroupOrders_(t.sh.getRange(2, 1, t.sh.getLastRow() - 1, t.ctx.ADMIN_ORDER_COLS).getValues().map((v, i) => t.ctx.mapOrderRow_(i + 2, v)).filter((o) => o.order_number === ORD), [])[0].color_waived, false);
 
   // 1а. Повтор запиту після обриву: попередня спроба записала лише першу з трьох позицій —
   //     замовлення не вважаємо готовим, а дописуємо решту під той самий номер.

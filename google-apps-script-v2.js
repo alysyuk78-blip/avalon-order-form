@@ -5220,6 +5220,8 @@ function adminGroupOrders_(orders, payments) {
     g.contractor_purpose = sentProps["sent_purpose_" + k] || "";
     // Скріпка на картці: кількість файлів без походу на Google Диск.
     g.files_count = Number(sentProps["files_count_" + k]) || 0;
+    // Менеджер зняв доплату за колір (видалив її позицію) — кабінет не обіцяє її в розрахунку.
+    g.color_waived = sentProps[colorWaivedKey_(k)] === "1";
     // Погодження клієнтом: з якого дня думає, скільки разів і коли востаннє нагадували.
     g.approval_since = sentProps["approval_since_" + k] || "";
     var reminded = {};
