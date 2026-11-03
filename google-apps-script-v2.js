@@ -3450,6 +3450,15 @@ function paymentTotals_(payments) {
 }
 
 /**
+ * Скільки з грошей клієнта у власника — в межах суми замовлення. Переплата клієнта (понад суму) —
+ * не гроші підрядника й не маржа: її повертають клієнту. Суми замовлення ще немає — без обрізання.
+ */
+function ownerPart_(revenue, clientPaid, ownerReceived) {
+  var rev = Number(revenue) || 0, own = Number(ownerReceived) || 0;
+  if (!(rev > 0)) return own;
+  return Math.min(own, Math.max(0, rev - ((Number(clientPaid) || 0) - own)));
+}
+/**
  * Розрахунок із підрядником за одним замовленням — ЄДИНЕ місце, звідки його беруть картка,
  * воронка, зведення, нагадування, акт звірки й каса. Правила власника (02.11.2026):
  *  1) комісія ТОВ не застосовується до грошей, які клієнт заплатив власнику: вона лише з частки,
@@ -3463,6 +3472,8 @@ function paymentTotals_(payments) {
  * Гроші клієнта у власника («held» = отримав − передав підряднику) зменшують маржу, яку винен
  * підрядник; якщо їх більше за маржу — різниця це борг власника підряднику (owner_owes).
  * Без готівки (held = 0) усе рахується рівно як раніше.
+ *  4) збиток (замовлення продане дешевше за роботу підрядника, маржа від'ємна) завжди несе власник
+ *     (рішення 03.11.2026): підрядник отримує повну суму за ставками, хоч би кому платив клієнт.
  */
 function orderSettlement_(revenue, profit, marginCommission, commissionPct, totals, owed) {
   var t = totals || {};
@@ -3476,13 +3487,16 @@ function orderSettlement_(revenue, profit, marginCommission, commissionPct, tota
   var ownerFrac = base > 0 ? Math.min(1, Math.max(0, ownerReceived / base)) : 0;
   var commission = Math.round((Number(marginCommission) || 0) * (1 - ownerFrac) * 100) / 100;
   var due = marginDue_(profit, commission, commissionPct);
-  var held = ownerReceived - share;
+  var held = ownerPart_(rev, clientPaid, ownerReceived) - share;
   var received = Number(t.margin_paid_sum) || 0;
   var settled = rev > 0 && clientPaid >= rev;
   var balance = Math.round((Number(due) - received - held) * 100) / 100;   // >0 — винен підрядник
-  // Борг власника — лише там, де гроші клієнта справді були в нього: збиткове замовлення чи
-  // переплачена підрядником маржа без грошей власника лишаються як раніше (без боргу).
+  // Борг власника — там, де гроші клієнта були в нього. Без них — лише збиток замовлення (правило 4);
+  // маржа, яку підрядник переплатив, боргом не стає (її видно в картці як переплату).
+  // Старі замовлення без жодного платежу в кабінеті розраховані поза ним — їх не чіпаємо.
   var hasOwnerMoney = ownerReceived !== 0 || share !== 0;
+  var loss = !t.legacy && Number(due) < 0 ? Math.round(-Number(due) * 100) / 100 : 0;
+  var ownerOwes = hasOwnerMoney ? -balance : loss;
   // Друге рішення власника (02.11.2026): «якщо не доплатив, можу забирати» — гроші клієнта у власника
   // ділимо на його маржу й частку підрядника вже з «Виготовлення», не чекаючи повної оплати.
   var counts = owed;
@@ -3494,7 +3508,7 @@ function orderSettlement_(revenue, profit, marginCommission, commissionPct, tota
     held: held,
     settled: settled,
     margin_left: owed ? marginLeft_(due, received + held) : 0,
-    owner_owes: counts && hasOwnerMoney && -balance >= 1 ? -balance : 0,
+    owner_owes: counts && ownerOwes >= 1 ? ownerOwes : 0,
     // Маржа, яку власник уже має в грошах клієнта (для «Зведення»: отримана маржа).
     margin_kept: counts && held > 0 ? Math.max(0, Math.min(held, Number(due) - received)) : 0,
     counts: counts
@@ -3789,8 +3803,10 @@ function cashSheet_() { return setupCash(SpreadsheetApp.getActiveSpreadsheet());
  *  • color: green — можна забрати все; amber — грошей підрядника бракує або в кабінеті немає жодного
  *    платежу за замовленням; red — забрано більше, ніж належить (повернення, видалений платіж).
  * Гроші клієнта, внесені понад суму замовлення (переплата), — не гроші підрядника.
+ * freeCash — готівка в касі поза передоплатами й скасованими: разом ваша маржа і гроші підрядника
+ * до забирання не можуть її перевищити (готівку могли віддати підряднику за інше замовлення чи витратити).
  */
-function cashTakeList_(groups, cash, payments, cashByOrder) {
+function cashTakeList_(groups, cash, payments, cashByOrder, freeCash) {
   var takenOwn = {}, takenAny = {};
   (cash || []).forEach(function (x) {
     if (!x.order_number) return;
@@ -3830,8 +3846,7 @@ function cashTakeList_(groups, cash, payments, cashByOrder) {
     var ownerReceived = Number(g.owner_received) || 0;
     var clientPaid = Number(g.client_paid_sum) || 0;
     // Переплата клієнта — не гроші підрядника: беремо лише ту частину, що в межах суми замовлення.
-    var ownerPart = Math.min(ownerReceived, Math.max(0, rev - (clientPaid - ownerReceived)));
-    var held = ownerPart - (Number(g.share_paid) || 0);
+    var held = ownerPart_(rev, clientPaid, ownerReceived) - (Number(g.share_paid) || 0);
     var inHeld = Math.min(Math.max(0, held), left);
     var contrMoney = Math.max(0, held - left);
     var cashHere = Math.max(0, (cashByOrder || {})[num] || 0);
@@ -3842,13 +3857,16 @@ function cashTakeList_(groups, cash, payments, cashByOrder) {
     var contrCash = Math.max(0, Math.min(contrMoney, cashPhys - (inHeldCash - ownTakenHere)));
     var noPayments = !(Number(g.payments_count) > 0);
     if (contrCash >= 1 && !noPayments) { pool += contrCash; poolOrders.push({ order_number: num, created_at: g.created_at, amount: Math.floor(contrCash) }); }
+    // Забрано більше, ніж належить, — порівнюємо з маржею, а не з готівкою: готівку замовлення могли
+    // згодом віддати підряднику за інше замовлення, і вже забрана маржа від цього зайвою не стає.
+    var ownDue = inHeld + (marginInCash[num] || 0) - (takenAny[num] || 0);
     var ownRaw = inHeldCash + (marginInCash[num] || 0) - (takenAny[num] || 0);
     var row = { order_number: num, client: g.client || "", status: g.status, created_at: g.created_at,
                 client_left: Number(g.client_left) || 0, margin_due: due, own: 0, contractor: 0, take: 0, contractor_take: 0 };
-    if (ownRaw <= -1 || held <= -1) {
+    if (ownDue <= -1 || held <= -1) {
       row.color = "red";
-      row.over = Math.round(Math.max(-ownRaw, -held));
-      row.reason = ownRaw <= -1 ? "over_taken" : "over_shared";
+      row.over = Math.round(Math.max(-ownDue, -held));
+      row.reason = ownDue <= -1 ? "over_taken" : "over_shared";
       rows.push(row);
       return;
     }
@@ -3859,10 +3877,30 @@ function cashTakeList_(groups, cash, payments, cashByOrder) {
     if (row.own < 1 && row.contractor < 1) return;
     rows.push(row);
   });
-  // Обмеження готівкою: гроші підрядника в касі не можуть перевищувати фізичну готівку поза вашою маржею.
-  rows.sort(function (a, b) { return orderDateMs_(a.created_at) - orderDateMs_(b.created_at); });
+  function byDate(a, b) { return orderDateMs_(a.created_at) - orderDateMs_(b.created_at); }
+  rows.sort(byDate);
+  poolOrders.sort(byDate);
+  // Обмеження всією готівкою: що понад неї — уже не в касі (віддано підряднику готівкою за інше замовлення,
+  // витрачено). Спершу зменшуємо гроші підрядника (розрахунок готівкою віддає саме їх, від давніших), далі —
+  // вашу маржу (від новіших замовлень).
+  if (freeCash != null) {
+    var excess = rows.reduce(function (s, r) { return s + r.own; }, 0)
+      + poolOrders.reduce(function (s, x) { return s + x.amount; }, 0) - Math.max(0, Math.floor(Number(freeCash) || 0));
+    for (var i = 0; i < poolOrders.length && excess > 0; i++) {
+      var cut = Math.min(poolOrders[i].amount, excess);
+      poolOrders[i].amount -= cut; excess -= cut;
+    }
+    for (var j = rows.length - 1; j >= 0 && excess > 0; j--) {
+      var cutOwn = Math.min(rows[j].own, excess);
+      rows[j].own -= cutOwn; excess -= cutOwn;
+    }
+    poolOrders = poolOrders.filter(function (x) { return x.amount >= 1; });
+    rows = rows.filter(function (r) { return r.color === "red" || r.own >= 1 || r.contractor >= 1; });
+  }
   rows.forEach(function (r) { ownTotal += r.own; });
-  var poolInt = Math.floor(pool);
+  // Сума пулу — з тих самих цілих гривень, що й по замовленнях: інакше «Забрати» просила б на гривню більше,
+  // ніж можна розписати по замовленнях.
+  var poolInt = poolOrders.reduce(function (s, x) { return s + x.amount; }, 0);
   rows.forEach(function (r) {
     if (r.color === "red") return;
     // Кожне замовлення — незалежно: стільки, скільки дозволяють гроші підрядника в касі зараз.
@@ -3870,7 +3908,6 @@ function cashTakeList_(groups, cash, payments, cashByOrder) {
     r.take = r.own + r.contractor_take;
     r.color = r.reason === "no_payments" ? "amber" : (r.take >= 1 && r.contractor_take >= r.contractor ? "green" : "amber");
   });
-  poolOrders.sort(function (a, b) { return orderDateMs_(a.created_at) - orderDateMs_(b.created_at); });
   return { list: rows, pool: poolInt, pool_orders: poolOrders, own_total: ownTotal, cancelled_taken: cancelledTaken };
 }
 
@@ -3890,6 +3927,14 @@ function adminCashTake_(data) {
   if (!/^[A-Za-z0-9_-]{6,60}$/.test(rid)) throw new Error("Немає ID запиту");
   var cash = readCash_();
   var done = cash.filter(function (x) { return x.request_id === rid; });
+  // Попередній натиск обірвався між записом каси й платежів (ліміт часу Google): маржу з грошей
+  // підрядника записано в касу, а платежів немає. Прибираємо половинку й робимо все заново.
+  if (done.some(function (x) { return x.type === CASH_TAKE_CONTR; })
+      && !readPayments_("").some(function (p) { return p.request_id.indexOf(TAKE_PREFIX + rid + ":") === 0; })) {
+    cashTakeUndo_(rid);
+    cash = readCash_();
+    done = [];
+  }
   if (done.length) {
     var already = done.reduce(function (sum, x) { return sum + Math.abs(x.amount); }, 0);
     return { status: "ok", duplicate: true, taken: already, box: adminCashBox_() };
@@ -3966,6 +4011,12 @@ function cashTakeUndo_(rid) {
   Object.keys(touched).forEach(function (n) { syncOrderPaymentState_(n); });
 }
 
+/** Скільки готівки можна віддати з каси: усе, крім передоплат клієнтів і грошей скасованих замовлень. */
+function cashSettleLimit_(box) {
+  var c = (box && box.cash) || {};
+  return Math.max(0, Math.floor((Number(c.expected) || 0) - (Number(c.deposits) || 0) - (Number(c.cancelled) || 0)));
+}
+
 /** План розрахунку: цілі гривні по замовленнях — так само, як їх потім запише розрахунок. */
 function cashSettlePlan_(contractorOrders, ownerOrders) {
   var sumC = 0, sumO = 0;
@@ -4039,8 +4090,9 @@ function adminCashBox_() {
       // Гроші клієнта ще у вас — повернути клієнту або компенсувати підряднику (правило 3).
       if (heldC >= 1) cancelledHeld.push(Object.assign({}, base, { amount: heldC }));
       // Ви повернули клієнту більше, ніж отримали самі: решту клієнт платив підряднику — він винен вам.
-      // Мінус те, що підрядник уже відшкодував (внесено як «Маржа від підрядника»).
-      var owedBack = -heldC - (Number(g.margin_received) || 0);
+      // Мінус те, що підрядник уже відшкодував (внесено як «Маржа від підрядника»). «Частка підряднику»
+      // тут — ваша компенсація його витрат (правило 3), а не борг підрядника, тому її не враховуємо.
+      var owedBack = -(Number(g.owner_received) || 0) - (Number(g.margin_received) || 0);
       if (owedBack >= 1) cancelledRefunded.push(Object.assign({}, base, { amount: owedBack }));
       return;
     }
@@ -4049,8 +4101,9 @@ function adminCashBox_() {
     // Готівка за замовлення до «Виготовлення» — передоплата клієнта: його, можливо, доведеться повернути.
     if (!g.margin_owed && (cashByOrder[g.order_number] || 0) >= 1) deposits.push(Object.assign({}, base, { amount: cashByOrder[g.order_number] }));
   });
-  var take = cashTakeList_(groups, cash, payments, cashByOrder);
   function total(list) { return Math.round(list.reduce(function (s, x) { return s + x.amount; }, 0) * 100) / 100; }
+  var expected = Math.round((fromPayments + fromLedger) * 100) / 100;
+  var take = cashTakeList_(groups, cash, payments, cashByOrder, expected - total(deposits) - total(cancelledHeld));
   var settlements = {};
   payments.forEach(function (p) {
     if (p.request_id.indexOf(SETTLE_PREFIX) !== 0) return;
@@ -4061,7 +4114,6 @@ function adminCashBox_() {
     else if (p.type === PAYMENT_MARGIN) { st.received += p.amount; st.method = p.method; }
     if (st.orders.indexOf(p.order_number) < 0) st.orders.push(p.order_number);
   });
-  var expected = Math.round((fromPayments + fromLedger) * 100) / 100;
   var contractorTotal = total(contractorOwes), ownerTotal = total(ownerOwes), depositsTotal = total(deposits);
   var cancelledTotal = total(cancelledHeld);
   return {
@@ -4070,6 +4122,8 @@ function adminCashBox_() {
       expected: expected,
       deposits: depositsTotal,
       cancelled: cancelledTotal,
+      // Скільки можна віддати підряднику готівкою з каси (поза передоплатами й скасованими).
+      settle_limit: Math.max(0, Math.floor(expected - depositsTotal - cancelledTotal)),
       // Орієнтовно: ваш борг підряднику може лежати й на картці — тоді вільної готівки більше.
       free: Math.round((expected - depositsTotal - ownerTotal - cancelledTotal) * 100) / 100,
       ledger: cash.slice(-100).reverse()
@@ -4172,6 +4226,12 @@ function adminCashSettle_(data) {
   var netting = Math.min(sumC, sumO);
   var rest = Math.abs(sumC - sumO);
   if (amount > rest) throw new Error("Сума більша, ніж винні: " + money_(rest) + " ₴");
+  // Віддати підряднику готівкою з каси можна лише те, що в касі є поза передоплатами клієнтів і грошима
+  // скасованих замовлень: ваш борг може лежати й на картці.
+  if (sumO > sumC && method === PAYMENT_CASH && amount > 0) {
+    var cashFree = cashSettleLimit_(box);
+    if (amount > cashFree) throw new Error("У касі лише " + money_(cashFree) + " ₴ готівки поза передоплатами. Решту передайте з картки (інший спосіб) або спершу запишіть «Доклав у касу»");
+  }
 
   var entries = [];
   function take(list, left, need, type, how) {

@@ -1,5 +1,6 @@
 const { requireAdmin, setAdminCors, handleOptions } = require("../../lib/admin-auth");
 const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
+const { forRole } = require("../../lib/admin-redact");
 
 module.exports = async function handler(req, res) {
   setAdminCors(req, res);
@@ -11,7 +12,7 @@ module.exports = async function handler(req, res) {
       const q = (req.query && req.query.q) || "";
       const status = (req.query && req.query.status) || "";
       const data = await callAdminSheets("list_orders", { q, status });
-      return res.status(200).json(data);
+      return res.status(200).json(forRole(req, data));
     }
 
     // POST = ручне внесення замовлення з кабінету (телефон, Instagram, повторний клієнт).
@@ -22,7 +23,7 @@ module.exports = async function handler(req, res) {
         return res.status(400).json({ error: "Вкажіть імʼя клієнта" });
       }
       const data = await callAdminSheets("create_order", { order });
-      return res.status(201).json(data);
+      return res.status(201).json(forRole(req, data));
     }
 
     return res.status(405).json({ error: "Method not allowed" });

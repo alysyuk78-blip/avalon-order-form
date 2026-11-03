@@ -125,13 +125,14 @@ async function run() {
   const sheetsPath = require.resolve("../lib/admin-sheets");
   const authPath = require.resolve("../lib/admin-auth");
   const snapPath = require.resolve("../lib/admin-snapshot");
-  let sheetsCalls = 0, saved = [], snapToReturn = null, hangSave = false;
+  let sheetsCalls = 0, saved = [], snapToReturn = null, hangSave = false, mockRole = "owner";
   require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: {
     callAdminSheets: async () => { sheetsCalls += 1; return { status: "ok", groups: ["свіжі"] }; },
     sendError: (res, err) => res.status(err.status || 500).json({ error: err.message }),
   } };
   require.cache[authPath] = { id: authPath, filename: authPath, loaded: true, exports: {
     requireAdmin: () => true, setAdminCors: () => {}, handleOptions: (req, res) => res.status(204).end(),
+    roleOf: () => mockRole,
   } };
   require.cache[snapPath] = { id: snapPath, filename: snapPath, loaded: true, exports: {
     readSnapshot: async () => snapToReturn,
@@ -150,6 +151,24 @@ async function run() {
   assert.equal(r.body.snapshot.source, "snapshot");
   assert.ok(r.body.snapshot.age_ms >= 90 * 1000);
   assert.equal(sheetsCalls, 0, "таблицю при відкритті не чекаємо");
+
+  // Менеджер: зі знімка — без грошей власника (сам знімок у сховищі — повний, для власника).
+  const ownerSnap = { status: "ok",
+    groups: [{ order_number: "ORD-1", revenue: 1000, owner_owes: 700, owner_received: 1000, share_paid: 0, margin_kept: 300 }],
+    payments: [{ order_number: "ORD-1", type: "Оплата повністю", amount: 1000, method: "Готівка", request_id: "", recipient: "Я" },
+               { order_number: "ORD-1", type: "Частка підряднику", amount: 700, method: "Готівка", request_id: "" },
+               { order_number: "ORD-1", type: "Маржа від підрядника", amount: 50, method: "Взаємозалік", request_id: "take:abc123:1" }] };
+  snapToReturn = { saved_at: Date.now(), data: ownerSnap };
+  mockRole = "manager";
+  r = await call({});
+  assert.deepEqual(Object.keys(r.body.groups[0]).sort(), ["order_number", "revenue"], "менеджер не бачить сум власника");
+  assert.deepEqual(r.body.payments.map((p) => p.type), ["Оплата повністю"], "ні частки підряднику, ні записів «Забрати»");
+  assert.equal(ownerSnap.groups[0].owner_owes, 700, "знімок у сховищі не зіпсовано");
+  mockRole = "owner";
+  r = await call({});
+  assert.equal(r.body.groups[0].owner_owes, 700, "власник бачить усе");
+  assert.equal(r.body.payments.length, 3);
+  snapToReturn = { saved_at: Date.now() - 90 * 1000, data: { status: "ok", groups: ["знімок"] } };
 
   r = await call({ fresh: "1" });
   assert.deepEqual(r.body.groups, ["свіжі"]);

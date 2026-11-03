@@ -1,6 +1,7 @@
 const { requireAdmin, setAdminCors, handleOptions } = require("../../lib/admin-auth");
 const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
 const { readSnapshot, saveSnapshot } = require("../../lib/admin-snapshot");
+const { forRole } = require("../../lib/admin-redact");
 
 // GET /api/admin/bootstrap          — одразу: знімок зі сховища (якщо є), інакше таблиця.
 // GET /api/admin/bootstrap?fresh=1  — свіжі дані з таблиці; вони ж оновлюють знімок.
@@ -16,7 +17,7 @@ module.exports = async function handler(req, res) {
       const snap = await readSnapshot();
       if (snap) {
         return res.status(200).json({
-          ...snap.data,
+          ...forRole(req, snap.data),
           snapshot: { source: "snapshot", saved_at: snap.saved_at, age_ms: Math.max(0, Date.now() - snap.saved_at) },
         });
       }
@@ -28,7 +29,7 @@ module.exports = async function handler(req, res) {
       saveSnapshot(data, readAt),
       new Promise((resolve) => setTimeout(() => resolve("timeout"), 4500)),
     ]);
-    return res.status(200).json({ ...data, snapshot: { source: "sheets", saved_at: readAt, age_ms: 0, stored } });
+    return res.status(200).json({ ...forRole(req, data), snapshot: { source: "sheets", saved_at: readAt, age_ms: 0, stored } });
   } catch (err) {
     console.error("admin/bootstrap:", err);
     return sendError(res, err);
