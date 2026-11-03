@@ -98,8 +98,11 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.equal(act.totals.due_left, 2000);
   assert.equal(act.totals.owner_due_left, 3500);
   assert.equal(act.totals.net, -1500);
-  // Більше, ніж винні, — відмова.
-  assert.throws(() => ctx.adminCashSettle_({ settlement_id: "settle-over", amount: 1600, method: "Готівка" }), /більша/);
+  // Віддали більше, ніж винні, — переплата стає боргом підрядника (рішення 03.11.2026); скасовуємо й ідемо далі.
+  const over = ctx.adminCashSettle_({ settlement_id: "settle-over", amount: 1600, method: "Готівка" });
+  assert.equal(over.advance, 100);
+  assert.equal(over.box.contractor_owes, 100);
+  ctx.adminCashSettleUndo_({ settlement_id: "settle-over" });
   // Розрахунок: взаємозалік 2000 + 1500 готівкою.
   const res = ctx.adminCashSettle_({ settlement_id: "sett-0001", amount: 1500, method: "Готівка" });
   assert.equal(res.netting, 2000);
@@ -718,6 +721,75 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   const own = ctx.settlementData_({});
   assert.equal(own.totals.share_sum, 3500);
   assert.equal(own.totals.payments_sum, 1200);
+}
+
+// ── 13. Віддали підряднику більше, ніж винні: переплата — його борг вам (03.11.2026) ──
+{
+  // Як у власника: ви винні 7000 (готівка клієнта у вас), підрядник винен маржу 1000 → після заліку 6000;
+  // віддали з каси 6500 → підрядник винен 500.
+  const { ctx, sheets } = setup(
+    [{ num: "ORD-011026-001", date: "01.10.2026 10:00", revenue: 10000, profit: 3000 },
+     { num: "ORD-021026-002", date: "02.10.2026 10:00", revenue: 4000, profit: 1000 }],
+    [pay("ORD-011026-001", "Оплата повністю", 10000, { method: "Готівка", me: true }),
+     pay("ORD-021026-002", "Оплата повністю", 4000)], []);
+  let box = ctx.adminCashBox_();
+  assert.equal(box.settle.rest, 6000);
+  // Підрядник доплатити більше за свій борг не може — це лише для «ви віддаєте».
+  const res = ctx.adminCashSettle_({ settlement_id: "sett-3001", amount: 6500, method: "Готівка",
+    expect: { contractor: 1000, owner: 7000, direction: "to_contractor" } });
+  assert.equal(res.advance, 500);
+  assert.equal(res.advance_order, "ORD-021026-002", "на замовлення, за яким підрядник винен маржу");
+  assert.equal(res.left, 0);
+  box = res.box;
+  assert.equal(box.cash.expected, 3500, "10000 − 6500");
+  assert.equal(box.owner_owes, 0);
+  assert.equal(box.contractor_owes, 500, "переплата — борг підрядника вам");
+  assert.deepEqual(box.contractor_orders.map((x) => [x.order_number, x.amount]), [["ORD-021026-002", 500]]);
+  assert.equal(box.margin_list.filter((r) => r.color === "red").length, 0, "без хибного червоного");
+  assert.equal(box.own_in_cash, 3500, "ваша маржа 4000, з неї 500 у підрядника — у касі 3500");
+  assert.equal(group(ctx, "ORD-021026-002").margin_left, 500);
+  const adv = ctx.readPayments_("").filter((p) => /^settle:sett-3001:a\d+$/.test(p.request_id));
+  assert.equal(adv.length, 1);
+  assert.equal(adv[0].amount, 500);
+  // Історія розрахунку — уся віддана сума.
+  assert.equal(box.settlements[0].paid, 6500);
+  // Наступний розрахунок: підрядник повертає 500 готівкою — усі по нулях.
+  box = ctx.adminCashSettle_({ settlement_id: "sett-3002", amount: 500, method: "Готівка" }).box;
+  assert.equal(box.contractor_owes, 0);
+  assert.equal(box.cash.expected, 4000);
+  assert.equal(box.margin_list.filter((r) => r.color === "red").length, 0);
+  // Скасування першого розрахунку прибирає й переплату.
+  ctx.adminCashSettleUndo_({ settlement_id: "sett-3002" });
+  ctx.adminCashSettleUndo_({ settlement_id: "sett-3001" });
+  box = ctx.adminCashBox_();
+  assert.equal(box.settle.rest, 6000);
+  assert.equal(box.cash.expected, 10000);
+  assert.equal(sheets["Платежі"].data.length, 3);
+}
+{
+  // Заліку немає: переплату записуємо на найновіше повністю оплачене замовлення в роботі.
+  const { ctx } = setup(
+    [{ num: "ORD-011026-001", date: "01.10.2026 10:00", revenue: 10000, profit: 3000, status: "Відправлено" },
+     { num: "ORD-021026-002", date: "02.10.2026 10:00", revenue: 4000, profit: 1000, status: "Завершено" }],
+    [pay("ORD-011026-001", "Передоплата", 10000, { method: "Готівка", me: true }),
+     pay("ORD-021026-002", "Оплата повністю", 4000),
+     pay("ORD-021026-002", "Маржа від підрядника", 1000)], []);
+  // Більше, ніж є в касі, — ні.
+  assert.throws(() => ctx.adminCashSettle_({ settlement_id: "sett-3004", amount: 99999, method: "Готівка" }), /У касі лише/);
+  const res = ctx.adminCashSettle_({ settlement_id: "sett-3003", amount: 7200, method: "Готівка" });
+  assert.equal(res.advance, 200);
+  assert.equal(res.advance_order, "ORD-021026-002");
+  assert.equal(res.box.contractor_owes, 200);
+  assert.equal(res.box.margin_list.filter((r) => r.color === "red").length, 0);
+}
+{
+  // Немає жодного повністю оплаченого замовлення — переплату не записуємо (зрозуміла відмова).
+  const { ctx } = setup([{ num: "ORD-011026-001", revenue: 10000, profit: 3000 }],
+    [pay("ORD-011026-001", "Передоплата", 8000, { method: "Готівка", me: true })], []);
+  assert.throws(() => ctx.adminCashSettle_({ settlement_id: "sett-3005", amount: 6000, method: "Готівка" }), /немає на яке замовлення/);
+  // Підрядник «доплачує» більше за свій борг — помилка введення.
+  const two = setup([{ num: "ORD-011026-001", revenue: 4000, profit: 1000 }], [pay("ORD-011026-001", "Оплата повністю", 4000)], []);
+  assert.throws(() => two.ctx.adminCashSettle_({ settlement_id: "sett-3006", amount: 1500, method: "Готівка" }), /більша, ніж винні/);
 }
 
 // ── 7. Сервер кабінету: каса — лише власник; «Частка підряднику» — лише власник ──
