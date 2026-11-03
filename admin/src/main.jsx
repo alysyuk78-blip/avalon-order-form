@@ -6074,7 +6074,7 @@ import pricing from '../../lib/avalon-pricing.js';
                 <CashLine title="Підрядник винен вам" value={box.contractor_owes}
                   hint="ваша маржа за замовлення, які клієнти повністю оплатили йому" />
                 <CashLine title="Ви винні підряднику" value={box.owner_owes}
-                  hint="його частка в оплатах, які клієнти повністю внесли вам" />
+                  hint="його частка в оплатах, які клієнти внесли вам за замовлення в роботі" />
               </ul>
               <div className="cash-total">
                 <span>{nothing ? "Ніхто нікому не винен"
