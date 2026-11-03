@@ -2861,7 +2861,33 @@ import pricing from '../../lib/avalon-pricing.js';
         </div>
       );
     }
-    function PricingBlock({ form, setForm, saved, savedCommission, disabled, onApply, orderNumber, ratesFrom, canReprice, onReprice }) {
+    // Позиція «Доплата за колір» (так само розпізнає її скрипт таблиці — за назвою моделі).
+    function isColorSurchargeItem(it) {
+      return String((it && it.basket_model) || "").trim().toLowerCase().startsWith(pricing.AVALON_COLOR_SURCHARGE_NAME.toLowerCase());
+    }
+    /**
+     * Доплата за колір для блоку розрахунку — як її бачить калькулятор (окремий рядок і «Разом»).
+     * Вона одна на замовлення й живе окремою позицією; скрипт таблиці додає її, коли в замовленні
+     * ЗʼЯВЛЯЄТЬСЯ перший порахований кошик небазового кольору, і лише до «Виготовлення».
+     * Повертає { amount, state }: "in_order" — позиція вже є; "will_add" — додасться при збереженні;
+     * "none" — у цьому замовленні її не беруть (позицію видалили чи замовлення вже у виробництві).
+     */
+    function colorSurchargeInfo(form, items, orderStatus, colorWaived, rates) {
+      if (pricing.avalonIsBaseColor(form.color)) return null;
+      const existing = (items || []).filter(isColorSurchargeItem);
+      if (existing.length) return { state: "in_order", amount: existing.reduce((sum, it) => sum + (Number(it.revenue) || 0), 0) };
+      const amount = pricing.avalonColorSurcharge(form.color, rates);
+      if (!(amount > 0)) return null;
+      // Позначку «доплату зняли» зберігає таблиця — вона головна: тоді доплата не додасться.
+      if (colorWaived) return { state: "none", amount };
+      const beforeProduction = ["Нове", "В опрацюванні підрядником", "Погодження клієнтом"].includes(orderStatus);
+      // Уже був порахований кошик небазового кольору, а доплати немає — її свідомо зняли.
+      const pricedNonBase = (items || []).some(it => !isColorSurchargeItem(it)
+        && (!it.product_kind || String(it.product_kind).toLowerCase().includes("кошик"))
+        && (Number(it.revenue) || 0) > 0 && !pricing.avalonIsBaseColor(it.color));
+      return { state: beforeProduction && !pricedNonBase ? "will_add" : "none", amount };
+    }
+    function PricingBlock({ form, setForm, saved, savedCommission, disabled, onApply, orderNumber, ratesFrom, canReprice, onReprice, items, orderStatus, colorWaived }) {
       usePricingInfo();   // ставки оновились — перерахувати показане
       const rates = ratesFor(ratesFrom);
       const type = pricing.avalonModelType(form.construction, form.basket_model);
@@ -2893,6 +2919,8 @@ import pricing from '../../lib/avalon-pricing.js';
       const moneySaved = !!calc && num(saved.cost_total) === calc.costTotal && num(saved.revenue) === calc.total
         && (num(saved.list_price) || num(saved.revenue)) === calc.listTotal;
       const lines = calc ? pricing.avalonCostLines(calc) : [];
+      const surcharge = colorSurchargeInfo(form, items, orderStatus, colorWaived, rates);
+      const surchargeCounted = surcharge && surcharge.state !== "none";
       const sizeNote = calc && (calc.width !== num(form.size_w) || calc.height !== num(form.size_h) || calc.depth !== num(form.size_d));
       return (
         <div className="margin-calc pricing-block">
@@ -2945,11 +2973,13 @@ import pricing from '../../lib/avalon-pricing.js';
               Знімна бокова частина
             </label>
           )}
-          {!pricing.avalonIsBaseColor(form.color) && (
+          {surcharge && (
             <p className="margin-calc-note">
-              Колір небазовий: до замовлення додається «{pricing.AVALON_COLOR_SURCHARGE_NAME}» {money(pricing.avalonColorSurcharge(form.color, rates))} —
-              один раз на замовлення, окремою позицією (у ціну кошика не входить). Базові: сірий RAL 7016, чорний RAL 9005, білий RAL 9016.
-              Щоб не брати доплату з цього замовлення — видаліть її позицію у списку позицій.
+              {surcharge.state === "none"
+                ? <>Колір небазовий, але «{pricing.AVALON_COLOR_SURCHARGE_NAME}» у цьому замовленні не береться: її позицію видалили або замовлення вже у виробництві.</>
+                : <>Колір небазовий: «{pricing.AVALON_COLOR_SURCHARGE_NAME}» — один раз на замовлення, окремою позицією (собівартість = ціна, маржі не дає).
+                  Щоб не брати її з цього замовлення — видаліть її позицію у списку позицій.</>}
+              {" "}Базові: сірий RAL 7016, чорний RAL 9005, білий RAL 9016.
             </p>
           )}
           {!calc ? (
@@ -2982,7 +3012,16 @@ import pricing from '../../lib/avalon-pricing.js';
                 {calc.discountAmount > 0 && (
                   <div className="margin-net-row"><span>Знижка {pct(calc.discountPct)}</span><b>− {money(calc.discountAmount)}</b></div>
                 )}
-                <div className="margin-net-row margin-net-main"><span>Ціна продажу</span><b>{money(calc.total)}</b></div>
+                <div className={"margin-net-row" + (surchargeCounted ? "" : " margin-net-main")}><span>Ціна продажу{surchargeCounted ? " (кошик)" : ""}</span><b>{money(calc.total)}</b></div>
+                {surchargeCounted && (
+                  <>
+                    <div className="margin-net-row">
+                      <span>{pricing.AVALON_COLOR_SURCHARGE_NAME} — {surcharge.state === "in_order" ? "окрема позиція в замовленні" : "додасться окремою позицією при збереженні"}</span>
+                      <b>{money(surcharge.amount)}</b>
+                    </div>
+                    <div className="margin-net-row margin-net-main"><span>Разом із доплатою</span><b>{money(calc.total + surcharge.amount)}</b></div>
+                  </>
+                )}
                 <div className="margin-net-row"><span>Маржа{calc.commission > 0 ? " брутто" : ""}</span><b>{money(calc.profit)}</b></div>
                 {calc.commission > 0 && (
                   <div className="margin-net-row"><span>Чистими після комісії {pct(calc.commissionPct)}</span><b>{money2(calc.netProfit)}</b></div>
@@ -3001,7 +3040,8 @@ import pricing from '../../lib/avalon-pricing.js';
                     Застосувати розрахунок і зберегти
                   </button>
                   <p className="margin-calc-note">
-                    Збереже товар і підставить у фінанси: собівартість {money(calc.costTotal)}, ціну продажу {money(calc.total)}.
+                    Збереже товар і підставить у фінанси: собівартість {money(calc.costTotal)}, ціну продажу {money(calc.total)}
+                    {surcharge && surcharge.state === "will_add" ? <>; окремою позицією додасться «{pricing.AVALON_COLOR_SURCHARGE_NAME}» {money(surcharge.amount)} — разом {money(calc.total + surcharge.amount)}</> : null}.
                     Свою знижку впишіть у «Знижка %» нижче — розрахунок одразу її врахує.
                   </p>
                 </>
@@ -3870,6 +3910,7 @@ import pricing from '../../lib/avalon-pricing.js';
               <PricingBlock form={form} setForm={setForm} saved={currentItem}
                 savedCommission={order.commission_pct ?? currentItem.commission_pct}
                 disabled={busy || stale} onApply={applyCalculation} orderNumber={orderNumber}
+                items={items} orderStatus={order.status} colorWaived={!!order.color_waived}
                 ratesFrom={order.rates_from} onReprice={repriceByCurrentRates}
                 canReprice={order.status !== "Завершено" && order.status !== "Скасовано"} />
             )}
@@ -5604,7 +5645,7 @@ import pricing from '../../lib/avalon-pricing.js';
         steps: [
           ["Вкажіть модель і три розміри", "Щойно в кошика є модель, ширина, висота й глибина — ціна порахована. Розміри — готового кошика, у міліметрах; формула округлює їх угору до 10 мм."],
           ["Подивіться розкладку", "Блок «Розрахунок за формулою калькулятора» показує кожну складову: стінки й кришку за площею, гнуття ламелей, кронштейни чи систему кріплення — і націнку. Те саме можна показати підрядникові."],
-          ["Колір", "Базові кольори — сірий RAL 7016, чорний RAL 9005, білий RAL 9016. За будь-який інший до замовлення один раз додається позиція «Доплата за колір». Щоб не брати її з цього замовлення — видаліть цю позицію у списку позицій."],
+          ["Колір", "Базові кольори — сірий RAL 7016, чорний RAL 9005, білий RAL 9016. За будь-який інший до замовлення один раз додається позиція «Доплата за колір». Блок розрахунку показує її окремим рядком і «Разом із доплатою» — так само, як калькулятор. Щоб не брати її з цього замовлення — видаліть цю позицію у списку позицій."],
           ["Візерунок", "Візерунки K1, K2, K5, K7, K10 входять у ціну. «Інший» (свій ескіз клієнта) дає надбавку за кожен м². Складні K3, K4, K6, K8, K9 і антивандальне виконання формула не рахує — ціну називає підрядник."],
           ["Калькулятор", "Коли відомі лише розміри блока кондиціонера або потрібні пропозиція клієнту, рахунок, монтаж чи доставка — «Порахувати в калькуляторі». Позиція завантажиться сама, а розрахунок збережеться в неї ж."],
           ["Якими ставками рахується замовлення", "Тими, що діяли в день його створення. Напис «Рахується за попередніми ставками» означає: ціну погоджено раніше, і сама вона не зміниться. Кнопка «Перерахувати за чинними ставками» переводить замовлення на нові — спершу погодьте нову ціну з клієнтом."],
