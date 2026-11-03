@@ -680,6 +680,7 @@ import pricing from '../../lib/avalon-pricing.js';
           share_paid: Number(order.share_paid) || 0,
           owner_owes: Number(order.owner_owes) || 0,
           margin_kept: Number(order.margin_kept) || 0,
+          ...(order.margin_overpaid != null ? { margin_overpaid: Number(order.margin_overpaid) || 0 } : {}),
           margin_owed: marginOwed(order),
           legacy: !(Number(order.payments_count) > 0),
         },
@@ -768,8 +769,30 @@ import pricing from '../../lib/avalon-pricing.js';
       const due = Number(src.margin_due) || 0;
       const received = Number(src.margin_received) || 0;
       const client = revenue > 0 ? Math.round(paid - revenue) : 0;
-      const margin = due > 0 || received > 0 ? Math.round(received - Math.max(0, due)) : 0;
+      // Сервер знає, скільки з отриманого — повернення вашої переплати підряднику (це не переплата маржі).
+      const margin = src.margin_overpaid != null ? Number(src.margin_overpaid) || 0
+        : due > 0 || received > 0 ? Math.round(received - Math.max(0, due)) : 0;
       return { client: client >= 1 ? client : 0, margin: margin >= 1 ? margin : 0 };
+    }
+    /** Скільки з «Маржі від підрядника» за замовленням — повернення вашої переплати йому (не маржа). */
+    function advanceReturned(groups) {
+      const map = {};
+      (groups || []).forEach(g => {
+        const back = (Number(g.advance_paid) || 0) - (Number(g.advance_left) || 0);
+        if (back >= 1) map[g.order_number] = back;
+      });
+      return map;
+    }
+    /** Платежі маржі без повернень переплати: їх віднімаємо від найновіших платежів замовлення. */
+    function marginPaymentsNet(payments, returned) {
+      const left = { ...returned };
+      const list = (payments || []).filter(p => p.type === "Маржа від підрядника")
+        .map(p => ({ ...p, amount: Number(p.amount) || 0 }));
+      list.slice().sort((a, b) => String(b.date).localeCompare(String(a.date))).forEach(p => {
+        const cut = Math.min(p.amount, left[p.order_number] || 0);
+        if (cut > 0) { p.amount -= cut; left[p.order_number] -= cut; }
+      });
+      return list.filter(p => p.amount > 0);
     }
     function buildReminders(groups, isOwner) {
       // Без дати доставки нагадуємо, коли вона вже потрібна; в опрацюванні її ще може не бути.
@@ -925,13 +948,13 @@ import pricing from '../../lib/avalon-pricing.js';
         // Маржа, яку власник уже має в грошах клієнта (каса), — до місяця замовлення.
         else m.margin_received += Number(g.margin_kept) || 0;
       });
-      (payments || []).forEach(payment => {
-        if (payment.type !== "Маржа від підрядника") return;
+      const returned = advanceReturned(groups);
+      marginPaymentsNet(payments, returned).forEach(payment => {
         if (eligibleOrderNumbers && !eligibleOrderNumbers.has(String(payment.order_number || ""))) return;
         const d = parseUaDateTime(payment.date) || (payment.date ? new Date(payment.date) : null);
         const key = monthKeyFromDate(d);
         if (!key) return;
-        ensureMonth(key).margin_received += Number(payment.amount) || 0;
+        ensureMonth(key).margin_received += payment.amount;
       });
       (expenses || []).forEach(ex => {
         const d = parseUaDateTime(ex.date) || (ex.date ? new Date(ex.date) : null);
@@ -2052,7 +2075,8 @@ import pricing from '../../lib/avalon-pricing.js';
       const clientOverpaid = (Number(s.revenue) || 0) > 0 ? Math.max(0, Math.round((Number(s.client_paid) || 0) - (Number(s.revenue) || 0))) : 0;
       // Підрядник утримує комісію, тож переказати він має валовий прибуток мінус її.
       const marginDue = Number(s.margin_due) || groupPaymentMetrics(s).marginDue;
-      const marginOverreceived = Math.max(0, Math.round((Number(s.margin_received) || 0) - Math.max(0, marginDue)));
+      const marginOverreceived = s.margin_overpaid != null ? Number(s.margin_overpaid) || 0
+        : Math.max(0, Math.round((Number(s.margin_received) || 0) - Math.max(0, marginDue)));
 
       async function add() {
         setError("");
@@ -5207,10 +5231,10 @@ import pricing from '../../lib/avalon-pricing.js';
       // ledger — платежі з журналу (мають реальну дату), legacy — старі замовлення,
       // де стоїть лише галочка «Маржу отримано» і дати платежу не існує.
       const marginCashSplit = useMemo(() => {
-        const ledger = (filteredPayments || []).reduce((sum, payment) => {
-          if (payment.type !== "Маржа від підрядника") return sum;
+        // Повернення переплати підряднику — не маржа (віднімаємо від найновіших платежів замовлення).
+        const ledger = marginPaymentsNet(filteredPayments, advanceReturned(filteredGroups)).reduce((sum, payment) => {
           if (!eligibleOrderNumbers.has(String(payment.order_number || ""))) return sum;
-          return sum + (Number(payment.amount) || 0);
+          return sum + payment.amount;
         }, 0);
         let legacy = 0, kept = 0;
         (filteredGroups || []).forEach(group => {
@@ -5713,7 +5737,7 @@ import pricing from '../../lib/avalon-pricing.js';
           ["Забрати маржу", "«Каса» → «Маржа до отримання»: замовлення в роботі, за якими маржу ще не отримано (навіть якщо клієнт не доплатив). Зелені — можна забрати з каси: натисніть «Забрати». Маржа з оплати, яку клієнт вніс вам, — ваша; маржа, яку винен підрядник, береться з його грошей у касі (стільки ж менше віддасте йому). Помаранчеві — його грошей у касі не вистачає: решту переказує підрядник. Кабінет сам робить усі записи; помилились — приберіть запис в історії каси."],
           ["Витратили чи доклали", "«Каса» → «Що зробили з готівкою»: «Витратив на справи» або «Доклав у касу» → сума → «Записати». Лише те, що не стосується замовлень."],
           ["Перерахували готівку", "Впишіть, скільки є насправді, і натисніть «Звірити з обліком». Якщо не сходиться — кабінет запропонує записати розбіжність."],
-          ["Розрахунок із підрядником", "«Каса» → «Розрахунок із підрядником». Спершу залік боргів: ваша маржа, яку винен підрядник за інші замовлення, зараховується в рахунок його грошей у вас — гроші не передаються. Різницю хтось віддає: впишіть, скільки віддаєте зараз і як («Готівкою з каси»), натисніть «Провести розрахунок». Можна віддати частину — решта лишиться боргом. Готівкою з каси можна віддати не більше, ніж є в касі поза передоплатами клієнтів; більшу суму — переказом з картки (або спершу «Доклав у касу»)."],
+          ["Розрахунок із підрядником", "«Каса» → «Розрахунок із підрядником». Спершу залік боргів: ваша маржа, яку винен підрядник за інші замовлення, зараховується в рахунок його грошей у вас — гроші не передаються. Різницю хтось віддає: впишіть, скільки віддаєте зараз і як («Готівкою з каси»), натисніть «Провести розрахунок». Можна віддати частину — решта лишиться боргом. Віддали більше, ніж винні, — впишіть усю суму: переплата стане боргом підрядника вам і зарахується в наступному розрахунку. Готівкою з каси можна віддати не більше, ніж є в касі поза передоплатами клієнтів; більшу суму — переказом з картки (або спершу «Доклав у касу»)."],
           ["Помилились", "«Проведені розрахунки» → «Скасувати» — зникнуть усі записи цього розрахунку. Окремі записи розрахунку в картці не видаляються."],
           ["Повернення й скасування", "Повертаєте клієнту гроші з каси — «Повернення клієнту», «Хто повернув: Я». Замовлення скасували після виготовлення — витрати підрядника несете ви: у картці внесіть «Частка підряднику» на погоджену суму."],
           ["Акт звірки", "Акт показує і маржу, яку винен підрядник, і гроші клієнтів, отримані вами, та підсумок взаємозаліку. Готівки у вашій касі підрядник в акті не бачить."],
@@ -6034,23 +6058,29 @@ import pricing from '../../lib/avalon-pricing.js';
         await post({ action: "delete", row: x.row, request_id: x.request_id, type: x.type, amount: x.amount }, () => "Запис прибрано.");
       }
       async function doSettle() {
-        if (settleAmount > rest) return setError("Більше, ніж винні: " + money(rest));
+        // Віддати підряднику більше, ніж винні, можна: різниця стане його боргом вам. Підрядник більше за свій борг — ні.
+        if (settleAmount > rest && !(net < 0)) return setError("Більше, ніж винні: " + money(rest));
         if (cashOut && settleAmount > cashLimit) return setError("У касі лише " + money(cashLimit) + " готівки поза передоплатами. Решту передайте з картки (інший спосіб) або спершу запишіть «Доклав у касу».");
         const toContractor = net < 0;
         const lines = [];
         if (netting >= 1) lines.push("Залік боргів: " + money(netting) + " — ваша маржа, яку винен підрядник, зараховується в рахунок його грошей у вас. Гроші при цьому не передаються.");
         if (settleAmount > 0) lines.push((toContractor ? "Ви віддаєте підряднику " : "Підрядник віддає вам ") + money(settleAmount) + " — " + methodLabel.toLowerCase() + ".");
         if (rest - settleAmount >= 1) lines.push("Лишиться " + (toContractor ? "ваш борг підряднику: " : "борг підрядника вам: ") + money(rest - settleAmount) + ".");
+        if (toContractor && settleAmount - rest >= 1) lines.push("Це на " + money(settleAmount - rest) + " більше, ніж ви винні: переплата стане боргом підрядника вам — зʼявиться в «Підрядник винен вам» і зарахується в наступному розрахунку.");
         if (!lines.length) return setError("Нема чого записувати");
         if (!window.confirm("Провести розрахунок із підрядником?\n\n" + lines.join("\n") + "\n\nЗаписи зʼявляться в платежах замовлень; помилковий розрахунок можна скасувати цілком.")) return;
         const key = JSON.stringify([settleAmount, settle.method, settle.date, plan.contractor, plan.owner]);
         const res = await post({ action: "settle", settlement_id: requestIdFor(key), amount: settleAmount, method: settle.method, date: settle.date,
           expect: { contractor: plan.contractor, owner: plan.owner, direction: plan.direction } },
-          r => "Розрахунок проведено" + (r.left >= 1 ? ", лишилось " + money(r.left) : "") + ".");
+          r => "Розрахунок проведено" + (r.left >= 1 ? ", лишилось " + money(r.left) : "")
+            + (r.advance >= 1 ? ". Переплата " + money(r.advance) + " — тепер підрядник винен вам (записано на " + r.advance_order + ")" : "") + ".");
         if (res) setSettle(x => ({ ...x, amount: "" }));
       }
       async function undo(st) {
-        if (!window.confirm("Скасувати розрахунок від " + isoLabel(String(st.date).slice(0, 10)) + "?\n\nУсі його записи зникнуть із платежів замовлень, борги повернуться.")) return;
+        // Після цього розрахунку були інші — вони рахувались уже з урахуванням цього; скасовувати — від найновішого.
+        const later = (box.settlements || []).findIndex(x => x.id === st.id) > 0;
+        if (!window.confirm("Скасувати розрахунок від " + isoLabel(String(st.date).slice(0, 10)) + "?\n\nУсі його записи зникнуть із платежів замовлень, борги повернуться."
+          + (later ? "\n\nУвага: після нього вже були інші розрахунки, зроблені з урахуванням цього. Скасовуйте від найновішого, інакше борги можуть розійтися з тим, що було насправді." : ""))) return;
         await post({ action: "undo", settlement_id: st.id }, r => "Розрахунок скасовано (" + r.removed + " записів).");
       }
 
@@ -6141,7 +6171,7 @@ import pricing from '../../lib/avalon-pricing.js';
               <div className="panel-head"><h2>Розрахунок із підрядником</h2></div>
               <ul className="cash-split">
                 <CashLine title="Підрядник винен вам" value={box.contractor_owes}
-                  hint="ваша маржа за замовлення, які клієнти повністю оплатили йому" />
+                  hint="ваша маржа за замовлення, які клієнти повністю оплатили йому, і ваша переплата йому під час розрахунку" />
                 <CashLine title="Ви винні підряднику" value={box.owner_owes}
                   hint="його частка в оплатах, які клієнти внесли вам за замовлення в роботі, і збиток за замовленнями, проданими дешевше за його роботу" />
               </ul>
@@ -6166,7 +6196,7 @@ import pricing from '../../lib/avalon-pricing.js';
                   {rest >= 1 && (
                     <>
                       <div className="field"><label htmlFor="settle-amount">{net < 0 ? "Скільки віддаєте підряднику зараз, ₴" : "Скільки підрядник віддає вам зараз, ₴"}</label>
-                        <input id="settle-amount" type="number" min="0" max={rest} inputMode="decimal" placeholder={String(defaultAmount)} value={settle.amount} onChange={e => setSettle({ ...settle, amount: e.target.value })} /></div>
+                        <input id="settle-amount" type="number" min="0" max={net < 0 ? undefined : rest} inputMode="decimal" placeholder={String(defaultAmount)} value={settle.amount} onChange={e => setSettle({ ...settle, amount: e.target.value })} /></div>
                       <div className="field"><label htmlFor="settle-method">Як</label>
                         <select id="settle-method" value={settle.method} onChange={e => setSettle({ ...settle, method: e.target.value })}>
                           {methods.map(([v, l]) => <option key={v} value={v}>{l}</option>)}

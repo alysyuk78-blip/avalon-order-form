@@ -49,9 +49,13 @@ async function buildXlsx(d) {
   const hasCom = (Number(t.due_commission) || 0) > 0 || (Number(t.waiting_commission) || 0) > 0;
   // «У Avalon» — гроші клієнта, які отримала Avalon (готівка тощо): без неї рядок не складався б.
   const hasHeld = (Number(t.due_held) || 0) > 0 || (Number(t.waiting_held) || 0) > 0;
-  const width = 8 + (hasCom ? 1 : 0) + (hasHeld ? 1 : 0);
-  const com = (r) => [...(hasCom ? [Number(r.commission) || 0] : []), ...(hasHeld ? [Number(r.held) || 0] : [])];
-  const extraHeads = [...(hasCom ? ["Комісія"] : []), ...(hasHeld ? ["У Avalon (від клієнта)"] : [])];
+  // «Переплата Avalon» — скільки власник віддав підряднику понад борг під час розрахунку (його борг).
+  const hasAdv = (Number(t.due_advance) || 0) > 0 || (Number(t.waiting_advance) || 0) > 0;
+  const width = 8 + (hasCom ? 1 : 0) + (hasHeld ? 1 : 0) + (hasAdv ? 1 : 0);
+  const com = (r) => [...(hasCom ? [Number(r.commission) || 0] : []), ...(hasHeld ? [Number(r.held) || 0] : []),
+    ...(hasAdv ? [Number(r.advance) || 0] : [])];
+  const extraHeads = [...(hasCom ? ["Комісія"] : []), ...(hasHeld ? ["У Avalon (від клієнта)"] : []),
+    ...(hasAdv ? ["Переплата Avalon"] : [])];
 
   const wb = new ExcelJS.Workbook();
   wb.creator = "Avalon Metal Design";
@@ -64,6 +68,7 @@ async function buildXlsx(d) {
     { width: 16 }, { width: 14 },
     ...(hasCom ? [{ width: 13 }] : []),
     ...(hasHeld ? [{ width: 15 }] : []),
+    ...(hasAdv ? [{ width: 14 }] : []),
     { width: 13 }, { width: 14 },
   ];
 
@@ -100,6 +105,7 @@ async function buildXlsx(d) {
     "", "", "РАЗОМ ДО ВИПЛАТИ:", t.due_revenue || 0, t.due_cost || 0, t.due_margin || 0,
     ...(hasCom ? [t.due_commission || 0] : []),
     ...(hasHeld ? [t.due_held || 0] : []),
+    ...(hasAdv ? [t.due_advance || 0] : []),
     t.due_received || 0, t.due_left || 0,
   ]);
   dueTotal.font = { bold: true };
@@ -129,6 +135,7 @@ async function buildXlsx(d) {
       "", "", "Разом (довідково):", "", t.waiting_client_left || 0, "",
       ...(hasCom ? [t.waiting_commission || 0] : []),
       ...(hasHeld ? [""] : []),
+      ...(hasAdv ? [""] : []),
       "", t.waiting_margin_left || 0,
     ]);
     wRow.font = { bold: true, italic: true };
