@@ -1,5 +1,6 @@
 const { requireAdmin, setAdminCors, handleOptions } = require("../../lib/admin-auth");
 const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
+const { forRole } = require("../../lib/admin-redact");
 const filesHandler = require("../../lib/admin-files-handler");
 const contractorHandler = require("../../lib/admin-contractor-handler");
 const ratesHandler = require("../../lib/admin-rates-handler");
@@ -66,7 +67,7 @@ module.exports = async function handler(req, res) {
       const orderNumber = (req.query && req.query.order_number) || "";
       if (!orderNumber) return res.status(400).json({ error: "order_number required" });
       const data = await callAdminSheets("get_order", { order_number: orderNumber });
-      return res.status(200).json(data);
+      return res.status(200).json(forRole(req, data));
     }
 
     if (req.method === "PATCH" || req.method === "POST") {
@@ -85,12 +86,12 @@ module.exports = async function handler(req, res) {
           ...(body.waive_color_surcharge === true ? { waive_color_surcharge: true } : {}),
           ...pricedWith(body),
         });
-        return res.status(200).json(data);
+        return res.status(200).json(forRole(req, data));
       }
       // Перевести замовлення на чинні ставки й перерахувати його кошики.
       if (req.method === "POST" && body.action === "reprice") {
         const data = await callAdminSheets("order_reprice", { order_number: String(orderNumber).trim() });
-        return res.status(200).json(data);
+        return res.status(200).json(forRole(req, data));
       }
       const data = await callAdminSheets("update_order", {
         order_number: orderNumber,
@@ -100,7 +101,7 @@ module.exports = async function handler(req, res) {
         ...(body.expect && typeof body.expect === "object" ? { expect: cleanExpect(body.expect) } : {}),
         ...pricedWith(body),
       });
-      return res.status(200).json(data);
+      return res.status(200).json(forRole(req, data));
     }
 
     if (req.method === "DELETE") {
@@ -112,7 +113,7 @@ module.exports = async function handler(req, res) {
       if (!(row >= 2)) return res.status(400).json({ error: "row required" });
       const expect = req.body && req.body.expect && typeof req.body.expect === "object" ? cleanExpect(req.body.expect) : null;
       const data = await callAdminSheets("delete_order_item", { order_number: orderNumber, row, ...(expect ? { expect } : {}) });
-      return res.status(200).json(data);
+      return res.status(200).json(forRole(req, data));
     }
 
     return res.status(405).json({ error: "Method not allowed" });

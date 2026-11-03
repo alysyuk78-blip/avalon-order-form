@@ -1,6 +1,7 @@
 const { requireAdmin, requireOwner, roleOf, setAdminCors, handleOptions } = require("../../lib/admin-auth");
 const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
 const cashHandler = require("../../lib/admin-cash-handler");
+const { forRole } = require("../../lib/admin-redact");
 
 // «Частка підряднику» — гроші власника, передані підряднику (зокрема компенсація за замовлення,
 // скасоване після виготовлення): вносить лише власник.
@@ -21,7 +22,7 @@ module.exports = async function handler(req, res) {
       const orderNumber = (req.query && req.query.order_number) || "";
       const data = await callAdminSheets("list_payments", { order_number: orderNumber });
       console.log(JSON.stringify({ level: "info", msg: "done", route: "/api/admin/payments", method: req.method, ms: Date.now() - startedAt, requestId }));
-      return res.status(200).json(data);
+      return res.status(200).json(forRole(req, data));
     }
 
     // Разовий перенос старих галочок «Оплата клієнта ✓» / «Маржу отримано ✓» у журнал.
@@ -29,7 +30,7 @@ module.exports = async function handler(req, res) {
       const out = await callAdminSheets("migrate_legacy_payments", {
         dry_run: !!req.body.dry_run,
       });
-      return res.status(200).json(out);
+      return res.status(200).json(forRole(req, out));
     }
 
     // Внесення передоплати / доплати клієнта або виплати маржі підрядником.
@@ -55,7 +56,7 @@ module.exports = async function handler(req, res) {
         },
       });
       console.log(JSON.stringify({ level: "info", msg: "done", route: "/api/admin/payments", method: req.method, ms: Date.now() - startedAt, requestId }));
-      return res.status(201).json(data);
+      return res.status(201).json(forRole(req, data));
     }
 
     if (req.method === "DELETE") {
@@ -76,7 +77,7 @@ module.exports = async function handler(req, res) {
         is_owner: roleOf(req) !== "manager",
       });
       console.log(JSON.stringify({ level: "info", msg: "done", route: "/api/admin/payments", method: req.method, ms: Date.now() - startedAt, requestId }));
-      return res.status(200).json(data);
+      return res.status(200).json(forRole(req, data));
     }
 
     return res.status(405).json({ error: "Method not allowed" });
