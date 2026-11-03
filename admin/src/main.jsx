@@ -596,9 +596,14 @@ import pricing from '../../lib/avalon-pricing.js';
       const fromSnapshot = !!(data.snapshot && data.snapshot.source === "snapshot");
       if (fromSnapshot && pricingStore.fresh) return;   // свіжіші вже є — знімок їх не затирає
       const next = { versions: p.versions, today: p.today || "", current_from: p.current_from || "", error: p.error || "" };
+      const becameFresh = !fromSnapshot && !pricingStore.fresh;
       if (!fromSnapshot) pricingStore.fresh = true;
-      // Ставки приходять у кожній відповіді — оновлюємо екран і кеш браузера лише коли вони інші.
-      if (JSON.stringify(next) === JSON.stringify(pricingStore.info)) return;
+      // Ставки приходять у кожній відповіді — оновлюємо екран і кеш браузера лише коли вони інші
+      // (або коли вони щойно підтвердились таблицею: тоді на екрані «Ставки» вмикається кнопка).
+      if (JSON.stringify(next) === JSON.stringify(pricingStore.info)) {
+        if (becameFresh) pricingStore.listeners.forEach(fn => fn());
+        return;
+      }
       pricingStore.info = next;
       writeAdminCache({ pricing: next });
       pricingStore.listeners.forEach(fn => fn());
@@ -6344,7 +6349,9 @@ import pricing from '../../lib/avalon-pricing.js';
               ))}
               {isOwner ? (
                 <>
-                  <button className="btn" type="button" disabled={busy || !loaded || !!info.error} onClick={openForm}>
+                  {/* Кнопка вмикається, щойно ставки підтвердила таблиця — з будь-якої відповіді кабінету
+                      (зазвичай уже з першого завантаження замовлень), не чекаючи окремого запиту ставок. */}
+                  <button className="btn" type="button" disabled={busy || !(loaded || pricingStore.fresh) || !!info.error} onClick={openForm}>
                     {last && last.from > today ? "Виправити заплановані ставки" : "Змінити ставки"}
                   </button>
                   {access.manager_login != null && (
