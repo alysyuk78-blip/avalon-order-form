@@ -124,6 +124,12 @@ async function run() {
   assert.equal(shareRow[3], 32964);
   const offRow = rows1.find(r => String(r[1]).indexOf("− залік") === 0);
   assert.deepEqual([offRow[0], offRow[3]], ["03.11.2026", -1045]);
+  // Надіслати в Telegram — запит іде в скрипт таблиці з номером замовлення.
+  sheetsPayload = { status: "ok", sent: true, filename: "Akt-vzaiemorozrakhunku-ORD-110926-009.pdf" };
+  const res3 = response();
+  await handler({ method: "POST", query: {}, body: { order: "ORD-110926-009", format: "send" }, headers: {} }, res3);
+  assert.equal(res3.statusCode, 200);
+  assert.equal(res3.body.sent, true);
   // Невірний номер — 400.
   const res2 = response();
   await handler({ method: "POST", query: {}, body: { order: "<script>", format: "xlsx" }, headers: {} }, res2);

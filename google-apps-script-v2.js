@@ -5031,6 +5031,25 @@ function adminSettlementPdf_(data) {
   }
 }
 
+/** Підпис до PDF акта взаєморозрахунку за замовленням у Telegram: головні підсумки з самого акта. */
+function orderActCaption_(act) {
+  function esc(t) { return String(t || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function v(prefix) { var r = act.rows.filter(function (x) { return x.t.indexOf(prefix) === 0 && x.v != null; })[0]; return r ? r.v : null; }
+  var s = act.summary || {};
+  var lines = ["📄 <b>Акт взаєморозрахунку</b>", "Замовлення <b>" + esc(act.order_number) + "</b>" + (act.client ? " · " + esc(act.client) : "")];
+  if (s.owner_received >= 1) {
+    lines.push("Avalon отримала від клієнта: <b>" + money_(s.owner_received) + " ₴</b>");
+    if (s.kept >= 1) lines.push("Утримано маржу Avalon: " + money_(s.kept) + " ₴");
+    if (s.share >= 1) lines.push("Частка підрядника: <b>" + money_(s.share) + " ₴</b>");
+  }
+  if (s.owe >= 1) lines.push("Avalon ще має передати: <b>" + money_(s.owe) + " ₴</b>");
+  else if (v("Розраховано повністю") != null) lines.push("За грошима Avalon розраховано повністю ✓");
+  if (s.advance_left >= 1) lines.push("Підрядник винен Avalon (переплата): <b>" + money_(s.advance_left) + " ₴</b>");
+  if (s.contractor_left >= 1) lines.push("Лишилось отримати підряднику: " + money_(s.contractor_left) + " ₴"
+    + (s.client_left >= 1 ? " (клієнт ще винен " + money_(s.client_left) + " ₴)" : ""));
+  return lines.join("\n");
+}
+
 /** Надіслати PDF акта в групу підрядника (chat_id уже у властивостях скрипта). */
 function adminSettlementSend_(data) {
   var props = PropertiesService.getScriptProperties();
@@ -5043,14 +5062,14 @@ function adminSettlementSend_(data) {
   var sh = buildActSheet_(d);
   var blob;
   try {
-    blob = exportActPdf_(sh).setName(actFileName_(d, "pdf"));
+    blob = exportActPdf_(sh, !!d.single_order).setName(actFileName_(d, "pdf"));
   } finally {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var tmp = ss.getSheetByName(SHEET_ACT_TMP);
     if (tmp) ss.deleteSheet(tmp);
   }
 
-  var caption = "📄 <b>Акт звірки</b>"
+  var caption = d.single_order ? orderActCaption_(d.order_acts[0]) : "📄 <b>Акт звірки</b>"
     + (d.from || d.to ? "\nПеріод: " + (d.from || "…") + " — " + (d.to || "…") : "")
     + "\nЗамовлень до виплати: <b>" + d.totals.due_orders + "</b>"
     + "\nМаржа до виплати: <b>" + money_(d.totals.due_left) + " ₴</b>"
@@ -5059,7 +5078,7 @@ function adminSettlementSend_(data) {
         + "\nПідсумок: <b>" + ((Number(d.totals.net) || 0) >= 0 ? "підрядник доплачує Avalon " + money_(d.totals.net)
           : "Avalon доплачує підряднику " + money_(-d.totals.net)) + " ₴</b>"
       : "");
-  if (d.totals.waiting_orders) {
+  if (!d.single_order && d.totals.waiting_orders) {
     caption += "\n\n<i>Довідково: ще " + d.totals.waiting_orders
       + " замовл. чекають повної оплати клієнтом — у борг не входять.</i>";
   }

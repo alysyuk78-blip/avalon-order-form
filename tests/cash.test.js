@@ -898,6 +898,30 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.equal(ctx.actFileName_({ single_order: "ORD-110926-009" }, "pdf"), "Akt-vzaiemorozrakhunku-ORD-110926-009.pdf");
   const all = ctx.buildActSheet_(per);
   assert.ok(all.data.some((r) => String(r[0]).indexOf("ДЕТАЛЬНО") === 0));
+  // Надсилання акта за замовленням у групу підрядника (Telegram підмінено — нічого не відправляється).
+  const sent = [];
+  ctx.PropertiesService = { getScriptProperties: () => ({ getProperty: (k) => ({ TG_TOKEN: "test-token", TG_CONTRACTOR_CHAT: "-100500" })[k] || null }) };
+  ctx.ScriptApp = { getOAuthToken: () => "oauth" };
+  let portrait = null;
+  ctx.exportActPdf_ = (sh, p) => { portrait = p; return { setName() { return this; }, getBytes: () => [] }; };
+  ctx.UrlFetchApp = { fetch: (url, opt) => {
+    if (url.indexOf("/export?") > 0) return { getResponseCode: () => 200, getBlob: () => ({ setName() { return this; }, getBytes: () => [] }), portrait: url };
+    sent.push({ url, opt });
+    return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ ok: true }) };
+  } };
+  const out = ctx.adminSettlementSend_({ order_number: "ORD-110926-009" });
+  assert.equal(out.sent, true);
+  assert.equal(portrait, true, "акт за замовленням — книжкова сторінка");
+  assert.equal(out.filename, "Akt-vzaiemorozrakhunku-ORD-110926-009.pdf");
+  assert.equal(sent.length, 1);
+  const cap = sent[0].opt.payload.caption;
+  assert.equal(sent[0].opt.payload.chat_id, "-100500");
+  assert.ok(/Акт взаєморозрахунку/.test(cap) && /ORD-110926-009/.test(cap));
+  assert.ok(/Частка підрядника: <b>32.964 ₴<\/b>/.test(cap), cap);
+  assert.ok(/розраховано повністю/.test(cap), cap);
+  assert.ok(/Лишилось отримати підряднику: 11.396 ₴ \(клієнт ще винен 11.396 ₴\)/.test(cap), cap);
+  const capD = ctx.orderActCaption_(ctx.settlementData_({ order_number: "ORD-031126-001" }).order_acts[0]);
+  assert.ok(/Підрядник винен Avalon \(переплата\): <b>1.067 ₴<\/b>/.test(capD), capD);
 }
 
 {

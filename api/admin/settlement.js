@@ -280,7 +280,12 @@ module.exports = async function handler(req, res) {
         const out = await callAdminSheets("settlement_pdf", { order_number: order });
         return res.status(200).json(out);
       }
-      if (format !== "xlsx") return res.status(400).json({ error: "Акт за замовленням — лише PDF або Excel" });
+      // PDF акта — у групу підрядника в Telegram (як акт за період).
+      if (format === "send") {
+        const out = await callAdminSheets("settlement_send", { order_number: order });
+        return res.status(200).json(out);
+      }
+      if (format !== "xlsx") return res.status(400).json({ error: "Акт за замовленням — лише PDF, Excel або надсилання" });
       const data = await callAdminSheets("settlement_data", { order_number: order });
       const buf = await buildOrderActXlsx(data);
       return res.status(200).json({
