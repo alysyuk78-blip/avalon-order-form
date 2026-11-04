@@ -107,7 +107,7 @@ async function run() {
     order_acts: [{ order_number: "ORD-110926-009", client: "Олександр", city: "Хмельницький", date_label: "11.09.2026",
       rows: [{ k: "line", d: "", t: "Сума замовлення", v: 81396 },
              { k: "section", d: "", t: "3. ВЗАЄМОРОЗРАХУНОК", v: null },
-             { k: "total", d: "", t: "= частка підрядника", v: 32964 },
+             { k: "total", d: "", t: "Частка підрядника", v: 32964 },
              { k: "line", d: "2026-11-03", t: "− залік: маржа Avalon за ORD-031126-001", v: -1045 },
              { k: "note", d: "", t: "Маржу Avalon отримано повністю.", v: null }] }],
   };
@@ -120,7 +120,7 @@ async function run() {
   const rows1 = [];
   wb1.getWorksheet(1).eachRow((row) => rows1.push(row.values.slice(1).map(v => (v == null ? "" : v))));
   assert.equal(rows1[0][0], "АКТ ВЗАЄМОРОЗРАХУНКУ З ПІДРЯДНИКОМ");
-  const shareRow = rows1.find(r => r[1] === "= частка підрядника");
+  const shareRow = rows1.find(r => r[1] === "Частка підрядника");
   assert.equal(shareRow[3], 32964);
   const offRow = rows1.find(r => String(r[1]).indexOf("− залік") === 0);
   assert.deepEqual([offRow[0], offRow[3]], ["03.11.2026", -1045]);

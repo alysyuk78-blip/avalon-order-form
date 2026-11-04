@@ -4512,7 +4512,7 @@ function orderMoneyAct_(g, allPays) {
     if (kept >= 1) ln("", "− маржа Avalon, утримана з оплати", -kept);
     if (loss >= 1) ln("", "+ збиток замовлення (несе Avalon)", loss);
     share = ownerPart - kept + loss;
-    if (!cancelled) tot("= частка підрядника", share);
+    if (!cancelled) tot("Частка підрядника", share);
     var settleSeen = {};
     shares.forEach(function (p) {
       if (p.method !== PAYMENT_NETTING) return;
@@ -4540,7 +4540,7 @@ function orderMoneyAct_(g, allPays) {
         ln(p.date, "− залік", -p.amount);
       }
     });
-    if (!cancelled) tot("= до передачі підряднику", share - offsets);
+    if (!cancelled) tot("До передачі підряднику", share - offsets);
     // Передано. Переплату розрахунку показуємо лише в одному акті — замовлення, за яке в тому розрахунку
     // віддано останнім (інакше в актах кількох замовлень вона б задвоїлась).
     shares.forEach(function (p) {
@@ -4562,7 +4562,7 @@ function orderMoneyAct_(g, allPays) {
           else ln(p.date, "Передано підряднику" + how + " — усього", total);
           ln(p.date, "з них переплата понад борг (підрядник винен Avalon) — записано на " + uniq(adv.map(function (x) { return x.order_number; })), -advSum);
           if (cashShares.length > 1) ln(p.date, "з них за інші замовлення", -(total - advSum - p.amount));
-          ln(p.date, "= за це замовлення", p.amount);
+          ln(p.date, "За це замовлення", p.amount);
           return;
         }
       }
@@ -4764,6 +4764,13 @@ function settlementData_(data) {
   };
 }
 
+/**
+ * Текст у клітинці аркуша, з якого робиться PDF: Google Таблиці сприймають «= …», «+ …», «- …» як формулу
+ * («#ERROR!» у PDF). Апостроф на початку — це «просто текст», у клітинці його не видно.
+ */
+function sheetText_(v) {
+  return typeof v === "string" && /^[=+\-@]/.test(v) ? "'" + v : v;
+}
 /** Рядки акта взаєморозрахунку в аркуш: дата | текст (обʼєднаний) | сума в останній колонці. */
 function pushOrderActRows_(rows, marks, act, width, withTitle) {
   if (withTitle) {
@@ -4810,7 +4817,7 @@ function buildOrderActSheet_(sh, d) {
   rows.push(["Avalon Metal Design: ____________________"]);
   rows.push([""]);
   rows.push(["Підрядник: ____________________"]);
-  rows = rows.map(function (r) { while (r.length < width) r.push(""); return r.slice(0, width); });
+  rows = rows.map(function (r) { while (r.length < width) r.push(""); return r.slice(0, width).map(sheetText_); });
   sh.getRange(1, 1, rows.length, width).setValues(rows);
   sh.getRange(1, 1, 1, width).merge().setFontSize(15).setFontWeight("bold").setFontFamily(HDR_FONT);
   sh.getRange(2, 1, 1, width).merge().setFontColor("#66716b");
@@ -4942,7 +4949,7 @@ function buildActSheet_(d) {
   rows.push(["Avalon Metal Design: ____________________", "", "", "",
              "Підрядник: ____________________"]);
 
-  rows = rows.map(function (r) { while (r.length < width) r.push(""); return r.slice(0, width); });
+  rows = rows.map(function (r) { while (r.length < width) r.push(""); return r.slice(0, width).map(sheetText_); });
   sh.getRange(1, 1, rows.length, width).setValues(rows);
 
   // Оформлення
