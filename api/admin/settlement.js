@@ -47,7 +47,7 @@ function addOrderActRows(ws, act, width, withTitle) {
     if (r.k === "section" || r.k === "note") {
       const row = ws.addRow([r.t]);
       if (r.k === "section") styleSection(row);
-      else { row.font = { italic: true }; row.getCell(1).alignment = { wrapText: true, vertical: "middle" }; row.height = 32; }
+      else { row.font = { italic: true }; row.getCell(1).alignment = { wrapText: true, vertical: "middle" }; row.height = String(r.t).length > 150 ? 48 : 32; }
       merge(row, 1, width);
       return;
     }
@@ -57,6 +57,8 @@ function addOrderActRows(ws, act, width, withTitle) {
     const row = ws.addRow(cells);
     merge(row, 2, width - 1);
     row.getCell(2).alignment = { wrapText: true, vertical: "middle" };
+    // Обʼєднані клітинки Excel висоту не підганяє — довгий текст інакше обрізався б.
+    if (String(r.t).length > 55) row.height = String(r.t).length > 110 ? 46 : 32;
     const money = row.getCell(width);
     if (typeof money.value === "number") money.numFmt = MONEY;
     if (r.k === "total") { row.font = { bold: true }; row.eachCell((c) => { c.border = { top: { style: "thin" } }; }); }
@@ -224,7 +226,7 @@ async function buildXlsx(d) {
     styleSection(ws.addRow([head]));
     styleHeader(ws.addRow(["Дата", "№ замовлення", "Спосіб", "Примітка", "Сума"]));
     list.forEach((p) => {
-      ws.addRow([String(p.date || "").slice(0, 10), p.order_number, p.method || "—", p.note || "", p.amount]);
+      ws.addRow([uaDate(String(p.date || "").slice(0, 10)), p.order_number, p.method || "—", p.note || "", p.amount]);
     });
     const pRow = ws.addRow(["", "", "", label, total || 0]);
     pRow.font = { bold: true };

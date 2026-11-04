@@ -882,7 +882,8 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   // Замовлення, на яке записано переплату: підрядник винен 1 067, за замовленням розраховано.
   const d = ctx.settlementData_({ order_number: "ORD-031126-001" }).order_acts[0];
   assert.equal(d.rows.find((r) => r.t === "Підрядник винен Avalon").v, 1067);
-  assert.equal(d.rows.find((r) => r.t.indexOf("Залік у розрахунку") === 0).v, 1045);
+  assert.equal(d.rows.find((r) => r.t.indexOf("Зараховано з частки підрядника за ORD-110926-009") === 0).v, 1045);
+  assert.equal(d.rows.filter((r) => /переплата понад борг/.test(r.t)).length, 0, "переплата — лише в акті ORD-110926-009");
   assert.equal(d.summary.contractor_left, 0);
   // Акт за період — з детальним розділом; у менеджера — без нього; одне замовлення менеджеру — ні.
   const per = ctx.settlementData_({ from: "2026-11-01", to: "2026-11-30" });
@@ -897,6 +898,60 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.equal(ctx.actFileName_({ single_order: "ORD-110926-009" }, "pdf"), "Akt-vzaiemorozrakhunku-ORD-110926-009.pdf");
   const all = ctx.buildActSheet_(per);
   assert.ok(all.data.some((r) => String(r[0]).indexOf("ДЕТАЛЬНО") === 0));
+}
+
+{
+  // Звіт перевірки акта (04.11.2026).
+  const sum = (act, re) => act.rows.filter((r) => re.test(r.t) && r.v != null).reduce((a, r) => a + r.v, 0);
+  const val = (act, text) => { const r = act.rows.find((x) => x.t.indexOf(text) === 0); return r ? r.v : undefined; };
+  {
+    // 1) Avalon ще не передала частку: «Залишок» не каже «розраховано повністю».
+    const { ctx } = setup([{ num: "ORD-011026-001", revenue: 20000, profit: 6000 }],
+      [pay("ORD-011026-001", "Оплата повністю", 20000, { method: "Готівка", me: true })], []);
+    const a = ctx.settlementData_({ order_number: "ORD-011026-001" }).order_acts[0];
+    assert.equal(val(a, "Avalon ще має передати підряднику"), 14000);
+    assert.equal(val(a, "Лишилось отримати підряднику"), 14000);
+    assert.equal(val(a, "з них Avalon ще має передати"), 14000);
+    assert.ok(!a.rows.some((r) => /розраховано повністю/.test(r.t)));
+    assert.ok(a.rows.some((r) => r.k === "note" && /Avalon передасть підряднику 14/.test(r.t)));
+  }
+  {
+    // 2) Переплата одного розрахунку за два замовлення — не задвоюється.
+    const { ctx } = setup(
+      [{ num: "ORD-010926-001", date: "01.09.2026 10:00", revenue: 7500, profit: 2000 },
+       { num: "ORD-020926-002", date: "02.09.2026 10:00", revenue: 5000, profit: 1000 }],
+      [pay("ORD-010926-001", "Оплата повністю", 7500, { method: "Готівка", me: true }),
+       pay("ORD-020926-002", "Оплата повністю", 5000, { method: "Готівка", me: true })], []);
+    const r = ctx.adminCashSettle_({ settlement_id: "sett-5001", amount: 10000, method: "Готівка" });
+    assert.equal(r.advance, 500);
+    const a1 = ctx.settlementData_({ order_number: "ORD-010926-001" }).order_acts[0];
+    const a2 = ctx.settlementData_({ order_number: "ORD-020926-002" }).order_acts[0];
+    const totals = [a1, a2].map((a) => val(a, "Того дня передано") || val(a, "Передано підряднику (Готівка) — усього") || 0);
+    assert.equal(totals.filter((x) => x > 0).length, 1, "«усього» — лише в одному акті");
+    assert.equal(Math.max.apply(null, totals), 10000);
+    assert.equal(sum(a1, /переплата понад борг/) + sum(a2, /переплата понад борг/), -500);
+    // Кожен акт за своє замовлення: передано за нього = його частка, розраховано.
+    [a1, a2].forEach((a) => assert.equal(val(a, "Розраховано повністю"), 0));
+  }
+  {
+    // 3) Скасоване замовлення: без «Залишку», з поясненням.
+    const { ctx, sheets } = setup([{ num: "ORD-011026-001", revenue: 10000, profit: 3000 }],
+      [pay("ORD-011026-001", "Передоплата", 5000, { method: "Готівка", me: true }),
+       pay("ORD-011026-001", "Частка підряднику", 2000, { method: "Готівка" })], []);
+    sheets["Замовлення"].data[1][2] = "Скасовано";
+    const a = ctx.settlementData_({ order_number: "ORD-011026-001" }).order_acts[0];
+    assert.ok(!a.rows.some((r) => /ЗАЛИШОК/.test(r.t)));
+    assert.equal(val(a, "Лишилось у Avalon"), 3000);
+    assert.ok(a.rows.some((r) => r.k === "note" && /скасовано/i.test(r.t)));
+  }
+  {
+    // 4) Переплата клієнта Avalon — видно й пояснено; 5) маржа з копійками — робота підрядника сходиться.
+    const { ctx } = setup([{ num: "ORD-011026-001", revenue: 9213, profit: 3744, pct: 5.5 }],
+      [pay("ORD-011026-001", "Оплата повністю", 9713, { method: "Готівка", me: true })], []);
+    const a = ctx.settlementData_({ order_number: "ORD-011026-001" }).order_acts[0];
+    assert.equal(val(a, "− переплата клієнта"), -500);
+    assert.equal(val(a, "Робота підрядника"), val(a, "Сума замовлення") - a.rows.find((r) => /^Маржа Avalon/.test(r.t)).v);
+  }
 }
 
 // ── 7. Сервер кабінету: каса — лише власник; «Частка підряднику» — лише власник ──
