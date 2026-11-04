@@ -512,6 +512,13 @@
     .card-payment.debt { background: rgba(180,72,66,.08); color: #b54842; }
     .card-payment.margin { background: rgba(143,115,64,.10); color: #8f7340; }
     .card-payment.paid { background: rgba(27,122,74,.09); color: #1b7a4a; }
+    .client-picker { position: relative; margin-bottom: 10px; }
+    .client-picker-list { list-style: none; margin: 4px 0 0; padding: 4px; border: 1px solid var(--line, #dfe3e0); border-radius: 10px;
+      background: var(--panel, #fff); max-height: 280px; overflow-y: auto; box-shadow: 0 6px 18px rgba(0,0,0,.08); }
+    .client-picker-list button { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; background: none;
+      border-radius: 8px; cursor: pointer; font: inherit; }
+    .client-picker-list button:hover, .client-picker-list button:focus { background: rgba(56,62,66,.07); }
+    .client-picker-list small, .client-picker-empty { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
     .card-payment.prepaid { background: rgba(100,116,139,.10); color: #475569; }
     /* Переплата — помітно, бо найчастіше це платіж, внесений не тим типом. */
     .card-payment.over { background: rgba(217,119,6,.13); color: #9a5b00; font-weight: 700; }
