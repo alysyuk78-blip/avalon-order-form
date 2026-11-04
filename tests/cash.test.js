@@ -333,7 +333,7 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.equal(ctx.adminDeletePayment_({ row, order_number: "ORD-011026-001", is_owner: true }).status, "ok");
 }
 {
-  // Акт: колонка «у Avalon» складає рядок; для менеджера — без грошей власника.
+  // Акт за період: замовлення, де клієнт платив і Avalon, — лише борг (без суми, маржі й «у Avalon»), розпис у «Детально».
   const { ctx } = setup(
     [{ num: "ORD-011026-001", revenue: 10000, profit: 3000 },
      { num: "ORD-021026-002", revenue: 5000, profit: 1500 }],
@@ -342,8 +342,13 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
      pay("ORD-021026-002", "Оплата повністю", 5000, { method: "Готівка", me: true })]);
   const act = ctx.settlementData_({});
   const r = act.due.find((x) => x.order_number === "ORD-011026-001");
-  assert.equal(r.held, 1000);
-  assert.equal(r.margin_due - r.margin_received - r.held, r.margin_left, "рядок складається");
+  assert.equal(r.held, 0);
+  assert.equal(r.revenue, null);
+  assert.equal(r.profit, null);
+  assert.equal(r.margin_left, 2000, "борг підрядника — видно");
+  assert.ok(/Детально/.test(r.client));
+  assert.equal(act.totals.due_held, 0, "колонки «у Avalon» немає");
+  assert.ok(act.order_acts.some((a) => a.order_number === "ORD-011026-001"), "розпис — у «Детально»");
   assert.equal(act.owner_due.length, 1);
   const forManager = ctx.settlementData_({ for_manager: true });
   assert.equal(forManager.owner_due.length, 0);
@@ -996,6 +1001,58 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
     assert.equal(work, Math.round(work));
     assert.equal(val(a, "з них Avalon ще має передати"), val(a, "Лишилось отримати підряднику"), "переплата клієнта не збільшує частку підрядника");
     assert.ok(!a.rows.some((r) => r.v === 9713 || r.v === 500));
+  }
+}
+
+{
+  // Друга перевірка акта для підрядника (04.11.2026).
+  const val = (act, text) => { const r = act.rows.find((x) => x.t.indexOf(text) === 0); return r ? r.v : undefined; };
+  {
+    // Копійки комісії: без «1 ₴» і без «не збігається».
+    const { ctx } = setup([{ num: "ORD-011026-001", revenue: 19200, profit: 4537, pct: 10 }],
+      [pay("ORD-011026-001", "Оплата повністю", 19200, { method: "Готівка", me: true })], []);
+    ctx.adminCashSettle_({ settlement_id: "sett-6001", amount: ctx.adminCashBox_().settle.rest, method: "Готівка" });
+    const a = ctx.settlementData_({ order_number: "ORD-011026-001" }).order_acts[0];
+    assert.ok(!a.rows.some((r) => /не збігається|понад свою частку|ще має передати/.test(r.t)), JSON.stringify(a.rows));
+    assert.ok(a.rows.some((r) => r.k === "note" && /розраховано повністю/.test(r.t)));
+  }
+  {
+    // Клієнт переплатив підряднику: окремий рядок, без «перевірить платежі».
+    const { ctx } = setup([{ num: "ORD-011026-001", revenue: 10000, profit: 3000 }],
+      [pay("ORD-011026-001", "Оплата повністю", 12000)], []);
+    const a = ctx.settlementData_({ order_number: "ORD-011026-001" }).order_acts[0];
+    assert.equal(val(a, "Переплата клієнта, отримана підрядником"), 2000);
+    assert.equal(val(a, "Підрядник ще має передати Avalon маржу"), 3000);
+    assert.ok(!a.rows.some((r) => /не збігається/.test(r.t)), JSON.stringify(a.rows));
+    const cap = ctx.orderActCaption_(a);
+    assert.ok(/ще має передати Avalon маржу: <b>3.000/.test(cap) && /Переплата клієнта в підрядника/.test(cap), cap);
+  }
+  {
+    // Без суми — «суму ще не внесено», не «скасовано»; скасоване без компенсації — без обіцянки компенсації.
+    const one = setup([{ num: "ORD-011026-001", revenue: 0, profit: 0 }],
+      [pay("ORD-011026-001", "Передоплата", 1000, { method: "Готівка", me: true })], []);
+    const capN = one.ctx.orderActCaption_(one.ctx.settlementData_({ order_number: "ORD-011026-001" }).order_acts[0]);
+    assert.ok(/суму замовлення ще не внесено/i.test(capN) && !/скасовано/.test(capN), capN);
+    const two = setup([{ num: "ORD-011026-001", revenue: 10000, profit: 3000 }],
+      [pay("ORD-011026-001", "Передоплата", 1000, { method: "Готівка", me: true })], []);
+    two.sheets["Замовлення"].data[1][2] = "Скасовано";
+    const c = two.ctx.settlementData_({ order_number: "ORD-011026-001" }).order_acts[0];
+    assert.ok(!c.rows.some((r) => /компенс/.test(r.t)), JSON.stringify(c.rows));
+  }
+  {
+    // Картка: маржа без повернення переплати (2 090 → 1 045), переплата окремо.
+    const { ctx } = setup(
+      [{ num: "ORD-011026-001", date: "01.10.2026 10:00", revenue: 10000, profit: 3000 },
+       { num: "ORD-021026-002", date: "02.10.2026 10:00", revenue: 4229, profit: 1045 }],
+      [pay("ORD-011026-001", "Оплата повністю", 10000, { method: "Готівка", me: true }),
+       pay("ORD-021026-002", "Оплата повністю", 4229)], []);
+    ctx.adminCashSettle_({ settlement_id: "sett-6002", amount: 7022, method: "Готівка" });   // борг 5 955 → переплата 1 067
+    ctx.adminAddPayment_({ payment: { order_number: "ORD-021026-002", type: "Маржа від підрядника", amount: 1045, method: "На карту" } });
+    const g = group(ctx, "ORD-021026-002");
+    assert.equal(g.margin_received, 2090);
+    assert.equal(g.margin_received_net, 1045);
+    assert.equal(g.margin_left_net, 0);
+    assert.equal(g.advance_left, 22);
   }
 }
 

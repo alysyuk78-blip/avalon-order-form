@@ -681,6 +681,8 @@ import pricing from '../../lib/avalon-pricing.js';
           owner_owes: Number(order.owner_owes) || 0,
           margin_kept: Number(order.margin_kept) || 0,
           advance_paid: Number(order.advance_paid) || 0,
+          advance_left: Number(order.advance_left) || 0,
+          ...(order.margin_received_net != null ? { margin_received_net: order.margin_received_net, margin_left_net: order.margin_left_net } : {}),
           ...(order.margin_overpaid != null ? { margin_overpaid: Number(order.margin_overpaid) || 0 } : {}),
           margin_owed: marginOwed(order),
           legacy: !(Number(order.payments_count) > 0),
@@ -2102,6 +2104,9 @@ import pricing from '../../lib/avalon-pricing.js';
       const marginDue = Number(s.margin_due) || groupPaymentMetrics(s).marginDue;
       const marginOverreceived = s.margin_overpaid != null ? Number(s.margin_overpaid) || 0
         : Math.max(0, Math.round((Number(s.margin_received) || 0) - Math.max(0, marginDue)));
+      // Маржа без повернення переплати Avalon підряднику і без самої переплати (її показуємо окремо).
+      const marginGotNet = s.margin_received_net != null ? Number(s.margin_received_net) || 0 : Number(s.margin_received) || 0;
+      const marginLeftNet = s.margin_left_net != null ? Number(s.margin_left_net) || 0 : Number(s.margin_left) || 0;
 
       async function add() {
         setError("");
@@ -2161,14 +2166,20 @@ import pricing from '../../lib/avalon-pricing.js';
             <div className="field">
               <label>Маржа отримана</label>
               <div className="field-static">
-                <b>{money(s.margin_received || 0)}</b> / {money(marginDue)}
-                <span className={(s.margin_left || 0) > 0 ? "field-static-note debt" : "field-static-note"}>
+                <b>{money(marginGotNet)}</b> / {money(marginDue)}
+                <span className={marginLeftNet > 0 ? "field-static-note debt" : "field-static-note"}>
                   {s.margin_owed === false && !(Number(s.margin_received) > 0)
                     ? "до виплати — після переходу у «Виготовлення»"
-                    : (s.margin_left || 0) > 0 ? "до отримання " + money(s.margin_left)
+                    : marginLeftNet > 0 ? "до отримання " + money(marginLeftNet)
                     : marginOverreceived >= 1 ? "переплата " + money(marginOverreceived) : "повністю"}
                 </span>
               </div>
+              {isOwner && (Number(s.advance_paid) || 0) >= 1 && (
+                <small className="field-static-sub">
+                  Переплата підряднику {money(s.advance_paid)} · повернуто {money((Number(s.advance_paid) || 0) - (Number(s.advance_left) || 0))}
+                  {(Number(s.advance_left) || 0) >= 1 ? " · він винен " + money(s.advance_left) : " · повернуто повністю"}
+                </small>
+              )}
             </div>
           </div>
 
