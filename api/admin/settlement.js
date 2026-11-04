@@ -198,14 +198,13 @@ async function buildXlsx(d) {
   const ownerDue = d.owner_due || [];
   if (ownerDue.length) {
     ws.addRow([]);
-    styleSection(ws.addRow(["ГРОШІ КЛІЄНТІВ, ОТРИМАНІ AVALON — частка підрядника до передачі"]));
-    styleHeader(ws.addRow(["№ замовлення", "Дата", "Клієнт / місто", "Сума замовлення", "Отримала Avalon",
-      "Маржа Avalon (до виплати)", "Передано", "Avalon винна"]));
+    // Без суми замовлення, отриманого Avalon і маржі (рішення власника 04.11.2026) — розпис у «ДЕТАЛЬНО».
+    styleSection(ws.addRow(["ЗАМОВЛЕННЯ, ЗА ЯКИМИ AVALON ВИННА ПІДРЯДНИКУ"]));
+    styleHeader(ws.addRow(["№ замовлення", "Дата", "Клієнт / місто", "Avalon винна"]));
     ownerDue.forEach((r) => {
-      ws.addRow([r.order_number, r.date_label || "", [r.client, r.city].filter(Boolean).join(" · "),
-        r.revenue, r.owner_received, r.margin_due, r.share_paid, r.owner_owes]);
+      ws.addRow([r.order_number, r.date_label || "", [r.client, r.city].filter(Boolean).join(" · "), r.owner_owes]);
     });
-    const oRow = ws.addRow(["", "", "РАЗОМ AVALON ВИННА:", "", "", "", "", t.owner_due_left || 0]);
+    const oRow = ws.addRow(["", "", "РАЗОМ AVALON ВИННА:", t.owner_due_left || 0]);
     oRow.font = { bold: true };
     const net = Number(t.net) || 0;
     ws.addRow([]);
@@ -235,7 +234,7 @@ async function buildXlsx(d) {
   // ── Детально: замовлення, де Avalon отримала гроші клієнта (акт взаєморозрахунку кожного) ──
   if ((d.order_acts || []).length) {
     ws.addRow([]);
-    const h = ws.addRow(["ДЕТАЛЬНО: ГРОШІ КЛІЄНТІВ, ОТРИМАНІ AVALON, І ВЗАЄМОРОЗРАХУНОК"]);
+    const h = ws.addRow(["ДЕТАЛЬНО: ВЗАЄМОРОЗРАХУНОК ЗА ЗАМОВЛЕННЯМИ, ОПЛАЧЕНИМИ AVALON"]);
     styleSection(h);
     ws.mergeCells(h.number, 1, h.number, width);
     d.order_acts.forEach((act) => { ws.addRow([]); addOrderActRows(ws, act, width, true); });
