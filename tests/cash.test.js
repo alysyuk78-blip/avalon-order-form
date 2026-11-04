@@ -868,11 +868,11 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.equal(v("Клієнт сплатив"), 70000);
   assert.equal(v("Утримано з оплати"), 17036);
   assert.equal(v("Разом маржі отримано"), 20196);
-  assert.equal(v("= частка підрядника"), 32964);
+  assert.equal(v("Частка підрядника"), 32964);
   assert.equal(v("маржа Avalon за ORD-291026-013"), -797);
   assert.equal(v("маржа Avalon за ORD-150926-012"), -389);
   assert.equal(v("маржа Avalon за ORD-031126-001"), -1045);
-  assert.equal(v("= до передачі"), 30733);
+  assert.equal(v("До передачі"), 30733);
   assert.equal(v("— усього"), 31800);
   assert.equal(v("переплата понад борг"), -1067);
   assert.equal(v("Розраховано повністю"), 0);
@@ -895,9 +895,16 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   ss.deleteSheet = () => {};
   const one = ctx.buildActSheet_(ctx.settlementData_({ order_number: "ORD-110926-009" }));
   assert.ok(one.data.some((r) => r.indexOf(32964) >= 0), "у PDF-аркуші є частка підрядника");
+  // Жоден текст у аркуші для PDF не починається з «=», «+», «-» (Google Таблиці зробили б з нього формулу — #ERROR!).
+  const asFormula = (sheet) => sheet.data.some((r) => r.some((c) => typeof c === "string" && /^[=+\-@]/.test(c)));
+  assert.ok(!asFormula(one), "акт за замовленням — без «формул»");
+  assert.ok(one.data.some((r) => r.indexOf("'+ отримав від Avalon (передано й зараховано в маржу за інші замовлення)") >= 0));
+  assert.equal(ctx.sheetText_("= x"), "'= x");
+  assert.equal(ctx.sheetText_("− x"), "− x");
   assert.equal(ctx.actFileName_({ single_order: "ORD-110926-009" }, "pdf"), "Akt-vzaiemorozrakhunku-ORD-110926-009.pdf");
   const all = ctx.buildActSheet_(per);
   assert.ok(all.data.some((r) => String(r[0]).indexOf("ДЕТАЛЬНО") === 0));
+  assert.ok(!asFormula(all), "акт за період — без «формул»");
   // Надсилання акта за замовленням у групу підрядника (Telegram підмінено — нічого не відправляється).
   const sent = [];
   ctx.PropertiesService = { getScriptProperties: () => ({ getProperty: (k) => ({ TG_TOKEN: "test-token", TG_CONTRACTOR_CHAT: "-100500" })[k] || null }) };
