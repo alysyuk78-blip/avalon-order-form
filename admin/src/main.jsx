@@ -4108,7 +4108,39 @@ import pricing from '../../lib/avalon-pricing.js';
 
     // Ручне внесення замовлення: телефон, Instagram, повторний клієнт — усе, що не
     // прийшло через онлайн-форму. Пише той самий рядок таблиці, що й форма.
-    function NewOrderDrawer({ token, onClose, onCreated }) {
+    /**
+     * Постійні клієнти для форми «Нове замовлення» (04.11.2026): один телефон — один клієнт; дані — з його
+     * НАЙНОВІШОГО замовлення (імʼя, місто, контакти) і позиції (доставка, адреса, оплата).
+     */
+    function clientsForPicker(groups, orderItems) {
+      const latestItem = {};
+      (orderItems || []).forEach(it => {
+        const prev = latestItem[it.order_number];
+        if (!prev || (!prev.transport && it.transport)) latestItem[it.order_number] = it;
+      });
+      return buildClientsDirectory(groups).map(c => {
+        const last = c.orders[0] || {};
+        const it = latestItem[last.order_number] || {};
+        return {
+          key: c.phone_key, phone: c.phone_display, name: String(last.client || c.primary_name || "").trim(),
+          aliases: c.aliases || [], city: last.city || "", orders_count: c.orders_count, last_order: last.order_number || "",
+          last_at: c.last_order_at || "",
+          contact_method: last.contact_method || "", contact_telegram: last.contact_telegram || "", contact_email: last.contact_email || "",
+          transport: it.transport || "", delivery_address: it.address || "", payment_method: it.payment_method || "",
+        };
+      });
+    }
+    function matchClients(clients, query) {
+      const q = String(query || "").trim().toLowerCase();
+      const digits = q.replace(/\D/g, "");
+      if (q.length < 2) return [];
+      return clients.filter(c => {
+        if (digits.length >= 3 && String(c.key).indexOf(digits.replace(/^(\+?38)?0?/, "")) >= 0) return true;
+        return (c.name + " " + c.aliases.join(" ") + " " + c.city).toLowerCase().indexOf(q) >= 0;
+      }).slice(0, 8);
+    }
+
+    function NewOrderDrawer({ token, onClose, onCreated, clients }) {
       usePricingInfo();   // попередня ціна — за чинними ставками
       const [kind, setKind] = useState("basket"); // basket | bracket | other | service
       const [form, setForm] = useState({
@@ -4125,6 +4157,26 @@ import pricing from '../../lib/avalon-pricing.js';
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
       const pendingCreateRef = useRef({ fingerprint: "", requestId: "" });
+      // Постійний клієнт: пошук у довіднику й підстановка його даних одним натиском.
+      const [clientQuery, setClientQuery] = useState("");
+      const [picked, setPicked] = useState(null);
+      const clientMatches = useMemo(() => matchClients(clients || [], clientQuery), [clients, clientQuery]);
+      // Вписали телефон, який уже є в довіднику, — пропонуємо підставити дані.
+      const phoneKey = normalizePhone(form.phone);
+      const phoneMatch = !picked && phoneKey ? (clients || []).find(c => c.key === phoneKey) : null;
+      function pickClient(c) {
+        setPicked(c);
+        setClientQuery("");
+        setForm(f => ({
+          ...f,
+          client: c.name, phone: c.phone, city: c.city || f.city,
+          contact_method: c.contact_method || f.contact_method,
+          contact_telegram: c.contact_telegram, contact_email: c.contact_email,
+          source: "Повторний клієнт",
+          transport: c.transport || f.transport, delivery_address: c.delivery_address || f.delivery_address,
+          payment_method: c.payment_method || f.payment_method,
+        }));
+      }
 
       const model = CATALOG_MODELS_CRM.find(m => m.id === form.basket_model);
       const isService = kind === "service";
@@ -4273,13 +4325,43 @@ import pricing from '../../lib/avalon-pricing.js';
             </header>
 
             <div className="section-title section-title--first">Клієнт</div>
+            {!!(clients && clients.length) && (
+              <div className="field client-picker">
+                <label htmlFor="client-picker">Постійний клієнт — знайти в довіднику</label>
+                <input id="client-picker" type="search" autoComplete="off" value={clientQuery}
+                  onChange={e => setClientQuery(e.target.value)} placeholder="Телефон або імʼя — від 2 символів" />
+                {clientMatches.length > 0 && (
+                  <ul className="client-picker-list" role="listbox">
+                    {clientMatches.map(c => (
+                      <li key={c.key}>
+                        <button type="button" onClick={() => pickClient(c)}>
+                          <b>{c.name}</b> · {c.phone}{c.city ? " · " + c.city : ""}
+                          <small>{c.orders_count} замовл.{c.last_order ? " · останнє " + c.last_order : ""}{c.transport ? " · " + c.transport : ""}</small>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {clientQuery.trim().length >= 2 && !clientMatches.length && <small className="client-picker-empty">У довіднику не знайдено — заповніть поля нижче.</small>}
+                {picked && (
+                  <p className="send-hint ok" style={{ margin: "6px 0 0" }}>
+                    Підставлено дані з останнього замовлення {picked.last_order}: імʼя, телефон, місто, контакти{picked.transport || picked.delivery_address ? ", доставка" : ""}{picked.payment_method ? ", оплата" : ""}. Перевірте й за потреби виправте.
+                  </p>
+                )}
+              </div>
+            )}
             <div className="grid2">
               <div className="field"><label>Імʼя та прізвище *</label>
                 <input value={form.client} onChange={e => set("client", e.target.value)} placeholder="Напр. Олег Петренко" /></div>
               <div className="field"><label>Місто</label>
                 <input value={form.city} onChange={e => set("city", e.target.value)} /></div>
               <div className="field"><label>Телефон</label>
-                <input value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="+380 __ ___ __ __" /></div>
+                <input value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="+380 __ ___ __ __" />
+                {phoneMatch && (
+                  <button type="button" className="link-btn" style={{ marginTop: 4 }} onClick={() => pickClient(phoneMatch)}>
+                    Це {phoneMatch.name} ({phoneMatch.orders_count} замовл.) — підставити дані клієнта
+                  </button>
+                )}</div>
               <div className="field"><label>Спосіб зв'язку</label>
                 <select value={form.contact_method} onChange={e => set("contact_method", e.target.value)}>
                   <option value="phone">Телефон</option>
@@ -4518,7 +4600,7 @@ import pricing from '../../lib/avalon-pricing.js';
       );
     }
 
-    function OrdersView({ token, groups, setGroups, loading, error, setError, refreshOrders, onRetry, onOrderChanged, onOpenOrder }) {
+    function OrdersView({ token, groups, orderItems, setGroups, loading, error, setError, refreshOrders, onRetry, onOrderChanged, onOpenOrder }) {
       const [q, setQ] = useState("");
       const [status, setStatus] = useState("");
       const [view, setView] = useState("kanban");
@@ -4707,6 +4789,7 @@ import pricing from '../../lib/avalon-pricing.js';
           {creating && (
             <NewOrderDrawer
               token={token}
+              clients={clientsForPicker(groups, orderItems)}
               onClose={() => setCreating(false)}
               onCreated={async (num) => {
                 setCreating(false);
@@ -5655,6 +5738,7 @@ import pricing from '../../lib/avalon-pricing.js';
         steps: [
           ["Відкрийте форму", "Розділ «Замовлення» → кнопка «Нове замовлення»."],
           ["Клієнт", "Імʼя, телефон, місто і джерело — звідки клієнт про вас дізнався."],
+          ["Постійний клієнт", "Замовляв раніше — угорі форми «Постійний клієнт — знайти в довіднику»: почніть вводити телефон або імʼя й натисніть на клієнта. Підставляться імʼя, телефон, місто, контакти, спосіб доставки, адреса чи відділення й оплата з його останнього замовлення, джерело — «Повторний клієнт». Або просто впишіть телефон: якщо клієнт уже є, під полем зʼявиться «Це … — підставити дані клієнта». Перевірте й за потреби виправте."],
           ["Товар", "Оберіть, що замовляють: кошик, кронштейни, інший виріб чи послугу. Для кошика — модель, колір, візерунок, ширину, висоту й глибину в міліметрах, кількість. Особливості виготовлення пишіть у «Коментар до позиції» — підрядник побачить його під цією позицією."],
           ["Гроші", "Для кошика поля грошей можна лишити порожніми: ціна порахується за розмірами, а блок «За формулою калькулятора» одразу покаже суму. Для кронштейнів, інших виробів і послуг ціну вписуєте самі — за одиницю."],
           ["Доставка та оплата", "Дата, спосіб доставки, адреса чи відділення, спосіб оплати."],
@@ -7173,6 +7257,7 @@ import pricing from '../../lib/avalon-pricing.js';
               <OrdersView
                 token={token}
                 groups={groups}
+                orderItems={orderItems}
                 setGroups={setGroups}
                 loading={dataLoading}
                 error={ordersError}
