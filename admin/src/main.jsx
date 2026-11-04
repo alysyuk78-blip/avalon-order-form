@@ -4123,7 +4123,9 @@ import pricing from '../../lib/avalon-pricing.js';
         const it = latestItem[last.order_number] || {};
         return {
           key: c.phone_key, phone: c.phone_display, name: String(last.client || c.primary_name || "").trim(),
-          aliases: c.aliases || [], city: last.city || "", orders_count: c.orders_count, last_order: last.order_number || "",
+          aliases: c.aliases || [], city: last.city || "",
+          // Для пошуку — усі імена клієнта: і з найпершого замовлення, і пізніші написання.
+          names: [c.primary_name].concat(c.aliases || []).filter(Boolean), orders_count: c.orders_count, last_order: last.order_number || "",
           last_at: c.last_order_at || "",
           contact_method: last.contact_method || "", contact_telegram: last.contact_telegram || "", contact_email: last.contact_email || "",
           transport: it.transport || "", delivery_address: it.address || "", payment_method: it.payment_method || "",
@@ -4136,7 +4138,7 @@ import pricing from '../../lib/avalon-pricing.js';
       if (q.length < 2) return [];
       return clients.filter(c => {
         if (digits.length >= 3 && String(c.key).indexOf(digits.replace(/^(\+?38)?0?/, "")) >= 0) return true;
-        return (c.name + " " + c.aliases.join(" ") + " " + c.city).toLowerCase().indexOf(q) >= 0;
+        return (c.name + " " + (c.names || c.aliases).join(" ") + " " + c.city).toLowerCase().indexOf(q) >= 0;
       }).slice(0, 8);
     }
 
@@ -4165,16 +4167,20 @@ import pricing from '../../lib/avalon-pricing.js';
       const phoneKey = normalizePhone(form.phone);
       const phoneMatch = !picked && phoneKey ? (clients || []).find(c => c.key === phoneKey) : null;
       function pickClient(c) {
+        // Уже вибирали іншого клієнта — його дані повністю замінюємо (порожнє в новому — порожнє й тут),
+        // інакше адреса чи оплата попереднього клієнта потрапили б у це замовлення. Уперше — не стираємо
+        // те, що менеджер устиг вписати сам, якщо в клієнта цих даних немає.
+        const keep = (field, value, fallback) => value || (picked ? fallback : form[field]);
         setPicked(c);
         setClientQuery("");
         setForm(f => ({
           ...f,
-          client: c.name, phone: c.phone, city: c.city || f.city,
-          contact_method: c.contact_method || f.contact_method,
+          client: c.name, phone: c.phone, city: keep("city", c.city, ""),
+          contact_method: keep("contact_method", c.contact_method, "phone"),
           contact_telegram: c.contact_telegram, contact_email: c.contact_email,
           source: "Повторний клієнт",
-          transport: c.transport || f.transport, delivery_address: c.delivery_address || f.delivery_address,
-          payment_method: c.payment_method || f.payment_method,
+          transport: keep("transport", c.transport, ""), delivery_address: keep("delivery_address", c.delivery_address, ""),
+          payment_method: keep("payment_method", c.payment_method, ""),
         }));
       }
 
