@@ -4379,6 +4379,179 @@ function orderDateLabel_(v) {
 }
 
 /** Дані для акта звірки за період. */
+/**
+ * Акт взаєморозрахунку за одним замовленням (власник, 04.11.2026): гроші клієнта, які отримала Avalon, →
+ * утримана маржа → частка підрядника → заліки маржі за інші замовлення → передано → залишок. Рядки акта
+ * будуються тут один раз; XLSX (Vercel) і PDF (тут) їх лише друкують, тож цифри в обох однакові.
+ * Рядок: { k: "section"|"line"|"total"|"note", d: "YYYY-MM-DD"|"", t: текст, v: сума|null }.
+ */
+function orderMoneyAct_(g, allPays) {
+  var num = g.order_number;
+  var pays = allPays.filter(function (p) { return p.order_number === num; })
+    .sort(function (a, b) { return String(a.date).localeCompare(String(b.date)) || a.row - b.row; });
+  var rows = [];
+  function sec(t) { rows.push({ k: "section", d: "", t: t, v: null }); }
+  function ln(d, t, v) { rows.push({ k: "line", d: d || "", t: t, v: v == null ? null : Math.round(v) }); }
+  function tot(t, v) { rows.push({ k: "total", d: "", t: t, v: Math.round(v) }); }
+  function note(t) { rows.push({ k: "note", d: "", t: t, v: null }); }
+  function ordersOf(list) { return list.filter(function (x, i) { return list.indexOf(x) === i; }).join(", "); }
+  var rev = Number(g.revenue) || 0;
+  var due = Number(g.margin_due) || 0;
+  var dueOwn = Math.max(0, due);
+  var loss = rev > 0 && due < 0 ? -due : 0;
+  var commission = g.margin_commission_eff != null ? Number(g.margin_commission_eff) || 0 : 0;
+  var clientPaid = Number(g.client_paid_sum) || 0;
+  var ownerReceived = Number(g.owner_received) || 0;
+  var ownerPart = ownerPart_(rev, clientPaid, ownerReceived);
+  var advancePaid = Number(g.advance_paid) || 0;
+  var advanceLeft = Number(g.advance_left) || 0;
+  var advanceBack = Math.max(0, advancePaid - advanceLeft);
+
+  ln("", "Сума замовлення", rev);
+  ln("", commission >= 1 ? "Маржа Avalon (після комісії " + money_(commission) + " ₴, яку утримує підрядник)" : "Маржа Avalon", due);
+
+  // 1. Оплати клієнта
+  sec("1. ОПЛАТИ КЛІЄНТА");
+  var clientRows = pays.filter(function (p) { return p.type !== PAYMENT_MARGIN && p.type !== PAYMENT_SHARE; });
+  if (!clientRows.length) note("Оплат клієнта в кабінеті немає.");
+  clientRows.forEach(function (p) {
+    var me = p.recipient === PAYMENT_ME;
+    var how = p.method ? " (" + p.method + ")" : "";
+    if (p.type === PAYMENT_REFUND) ln(p.date, "Повернення клієнту — " + (me ? "повернула Avalon" : "повернув підрядник") + how, -p.amount);
+    else ln(p.date, p.type + " — " + (me ? "отримала Avalon" : "отримав підрядник") + how, p.amount);
+  });
+  tot("Клієнт сплатив", clientPaid);
+  if (Number(g.client_left) >= 1) ln("", "Клієнт ще винен", Number(g.client_left));
+  if (rev > 0 && clientPaid - rev >= 1) ln("", "Переплата клієнта (повертається клієнту)", clientPaid - rev);
+
+  // 2. Маржа Avalon
+  var marginRows = pays.filter(function (p) { return p.type === PAYMENT_MARGIN; });
+  // Повернення переплати Avalon підряднику — не маржа: найновіші платежі маржі на цю суму.
+  var backLeft = advanceBack, backOf = {};
+  marginRows.slice().sort(function (a, b) { return b.row - a.row; }).forEach(function (p) {
+    var cut = Math.min(p.amount, backLeft);
+    if (cut > 0) { backOf[p.row] = cut; backLeft -= cut; }
+  });
+  var marginGot = 0;
+  sec("2. МАРЖА AVALON");
+  marginRows.forEach(function (p) {
+    var amt = p.amount - (backOf[p.row] || 0);
+    if (amt <= 0) return;
+    marginGot += amt;
+    var rid = String(p.request_id || "");
+    var label;
+    if (rid.indexOf(TAKE_PREFIX) === 0) {
+      var tk = rid.split(":")[1];
+      var from = allPays.filter(function (x) { return x.type === PAYMENT_SHARE && String(x.request_id).indexOf(TAKE_PREFIX + tk + ":") === 0; })
+        .map(function (x) { return x.order_number; });
+      label = "Залік: з грошей підрядника за " + (ordersOf(from) || "інше замовлення");
+    } else if (rid.indexOf(SETTLE_PREFIX) === 0 && p.method === PAYMENT_NETTING) {
+      var sid = rid.split(":")[1];
+      var from2 = allPays.filter(function (x) { return x.type === PAYMENT_SHARE && x.method === PAYMENT_NETTING && String(x.request_id).indexOf(SETTLE_PREFIX + sid + ":") === 0; })
+        .map(function (x) { return x.order_number; });
+      label = "Залік у розрахунку з підрядником: з його частки за " + (ordersOf(from2) || "інше замовлення");
+    } else {
+      label = "Передав підрядник" + (p.method ? " (" + p.method + ")" : "");
+    }
+    ln(p.date, label, amt);
+  });
+  // Маржа, утримана з грошей клієнта, які отримала Avalon.
+  var kept = ownerPart >= 1 ? Math.max(0, Math.min(ownerPart, dueOwn - marginGot)) : 0;
+  if (kept >= 1) ln("", "Утримано з оплати клієнта, отриманої Avalon", kept);
+  tot("Разом маржі отримано", marginGot + kept);
+  var marginLeft = Math.round(dueOwn - marginGot - kept);
+  if (marginLeft >= 1) ln("", "Маржу ще не отримано", marginLeft);
+  if (loss >= 1) note("Замовлення збиткове (продане дешевше за роботу підрядника): збиток " + money_(loss) + " ₴ несе Avalon.");
+
+  // 3. Взаєморозрахунок за грошима, отриманими Avalon
+  var shares = pays.filter(function (p) { return p.type === PAYMENT_SHARE && !isAdvanceShare_(p); });
+  var share = 0, owe = 0;
+  if (ownerPart >= 1 || shares.length || loss >= 1) {
+    sec("3. ВЗАЄМОРОЗРАХУНОК ЗА ГРОШИМА, ОТРИМАНИМИ AVALON");
+    ln("", "Отримано Avalon від клієнта", ownerPart);
+    if (kept >= 1) ln("", "− маржа Avalon, утримана з оплати", -kept);
+    if (loss >= 1) ln("", "+ збиток замовлення (несе Avalon)", loss);
+    share = ownerPart - kept + loss;
+    tot("= частка підрядника", share);
+    var offsets = 0, passed = 0;
+    shares.forEach(function (p) {
+      if (p.method !== PAYMENT_NETTING) return;
+      var rid = String(p.request_id || ""), forOrders = [];
+      if (rid.indexOf(TAKE_PREFIX) === 0) {
+        var tk = rid.split(":")[1];
+        forOrders = allPays.filter(function (x) { return x.type === PAYMENT_MARGIN && String(x.request_id).indexOf(TAKE_PREFIX + tk + ":") === 0; })
+          .map(function (x) { return x.order_number; });
+      } else if (rid.indexOf(SETTLE_PREFIX) === 0) {
+        var sid = rid.split(":")[1];
+        forOrders = allPays.filter(function (x) { return x.type === PAYMENT_MARGIN && x.method === PAYMENT_NETTING && String(x.request_id).indexOf(SETTLE_PREFIX + sid + ":") === 0; })
+          .map(function (x) { return x.order_number; });
+      }
+      offsets += p.amount;
+      ln(p.date, "− залік: маржа Avalon за " + (ordersOf(forOrders) || "інше замовлення"), -p.amount);
+    });
+    tot("= до передачі підряднику", share - offsets);
+    // Передано: за кожен розрахунок — разом із переплатою, записаною в тому ж розрахунку на інше замовлення.
+    var seenSid = {};
+    shares.forEach(function (p) {
+      if (p.method === PAYMENT_NETTING) return;
+      passed += p.amount;
+      var rid = String(p.request_id || "");
+      var sid = rid.indexOf(SETTLE_PREFIX) === 0 ? rid.split(":")[1] : "";
+      var adv = sid && !seenSid[sid] ? allPays.filter(function (x) { return isAdvanceShare_(x) && String(x.request_id).indexOf(SETTLE_PREFIX + sid + ":") === 0; }) : [];
+      if (sid) seenSid[sid] = true;
+      var advSum = adv.reduce(function (sum, x) { return sum + x.amount; }, 0);
+      if (advSum >= 1) {
+        ln(p.date, "Передано підряднику" + (p.method ? " (" + p.method + ")" : "") + " — усього", p.amount + advSum);
+        ln(p.date, "з них переплата понад борг — підрядник винен Avalon (записано на " + ordersOf(adv.map(function (x) { return x.order_number; })) + ")", -advSum);
+      } else {
+        ln(p.date, "Передано підряднику" + (p.method ? " (" + p.method + ")" : ""), p.amount);
+      }
+    });
+    owe = Math.round(share - offsets - passed);
+    if (owe >= 1) tot("Avalon ще винна підряднику", owe);
+    else if (owe <= -1) tot("Передано понад частку підрядника", -owe);
+    else tot("Розраховано повністю", 0);
+  }
+
+  // Переплата Avalon, записана на це замовлення (борг підрядника).
+  if (advancePaid >= 1) {
+    sec((ownerPart >= 1 || shares.length ? "4" : "3") + ". ПЕРЕПЛАТА AVALON ПІДРЯДНИКУ");
+    pays.filter(isAdvanceShare_).forEach(function (p) {
+      ln(p.date, "Переплата під час розрахунку" + (p.method ? " (" + p.method + ")" : ""), p.amount);
+    });
+    if (advanceBack >= 1) ln("", "Повернуто / зараховано", -advanceBack);
+    tot("Підрядник винен Avalon", advanceLeft);
+  }
+
+  // Залишок за замовленням
+  var n = rows.filter(function (r) { return r.k === "section"; }).length + 1;
+  sec(n + ". ЗАЛИШОК ЗА ЗАМОВЛЕННЯМ");
+  var work = rev - due;
+  var direct = clientPaid - ownerReceived;
+  ln("", "Робота підрядника (сума замовлення − маржа Avalon)", work);
+  ln("", "Отримав від клієнта напряму", direct);
+  if (marginGot >= 1) ln("", "− передав маржу Avalon", -marginGot);
+  if (share >= 1) ln("", "+ частка з грошей, отриманих Avalon", share);
+  var left = Math.round(work - (direct - marginGot + share));
+  tot("Лишилось отримати підряднику", left);
+  var clientLeft = Number(g.client_left) || 0;
+  ln("", "Клієнт ще винен", clientLeft);
+  if (Math.abs(left - clientLeft) < 1 && marginLeft < 1) {
+    note(clientLeft >= 1
+      ? "Маржу Avalon отримано повністю: залишок оплати клієнта — частка підрядника. Заплатить клієнт підряднику — розрахунку не потрібно; заплатить Avalon — Avalon передасть її підряднику."
+      : "За замовленням розраховано повністю.");
+  } else if (marginLeft >= 1) {
+    note("Маржу Avalon ще не отримано повністю (" + money_(marginLeft) + " ₴): її підрядник передасть з наступних оплат клієнта чи розрахунком.");
+  } else {
+    note("Залишок підрядника не збігається з боргом клієнта на " + money_(Math.abs(left - clientLeft)) + " ₴ — перевірте платежі замовлення.");
+  }
+  return {
+    order_number: num, client: g.client || "", city: g.city || "", date_label: orderDateLabel_(g.created_at),
+    created_at: g.created_at, rows: rows,
+    summary: { owner_received: ownerPart, kept: kept, share: share, owe: owe, advance_left: advanceLeft, contractor_left: left, client_left: clientLeft }
+  };
+}
+
 function settlementData_(data) {
   var fromISO = String((data && data.from) || "").slice(0, 10);
   var toISO = String((data && data.to) || "").slice(0, 10);
@@ -4389,6 +4562,34 @@ function settlementData_(data) {
   var due = [], waiting = [], ownerDue = [];
   // Менеджер формує акт без грошей власника (рішення власника 02.11.2026).
   var forManager = !!(data && data.for_manager);
+  var allPays = readPayments_("");
+  // Акт взаєморозрахунку за одним замовленням (лише власник).
+  var single = String((data && data.order_number) || "").trim();
+  if (single) {
+    if (forManager) throw new Error("Акт взаєморозрахунку формує лише власник");
+    var sg = (listed.groups || []).filter(function (g) { return g.order_number === single; })[0];
+    if (!sg) throw new Error("Замовлення " + single + " не знайдено");
+    return {
+      status: "ok", single_order: single, from: "", to: "",
+      generated_at: Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm"),
+      due: [], waiting: [], payments: [], owner_due: [], for_manager: false,
+      order_acts: [orderMoneyAct_(sg, allPays)], totals: {}
+    };
+  }
+  // Розділ «Детально за замовленнями з грошима клієнтів у Avalon»: замовлення, де Avalon отримала гроші
+  // клієнта чи переплатила підряднику, з рухом грошей у періоді.
+  var orderActs = [];
+  function inPeriod(d) { d = String(d || "").slice(0, 10); return !(fromISO && d && d < fromISO) && !(toISO && d && d > toISO); }
+  if (!forManager) (listed.groups || []).forEach(function (g) {
+    if (g.status === "Скасовано") return;
+    if (!(Number(g.owner_received) >= 1 || Number(g.advance_paid) >= 1)) return;
+    var moved = allPays.some(function (p) {
+      return p.order_number === g.order_number && inPeriod(p.date)
+        && (p.recipient === PAYMENT_ME || p.type === PAYMENT_SHARE);
+    });
+    if (moved) orderActs.push(orderMoneyAct_(g, allPays));
+  });
+  orderActs.sort(function (a, b) { return String(a.order_number).localeCompare(String(b.order_number)); });
 
   (listed.groups || []).forEach(function (g) {
     if (g.status === "Скасовано") return;
@@ -4439,7 +4640,7 @@ function settlementData_(data) {
   function sortRows(a, b) { return String(a.order_number).localeCompare(String(b.order_number)); }
   due.sort(sortRows); waiting.sort(sortRows); ownerDue.sort(sortRows);
 
-  var payments = readPayments_("").filter(function (p) {
+  var payments = allPays.filter(function (p) {
     if (p.type !== "Маржа від підрядника" && p.type !== PAYMENT_SHARE) return false;
     var d = String(p.date || "").slice(0, 10);
     if (fromISO && d && d < fromISO) return false;
@@ -4459,7 +4660,7 @@ function settlementData_(data) {
     from: fromISO, to: toISO,
     generated_at: Utilities.formatDate(new Date(), "Europe/Kiev", "dd.MM.yyyy HH:mm"),
     due: due, waiting: waiting, payments: payments,
-    owner_due: ownerDue, for_manager: forManager,
+    owner_due: ownerDue, for_manager: forManager, order_acts: orderActs,
     totals: {
       due_held: sum(due, "held"),
       waiting_held: sum(waiting, "held"),
@@ -4486,6 +4687,64 @@ function settlementData_(data) {
   };
 }
 
+/** Рядки акта взаєморозрахунку в аркуш: дата | текст (обʼєднаний) | сума в останній колонці. */
+function pushOrderActRows_(rows, marks, act, width, withTitle) {
+  if (withTitle) {
+    marks[rows.length] = "sub";
+    rows.push([act.order_number + " · " + act.client + (act.city ? " · " + act.city : "") + (act.date_label ? " · від " + act.date_label : "")]);
+  }
+  act.rows.forEach(function (r) {
+    if (r.k === "section" || r.k === "note") { marks[rows.length] = r.k === "section" ? "sec" : "note"; rows.push([r.t]); return; }
+    var row = [r.d ? fmtDate_(r.d) : "", r.t];
+    while (row.length < width - 1) row.push("");
+    row.push(r.v == null ? "" : r.v);
+    marks[rows.length] = r.k === "total" ? "tot" : "line";
+    rows.push(row);
+  });
+}
+function styleOrderActRows_(sh, marks, width) {
+  Object.keys(marks).forEach(function (k) {
+    var line = Number(k) + 1, m = marks[k];
+    if (m === "sec" || m === "sub" || m === "note") {
+      var rg = sh.getRange(line, 1, 1, width).merge();
+      if (m === "sec") rg.setFontWeight("bold").setBackground("#EFF2F0");
+      if (m === "sub") rg.setFontWeight("bold").setFontSize(12);
+      if (m === "note") { rg.setFontStyle("italic").setWrap(true); sh.setRowHeight(line, 34); }
+      return;
+    }
+    if (width - 1 > 2) sh.getRange(line, 2, 1, width - 2).merge();
+    if (m === "tot") sh.getRange(line, 1, 1, width).setFontWeight("bold").setBorder(true, null, null, null, null, null);
+  });
+}
+/** Аркуш акта взаєморозрахунку за одним замовленням. */
+function buildOrderActSheet_(sh, d) {
+  var act = d.order_acts[0];
+  var width = 4, rows = [], marks = {};
+  rows.push(["АКТ ВЗАЄМОРОЗРАХУНКУ З ПІДРЯДНИКОМ"]);
+  rows.push(["Avalon Metal Design"]);
+  rows.push(["Замовлення " + act.order_number + " · " + act.client + (act.city ? " · " + act.city : "") + (act.date_label ? " · від " + act.date_label : "")]);
+  rows.push(["Сформовано: " + d.generated_at]);
+  rows.push([""]);
+  pushOrderActRows_(rows, marks, act, width, false);
+  rows.push([""]);
+  rows.push(["Avalon Metal Design: ____________________"]);
+  rows.push([""]);
+  rows.push(["Підрядник: ____________________"]);
+  rows = rows.map(function (r) { while (r.length < width) r.push(""); return r.slice(0, width); });
+  sh.getRange(1, 1, rows.length, width).setValues(rows);
+  sh.getRange(1, 1, 1, width).merge().setFontSize(15).setFontWeight("bold").setFontFamily(HDR_FONT);
+  sh.getRange(2, 1, 1, width).merge().setFontColor("#66716b");
+  sh.getRange(3, 1, 1, width).merge().setFontWeight("bold");
+  sh.getRange(4, 1, 1, width).merge().setFontColor("#66716b");
+  sh.setColumnWidth(1, 92); sh.setColumnWidth(2, 300); sh.setColumnWidth(3, 150); sh.setColumnWidth(4, 120);
+  sh.getRange(1, 1, rows.length, width).setVerticalAlignment("middle");
+  sh.getRange(1, 2, rows.length, 1).setWrap(true);
+  styleOrderActRows_(sh, marks, width);
+  sh.getRange(6, 4, Math.max(1, rows.length - 5), 1).setNumberFormat("#,##0 ₴");
+  SpreadsheetApp.flush();
+  return sh;
+}
+
 /** Тимчасовий аркуш з актом — потрібен лише щоб коректно вивести PDF. */
 function buildActSheet_(d) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -4494,6 +4753,7 @@ function buildActSheet_(d) {
   var sh = ss.insertSheet(SHEET_ACT_TMP);
   // НЕ ховаємо аркуш: експорт PDF приховані аркуші не віддає (HTTP 500).
   // Живе він кілька секунд і видаляється у finally.
+  if (d.single_order) return buildOrderActSheet_(sh, d);
 
   var period = (fmtDate_(d.from) || d.from || "…") + " — " + (fmtDate_(d.to) || d.to || "…");
   // Колонка «Комісія» зʼявляється лише тоді, коли комісія справді є: інакше акт
@@ -4590,6 +4850,14 @@ function buildActSheet_(d) {
     rows.push(["", "", "", "Разом передано:", d.totals.share_sum]);
   }
 
+  // Детально — замовлення, де Avalon отримала гроші клієнта (акт взаєморозрахунку кожного).
+  var actMarks = {};
+  if ((d.order_acts || []).length) {
+    rows.push([""]);
+    rows.push(["ДЕТАЛЬНО: ГРОШІ КЛІЄНТІВ, ОТРИМАНІ AVALON, І ВЗАЄМОРОЗРАХУНОК"]);
+    d.order_acts.forEach(function (act) { rows.push([""]); pushOrderActRows_(rows, actMarks, act, width, true); });
+  }
+
   rows.push([""]);
   rows.push(["Avalon Metal Design: ____________________", "", "", "",
              "Підрядник: ____________________"]);
@@ -4609,7 +4877,8 @@ function buildActSheet_(d) {
     var first = String(r[0] || "");
     if (first.indexOf("МАРЖА ДО ВИПЛАТИ") === 0 || first.indexOf("ДОВІДКОВО") === 0
         || first.indexOf("ОТРИМАНО ВІД") === 0 || first.indexOf("ГРОШІ КЛІЄНТІВ") === 0
-        || first.indexOf("ПЕРЕДАНО ПІДРЯДНИКУ") === 0 || first.indexOf("ВЗАЄМОЗАЛІК") === 0) {
+        || first.indexOf("ПЕРЕДАНО ПІДРЯДНИКУ") === 0 || first.indexOf("ВЗАЄМОЗАЛІК") === 0
+        || first.indexOf("ДЕТАЛЬНО") === 0) {
       sh.getRange(line, 1, 1, width).merge().setFontWeight("bold").setBackground("#EFF2F0");
     }
     if (first === "№ замовлення" || first === "Дата") {
@@ -4624,17 +4893,18 @@ function buildActSheet_(d) {
     }
   });
   sh.getRange(1, 4, rows.length, width - 3).setNumberFormat("#,##0 ₴");
+  styleOrderActRows_(sh, actMarks, width);
   sh.setFrozenRows(0);
   SpreadsheetApp.flush();
   return sh;
 }
 
 /** PDF саме цього аркуша (gid), тому інші аркуші книги в файл не потрапляють. */
-function exportActPdf_(sh) {
+function exportActPdf_(sh, portrait) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var url = "https://docs.google.com/spreadsheets/d/" + ss.getId() + "/export"
     + "?format=pdf&gid=" + sh.getSheetId()
-    + "&portrait=false&size=A4&fitw=true&gridlines=false&printtitle=false"
+    + "&portrait=" + (portrait ? "true" : "false") + "&size=A4&fitw=true&gridlines=false&printtitle=false"
     + "&sheetnames=false&pagenum=CENTER&fzr=false&top_margin=0.5&bottom_margin=0.5"
     + "&left_margin=0.4&right_margin=0.4";
   var opts = {
@@ -4656,6 +4926,7 @@ function exportActPdf_(sh) {
 }
 
 function actFileName_(d, ext) {
+  if (d.single_order) return "Akt-vzaiemorozrakhunku-" + d.single_order + "." + ext;
   var p = (d.from || "") + (d.to ? "_" + d.to : "");
   return "Akt-zvirky-Avalon" + (p ? "_" + p : "") + "." + ext;
 }
@@ -4670,7 +4941,7 @@ function adminSettlementPdf_(data) {
   var d = settlementData_(data);
   var sh = buildActSheet_(d);
   try {
-    var blob = exportActPdf_(sh);
+    var blob = exportActPdf_(sh, !!d.single_order);
     return {
       status: "ok", filename: actFileName_(d, "pdf"),
       mime: "application/pdf",

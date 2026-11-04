@@ -845,6 +845,60 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   }
 }
 
+// ── 14. Акт взаєморозрахунку за замовленням (04.11.2026) — випадок власника ORD-110926-009 ──
+{
+  const { ctx } = setup(
+    [{ num: "ORD-110926-009", date: "11.09.2026 19:01", revenue: 81396, profit: 20196, status: "Відправлено", client: "Олександр" },
+     { num: "ORD-150926-012", date: "15.09.2026 15:59", revenue: 800, profit: 389 },
+     { num: "ORD-291026-013", date: "29.10.2026 11:22", revenue: 3075, profit: 797 },
+     { num: "ORD-031126-001", date: "03.11.2026 15:48", revenue: 4229, profit: 1045 }],
+    [pay("ORD-110926-009", "Передоплата", 20000, { method: "Готівка", date: "2026-10-01" }),
+     pay("ORD-110926-009", "Маржа від підрядника", 3160, { method: "Готівка", date: "2026-10-28" }),
+     pay("ORD-110926-009", "Доплата", 50000, { method: "Готівка", me: true, date: "2026-11-02" }),
+     pay("ORD-150926-012", "Оплата повністю", 800, { date: "2026-10-02" }),
+     pay("ORD-291026-013", "Оплата повністю", 3075, { date: "2026-10-30" }),
+     pay("ORD-031126-001", "Оплата повністю", 4229, { date: "2026-11-03" })], []);
+  ctx.adminCashTake_({ order_number: "ORD-291026-013", request_id: "take-4001" });
+  ctx.adminCashTake_({ order_number: "ORD-150926-012", request_id: "take-4002" });
+  const st = ctx.adminCashSettle_({ settlement_id: "sett-4003", amount: 31800, method: "Готівка" });
+  assert.equal(st.netting, 1045);
+  assert.equal(st.advance, 1067);
+  const act = ctx.settlementData_({ order_number: "ORD-110926-009" }).order_acts[0];
+  const v = (text) => { const r = act.rows.find((x) => x.t.indexOf(text) >= 0); assert.ok(r, "немає рядка: " + text); return r.v; };
+  assert.equal(v("Клієнт сплатив"), 70000);
+  assert.equal(v("Утримано з оплати"), 17036);
+  assert.equal(v("Разом маржі отримано"), 20196);
+  assert.equal(v("= частка підрядника"), 32964);
+  assert.equal(v("маржа Avalon за ORD-291026-013"), -797);
+  assert.equal(v("маржа Avalon за ORD-150926-012"), -389);
+  assert.equal(v("маржа Avalon за ORD-031126-001"), -1045);
+  assert.equal(v("= до передачі"), 30733);
+  assert.equal(v("— усього"), 31800);
+  assert.equal(v("переплата понад борг"), -1067);
+  assert.equal(v("Розраховано повністю"), 0);
+  assert.equal(v("Лишилось отримати"), 11396);
+  assert.equal(act.summary.contractor_left, act.summary.client_left);
+  assert.ok(act.rows.some((r) => r.k === "note" && r.t.indexOf("Маржу Avalon отримано повністю") === 0));
+  // Замовлення, на яке записано переплату: підрядник винен 1 067, за замовленням розраховано.
+  const d = ctx.settlementData_({ order_number: "ORD-031126-001" }).order_acts[0];
+  assert.equal(d.rows.find((r) => r.t === "Підрядник винен Avalon").v, 1067);
+  assert.equal(d.rows.find((r) => r.t.indexOf("Залік у розрахунку") === 0).v, 1045);
+  assert.equal(d.summary.contractor_left, 0);
+  // Акт за період — з детальним розділом; у менеджера — без нього; одне замовлення менеджеру — ні.
+  const per = ctx.settlementData_({ from: "2026-11-01", to: "2026-11-30" });
+  assert.deepEqual(per.order_acts.map((a) => a.order_number), ["ORD-031126-001", "ORD-110926-009"]);
+  assert.equal(ctx.settlementData_({ from: "2026-11-01", to: "2026-11-30", for_manager: true }).order_acts.length, 0);
+  assert.throws(() => ctx.settlementData_({ order_number: "ORD-110926-009", for_manager: true }), /лише власник/);
+  // Аркуш для PDF будується (і за замовленням, і за період).
+  const ss = ctx.SpreadsheetApp.getActiveSpreadsheet();
+  ss.deleteSheet = () => {};
+  const one = ctx.buildActSheet_(ctx.settlementData_({ order_number: "ORD-110926-009" }));
+  assert.ok(one.data.some((r) => r.indexOf(32964) >= 0), "у PDF-аркуші є частка підрядника");
+  assert.equal(ctx.actFileName_({ single_order: "ORD-110926-009" }, "pdf"), "Akt-vzaiemorozrakhunku-ORD-110926-009.pdf");
+  const all = ctx.buildActSheet_(per);
+  assert.ok(all.data.some((r) => String(r[0]).indexOf("ДЕТАЛЬНО") === 0));
+}
+
 // ── 7. Сервер кабінету: каса — лише власник; «Частка підряднику» — лише власник ──
 (async () => {
   process.env.ADMIN_PASSWORD = "owner-password";
