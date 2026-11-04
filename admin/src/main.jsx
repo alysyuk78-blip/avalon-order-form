@@ -1789,18 +1789,20 @@ import pricing from '../../lib/avalon-pricing.js';
       const [busy, setBusy] = useState("");
       const [msg, setMsg] = useState("");
       async function get(format) {
+        if (format === "send" && !window.confirm("Надіслати акт взаєморозрахунку за " + orderNumber + " (PDF) у групу підрядника в Telegram?")) return;
         setBusy(format); setMsg("");
         try {
           const res = await api("/api/admin/settlement", { method: "POST", token, body: { order: orderNumber, format } });
-          saveBase64File(res.filename, res.mime, res.base64);
-          setMsg("Збережено: " + (res.filename || ""));
+          if (format === "send") setMsg("Надіслано підряднику в Telegram ✓");
+          else { saveBase64File(res.filename, res.mime, res.base64); setMsg("Збережено: " + (res.filename || "")); }
         } catch (e) { setMsg(e.message || "Не вдалося сформувати акт"); } finally { setBusy(""); }
       }
       return (
         <span className="order-act-buttons">
           {!compact && <span>Акт взаєморозрахунку з підрядником:</span>}
           <button type="button" className="btn secondary small" disabled={!!busy} onClick={() => get("pdf")}>{busy === "pdf" ? "PDF…" : compact ? "Акт PDF" : "PDF"}</button>
-          <button type="button" className="btn secondary small" disabled={!!busy} onClick={() => get("xlsx")}>{busy === "xlsx" ? "Excel…" : compact ? "Excel" : "Excel"}</button>
+          <button type="button" className="btn secondary small" disabled={!!busy} onClick={() => get("xlsx")}>{busy === "xlsx" ? "Excel…" : "Excel"}</button>
+          <button type="button" className="btn secondary small" disabled={!!busy} onClick={() => get("send")}>{busy === "send" ? "Надсилаю…" : compact ? "У Telegram" : "Надіслати підряднику в Telegram"}</button>
           {msg && <small>{msg}</small>}
         </span>
       );
@@ -5857,7 +5859,7 @@ import pricing from '../../lib/avalon-pricing.js';
           ["Помилились", "«Проведені розрахунки» → «Скасувати» — зникнуть усі записи цього розрахунку. Окремі записи розрахунку в картці не видаляються."],
           ["Повернення й скасування", "Повертаєте клієнту гроші з каси — «Повернення клієнту», «Хто повернув: Я». Замовлення скасували після виготовлення — витрати підрядника несете ви: у картці внесіть «Частка підряднику» на погоджену суму."],
           ["Акт звірки", "Акт показує і маржу, яку винен підрядник, і гроші клієнтів, отримані вами, та підсумок взаємозаліку, а нижче — детально кожне замовлення, де гроші клієнта отримали ви. Готівки у вашій касі підрядник в акті не бачить."],
-          ["Акт за замовленням", "Картка замовлення → «Платежі» → «Акт взаєморозрахунку з підрядником: PDF / Excel» (або «Каса» → «Проведені розрахунки» → «Акт» біля замовлення). У ньому: оплати клієнта; маржа Avalon (що передав підрядник і що утримано з оплати, отриманої вами); взаєморозрахунок — частка підрядника, заліки маржі за інші замовлення, скільки передано й переплата; залишок — скільки ще має отримати підрядник і скільки винен клієнт."],
+          ["Акт за замовленням", "Картка замовлення → «Платежі» → «Акт взаєморозрахунку з підрядником: PDF / Excel» (або «Каса» → «Проведені розрахунки» → «Акт» біля замовлення). Кнопка «Надіслати підряднику в Telegram» відправляє PDF акта в групу підрядника з коротким підсумком. У ньому: оплати клієнта; маржа Avalon (що передав підрядник і що утримано з оплати, отриманої вами); взаєморозрахунок — частка підрядника, заліки маржі за інші замовлення, скільки передано й переплата; залишок — скільки ще має отримати підрядник і скільки винен клієнт."],
         ],
       },
       {
