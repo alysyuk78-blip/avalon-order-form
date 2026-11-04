@@ -680,6 +680,7 @@ import pricing from '../../lib/avalon-pricing.js';
           share_paid: Number(order.share_paid) || 0,
           owner_owes: Number(order.owner_owes) || 0,
           margin_kept: Number(order.margin_kept) || 0,
+          advance_paid: Number(order.advance_paid) || 0,
           ...(order.margin_overpaid != null ? { margin_overpaid: Number(order.margin_overpaid) || 0 } : {}),
           margin_owed: marginOwed(order),
           legacy: !(Number(order.payments_count) > 0),
@@ -1783,6 +1784,28 @@ import pricing from '../../lib/avalon-pricing.js';
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     }
 
+    // Акт взаєморозрахунку за одним замовленням (гроші клієнта в Avalon) — PDF чи Excel. Лише власник.
+    function OrderActButtons({ token, orderNumber, compact }) {
+      const [busy, setBusy] = useState("");
+      const [msg, setMsg] = useState("");
+      async function get(format) {
+        setBusy(format); setMsg("");
+        try {
+          const res = await api("/api/admin/settlement", { method: "POST", token, body: { order: orderNumber, format } });
+          saveBase64File(res.filename, res.mime, res.base64);
+          setMsg("Збережено: " + (res.filename || ""));
+        } catch (e) { setMsg(e.message || "Не вдалося сформувати акт"); } finally { setBusy(""); }
+      }
+      return (
+        <span className="order-act-buttons">
+          {!compact && <span>Акт взаєморозрахунку з підрядником:</span>}
+          <button type="button" className="btn secondary small" disabled={!!busy} onClick={() => get("pdf")}>{busy === "pdf" ? "PDF…" : compact ? "Акт PDF" : "PDF"}</button>
+          <button type="button" className="btn secondary small" disabled={!!busy} onClick={() => get("xlsx")}>{busy === "xlsx" ? "Excel…" : compact ? "Excel" : "Excel"}</button>
+          {msg && <small>{msg}</small>}
+        </span>
+      );
+    }
+
     // Панель «Звірка з підрядником»: період → XLSX / PDF / надсилання в Telegram.
     // Правило власника: у борг входить лише маржа замовлень, оплачених клієнтом на 100%.
     function SettlementPanel({ token }) {
@@ -2147,6 +2170,9 @@ import pricing from '../../lib/avalon-pricing.js';
             </div>
           </div>
 
+          {isOwner && ((Number(s.owner_received) || 0) >= 1 || (Number(s.share_paid) || 0) >= 1 || (Number(s.advance_paid) || 0) >= 1) && (
+            <div className="order-act-row"><OrderActButtons token={token} orderNumber={orderNumber} /></div>
+          )}
           {isOwner && (Number(s.owner_received) || 0) >= 1 && (
             <div className="owner-money-note" role="status">
               <p>
@@ -5830,7 +5856,8 @@ import pricing from '../../lib/avalon-pricing.js';
           ["Розрахунок із підрядником", "«Каса» → «Розрахунок із підрядником». Спершу залік боргів: ваша маржа, яку винен підрядник за інші замовлення, зараховується в рахунок його грошей у вас — гроші не передаються. Різницю хтось віддає: впишіть, скільки віддаєте зараз і як («Готівкою з каси»), натисніть «Провести розрахунок». Можна віддати частину — решта лишиться боргом. Віддали більше, ніж винні, — впишіть усю суму: переплата стане боргом підрядника вам і зарахується в наступному розрахунку. Готівкою з каси можна віддати не більше, ніж є в касі поза передоплатами клієнтів; більшу суму — переказом з картки (або спершу «Доклав у касу»)."],
           ["Помилились", "«Проведені розрахунки» → «Скасувати» — зникнуть усі записи цього розрахунку. Окремі записи розрахунку в картці не видаляються."],
           ["Повернення й скасування", "Повертаєте клієнту гроші з каси — «Повернення клієнту», «Хто повернув: Я». Замовлення скасували після виготовлення — витрати підрядника несете ви: у картці внесіть «Частка підряднику» на погоджену суму."],
-          ["Акт звірки", "Акт показує і маржу, яку винен підрядник, і гроші клієнтів, отримані вами, та підсумок взаємозаліку. Готівки у вашій касі підрядник в акті не бачить."],
+          ["Акт звірки", "Акт показує і маржу, яку винен підрядник, і гроші клієнтів, отримані вами, та підсумок взаємозаліку, а нижче — детально кожне замовлення, де гроші клієнта отримали ви. Готівки у вашій касі підрядник в акті не бачить."],
+          ["Акт за замовленням", "Картка замовлення → «Платежі» → «Акт взаєморозрахунку з підрядником: PDF / Excel» (або «Каса» → «Проведені розрахунки» → «Акт» біля замовлення). У ньому: оплати клієнта; маржа Avalon (що передав підрядник і що утримано з оплати, отриманої вами); взаєморозрахунок — частка підрядника, заліки маржі за інші замовлення, скільки передано й переплата; залишок — скільки ще має отримати підрядник і скільки винен клієнт."],
         ],
       },
       {
@@ -6375,7 +6402,7 @@ import pricing from '../../lib/avalon-pricing.js';
               <div className="panel-head"><h2>Проведені розрахунки</h2></div>
               <div className="table-scroll">
                 <table>
-                  <thead><tr><th>Дата</th><th>Залік боргів</th><th>Віддано грошима</th><th>Як</th><th>Замовлень</th><th /></tr></thead>
+                  <thead><tr><th>Дата</th><th>Залік боргів</th><th>Віддано грошима</th><th>Як</th><th>Замовлення · акт</th><th /></tr></thead>
                   <tbody>
                     {box.settlements.map(st => (
                       <tr key={st.id}>
@@ -6383,7 +6410,12 @@ import pricing from '../../lib/avalon-pricing.js';
                         <td>{money(st.netting)}</td>
                         <td>{st.paid ? "ви → підряднику " + money(st.paid) : st.received ? "підрядник → вам " + money(st.received) : "—"}</td>
                         <td>{st.method || "—"}</td>
-                        <td>{st.orders.length}</td>
+                        <td>{st.orders.map(n => (
+                          <div key={n} className="settle-order-act">
+                            <button type="button" className="link-btn" onClick={() => onOpenOrder(n)}>{n}</button>
+                            <OrderActButtons token={token} orderNumber={n} compact />
+                          </div>
+                        ))}</td>
                         <td><button type="button" className="btn secondary small" disabled={busy} onClick={() => undo(st)}>Скасувати</button></td>
                       </tr>
                     ))}

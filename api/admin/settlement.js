@@ -35,6 +35,59 @@ function styleHeader(row) {
   });
 }
 
+// Акт взаєморозрахунку за замовленням (рядки готує скрипт таблиці): дата | текст | сума в останній колонці.
+function addOrderActRows(ws, act, width, withTitle) {
+  const merge = (row, from, to) => { if (to > from) ws.mergeCells(row.number, from, row.number, to); };
+  if (withTitle) {
+    const t = ws.addRow([`${act.order_number} · ${act.client}${act.city ? " · " + act.city : ""}${act.date_label ? " · від " + act.date_label : ""}`]);
+    t.font = { bold: true, size: 12 };
+    merge(t, 1, width);
+  }
+  (act.rows || []).forEach((r) => {
+    if (r.k === "section" || r.k === "note") {
+      const row = ws.addRow([r.t]);
+      if (r.k === "section") styleSection(row);
+      else { row.font = { italic: true }; row.getCell(1).alignment = { wrapText: true, vertical: "middle" }; row.height = String(r.t).length > 150 ? 48 : 32; }
+      merge(row, 1, width);
+      return;
+    }
+    const cells = [uaDate(r.d), r.t];
+    while (cells.length < width - 1) cells.push("");
+    cells.push(r.v == null ? "" : r.v);
+    const row = ws.addRow(cells);
+    merge(row, 2, width - 1);
+    row.getCell(2).alignment = { wrapText: true, vertical: "middle" };
+    // Обʼєднані клітинки Excel висоту не підганяє — довгий текст інакше обрізався б.
+    if (String(r.t).length > 55) row.height = String(r.t).length > 110 ? 46 : 32;
+    const money = row.getCell(width);
+    if (typeof money.value === "number") money.numFmt = MONEY;
+    if (r.k === "total") { row.font = { bold: true }; row.eachCell((c) => { c.border = { top: { style: "thin" } }; }); }
+  });
+}
+
+async function buildOrderActXlsx(d) {
+  const act = (d.order_acts || [])[0] || { rows: [] };
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Avalon Metal Design";
+  wb.created = new Date();
+  const ws = wb.addWorksheet("Акт взаєморозрахунку", { pageSetup: { orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+  ws.columns = [{ width: 12 }, { width: 46 }, { width: 18 }, { width: 16 }];
+  const title = ws.addRow(["АКТ ВЗАЄМОРОЗРАХУНКУ З ПІДРЯДНИКОМ"]);
+  title.font = { bold: true, size: 15 };
+  ws.addRow(["Avalon Metal Design"]).font = { color: { argb: "FF66716B" } };
+  ws.addRow([`Замовлення ${act.order_number} · ${act.client}${act.city ? " · " + act.city : ""}${act.date_label ? " · від " + act.date_label : ""}`]).font = { bold: true };
+  ws.addRow([`Сформовано: ${d.generated_at || ""}`]).font = { color: { argb: "FF66716B" } };
+  [1, 2, 3, 4].forEach((n) => ws.mergeCells(n, 1, n, 4));
+  ws.addRow([]);
+  addOrderActRows(ws, act, 4, false);
+  ws.addRow([]);
+  ws.addRow(["Avalon Metal Design: ____________________"]);
+  ws.addRow([]);
+  ws.addRow(["Підрядник: ____________________"]);
+  const buf = await wb.xlsx.writeBuffer();
+  return Buffer.from(buf);
+}
+
 function styleSection(row) {
   row.eachCell((cell) => {
     cell.font = { bold: true };
@@ -173,11 +226,20 @@ async function buildXlsx(d) {
     styleSection(ws.addRow([head]));
     styleHeader(ws.addRow(["Дата", "№ замовлення", "Спосіб", "Примітка", "Сума"]));
     list.forEach((p) => {
-      ws.addRow([String(p.date || "").slice(0, 10), p.order_number, p.method || "—", p.note || "", p.amount]);
+      ws.addRow([uaDate(String(p.date || "").slice(0, 10)), p.order_number, p.method || "—", p.note || "", p.amount]);
     });
     const pRow = ws.addRow(["", "", "", label, total || 0]);
     pRow.font = { bold: true };
   });
+
+  // ── Детально: замовлення, де Avalon отримала гроші клієнта (акт взаєморозрахунку кожного) ──
+  if ((d.order_acts || []).length) {
+    ws.addRow([]);
+    const h = ws.addRow(["ДЕТАЛЬНО: ГРОШІ КЛІЄНТІВ, ОТРИМАНІ AVALON, І ВЗАЄМОРОЗРАХУНОК"]);
+    styleSection(h);
+    ws.mergeCells(h.number, 1, h.number, width);
+    d.order_acts.forEach((act) => { ws.addRow([]); addOrderActRows(ws, act, width, true); });
+  }
 
   ws.addRow([]);
   ws.addRow(["Avalon Metal Design: ____________________", "", "", "", "Підрядник: ____________________"]);
@@ -209,6 +271,24 @@ module.exports = async function handler(req, res) {
     const format = String(src.format || "xlsx").toLowerCase();
     // Менеджер формує акт без грошей власника (каси) — рішення власника 02.11.2026.
     const forManager = roleOf(req) === "manager";
+    // Акт взаєморозрахунку за одним замовленням (гроші клієнта в Avalon) — лише власник.
+    const order = String(src.order || "").trim();
+    if (order) {
+      if (!/^ORD-[A-Za-z0-9-]{3,40}$/.test(order)) return res.status(400).json({ error: "Невірний номер замовлення" });
+      if (forManager) return res.status(403).json({ error: "Акт взаєморозрахунку формує лише власник", code: "OWNER_ONLY" });
+      if (format === "pdf") {
+        const out = await callAdminSheets("settlement_pdf", { order_number: order });
+        return res.status(200).json(out);
+      }
+      if (format !== "xlsx") return res.status(400).json({ error: "Акт за замовленням — лише PDF або Excel" });
+      const data = await callAdminSheets("settlement_data", { order_number: order });
+      const buf = await buildOrderActXlsx(data);
+      return res.status(200).json({
+        status: "ok", filename: `Akt-vzaiemorozrakhunku-${order}.xlsx`,
+        mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        base64: buf.toString("base64"),
+      });
+    }
 
     if (format === "send") {
       const out = await callAdminSheets("settlement_send", { from, to, for_manager: forManager });

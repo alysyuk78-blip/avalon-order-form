@@ -101,6 +101,34 @@ async function run() {
   const plainRow = noCom.find(r => r[0] === "ORD-010926-001");
   assert.equal(plainRow[7], 2895);
 
+  // ── Акт взаєморозрахунку за одним замовленням (Excel) ──
+  sheetsPayload = {
+    status: "ok", single_order: "ORD-110926-009", generated_at: "04.11.2026 10:00",
+    order_acts: [{ order_number: "ORD-110926-009", client: "Олександр", city: "Хмельницький", date_label: "11.09.2026",
+      rows: [{ k: "line", d: "", t: "Сума замовлення", v: 81396 },
+             { k: "section", d: "", t: "3. ВЗАЄМОРОЗРАХУНОК", v: null },
+             { k: "total", d: "", t: "= частка підрядника", v: 32964 },
+             { k: "line", d: "2026-11-03", t: "− залік: маржа Avalon за ORD-031126-001", v: -1045 },
+             { k: "note", d: "", t: "Маржу Avalon отримано повністю.", v: null }] }],
+  };
+  const res1 = response();
+  await handler({ method: "POST", query: {}, body: { order: "ORD-110926-009", format: "xlsx" }, headers: {} }, res1);
+  assert.equal(res1.statusCode, 200);
+  assert.equal(res1.body.filename, "Akt-vzaiemorozrakhunku-ORD-110926-009.xlsx");
+  const wb1 = new ExcelJS.Workbook();
+  await wb1.xlsx.load(Buffer.from(res1.body.base64, "base64"));
+  const rows1 = [];
+  wb1.getWorksheet(1).eachRow((row) => rows1.push(row.values.slice(1).map(v => (v == null ? "" : v))));
+  assert.equal(rows1[0][0], "АКТ ВЗАЄМОРОЗРАХУНКУ З ПІДРЯДНИКОМ");
+  const shareRow = rows1.find(r => r[1] === "= частка підрядника");
+  assert.equal(shareRow[3], 32964);
+  const offRow = rows1.find(r => String(r[1]).indexOf("− залік") === 0);
+  assert.deepEqual([offRow[0], offRow[3]], ["03.11.2026", -1045]);
+  // Невірний номер — 400.
+  const res2 = response();
+  await handler({ method: "POST", query: {}, body: { order: "<script>", format: "xlsx" }, headers: {} }, res2);
+  assert.equal(res2.statusCode, 400);
+
   console.log("settlement-act tests: OK");
 }
 
