@@ -967,6 +967,10 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
     assert.ok(!a.rows.some((r) => /ЗАЛИШОК/.test(r.t)));
     assert.equal(val(a, "Лишилось у Avalon"), 3000);
     assert.ok(a.rows.some((r) => r.k === "note" && /скасовано/i.test(r.t)));
+    // Підпис у Telegram для скасованого — без «частки підрядника» й «ще має передати».
+    const cap = ctx.orderActCaption_(a);
+    assert.ok(/скасовано/.test(cap) && /компенсація витрат\): <b>2.000 ₴/.test(cap) && /Лишилось у Avalon \(повертається клієнту\): 3.000 ₴/.test(cap), cap);
+    assert.ok(!/Частка підрядника|ще має передати/.test(cap), cap);
   }
   {
     // 4) Переплата клієнта Avalon — видно й пояснено; 5) маржа з копійками — робота підрядника сходиться.

@@ -4617,7 +4617,11 @@ function orderMoneyAct_(g, allPays) {
   return {
     order_number: num, client: g.client || "", city: g.city || "", date_label: orderDateLabel_(g.created_at),
     created_at: g.created_at, rows: rows,
-    summary: { owner_received: ownerPart, kept: kept, share: share, owe: owe, advance_left: advanceLeft, contractor_left: left, client_left: clientLeft }
+    // Скасоване: гроші Avalon — не частка підрядника (компенсацію витрат передано окремо, решта — клієнту).
+    summary: cancelled
+      ? { cancelled: true, owner_received: ownerReceived, passed: passed, offsets: offsets, held_left: Math.round(ownerReceived - offsets - passed),
+          kept: 0, share: 0, owe: 0, advance_left: advanceLeft, contractor_left: 0, client_left: 0 }
+      : { owner_received: ownerPart, kept: kept, share: share, owe: owe, advance_left: advanceLeft, contractor_left: left, client_left: clientLeft }
   };
 }
 
@@ -5037,6 +5041,14 @@ function orderActCaption_(act) {
   function v(prefix) { var r = act.rows.filter(function (x) { return x.t.indexOf(prefix) === 0 && x.v != null; })[0]; return r ? r.v : null; }
   var s = act.summary || {};
   var lines = ["📄 <b>Акт взаєморозрахунку</b>", "Замовлення <b>" + esc(act.order_number) + "</b>" + (act.client ? " · " + esc(act.client) : "")];
+  if (s.cancelled) {
+    lines.push("Замовлення скасовано.");
+    if (s.owner_received >= 1) lines.push("Avalon отримала від клієнта: " + money_(s.owner_received) + " ₴");
+    if (s.passed >= 1) lines.push("Передано підряднику (компенсація витрат): <b>" + money_(s.passed) + " ₴</b>");
+    if (s.held_left >= 1) lines.push("Лишилось у Avalon (повертається клієнту): " + money_(s.held_left) + " ₴");
+    if (s.advance_left >= 1) lines.push("Підрядник винен Avalon (переплата): <b>" + money_(s.advance_left) + " ₴</b>");
+    return lines.join("\n");
+  }
   if (s.owner_received >= 1) {
     lines.push("Avalon отримала від клієнта: <b>" + money_(s.owner_received) + " ₴</b>");
     if (s.kept >= 1) lines.push("Утримано маржу Avalon: " + money_(s.kept) + " ₴");
