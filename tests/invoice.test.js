@@ -80,6 +80,24 @@ assert.ok(/Сергій &lt;&amp;&gt;/.test(docXml) && !/<&>/.test(docXml), "т�
 assert.ok(/Чотири тисячі двісті двадцять дев'ять гривень 00 копійок/.test(docXml) && /Без ПДВ/.test(docXml));
 assert.ok(/w:tblLayout w:type="fixed"/.test(docXml), "фіксовані ширини колонок — без зсувів у Google Документах і Pages");
 for (const part of ["[Content_Types].xml", "_rels/.rels", "word/document.xml"]) assert.ok(Buffer.from(docx).includes(Buffer.from(part)), part);
+// Порядок елементів за схемою Word: tblW → jc → tblBorders; tcW → gridSpan → shd.
+const tovXml = inv.invoiceDocxXml(Object.assign({}, wd, { seller: "tov", paid_before: 1000, amount: 3229 }));
+assert.ok(!/<w:tblPr><w:jc/.test(tovXml) && /<w:tblW [^>]*\/><w:jc w:val="right"\/><w:tblBorders>/.test(tovXml), "jc після tblW");
+assert.ok(!/<w:shd [^>]*\/><w:gridSpan/.test(docXml) && /<w:gridSpan w:val="2"\/>/.test(docXml), "gridSpan перед shd");
+// Невидимі службові символи не ламають XML.
+const ctlXml = inv.invoiceDocxXml(Object.assign({}, wd, { lines: [{ name: "Кошик\u0001\u001f x", qty: 1, unit: "шт.", sum: 100 }], order_total: 100, amount: 100 }));
+assert.ok(/Кошик x/.test(ctlXml) && !/[\u0000-\u0008\u000E-\u001F]/.test(ctlXml), "керівні символи прибрано");
+// Логотип і печатка ТОВ вбудовуються як PNG; у ФОП печатки немає.
+const png = (w, h) => { const b = new Uint8Array(33); b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0); const dv = new DataView(b.buffer); dv.setUint32(16, w); dv.setUint32(20, h); return b; };
+const has = (zip, s) => Buffer.from(zip).includes(Buffer.from(s));
+const tovDocx = inv.buildInvoiceDocx(Object.assign({}, wd, { seller: "tov" }), { logo: png(800, 800), stamp: png(1024, 962) });
+assert.ok(has(tovDocx, "word/media/logo.png") && has(tovDocx, "word/media/stamp.png") && has(tovDocx, 'r:embed="rIdStamp"') && has(tovDocx, "word/_rels/document.xml.rels"), "ТОВ: логотип і печатка");
+assert.ok(has(tovDocx, 'cx="1463040" cy="1374458"'), "печатка 1,6 дюйма за пропорцією файлу");
+const fopDocx = inv.buildInvoiceDocx(wd, { logo: png(800, 800), stamp: png(1024, 962) });
+assert.ok(has(fopDocx, "word/media/logo.png") && !has(fopDocx, "stamp.png") && !has(fopDocx, "AVALON METAL DESIGN"), "ФОП: логотип замість напису, без печатки");
+assert.ok(has(docx, "AVALON METAL DESIGN") && !has(docx, "media/"), "без картинок — напис, як раніше");
+const hLogo = inv.buildInvoiceHtml(Object.assign({}, wd, { logo_url: "https://x/admin/img/avalon-logo.svg" }));
+assert.ok(/<img class="logo" src="https:\/\/x\/admin\/img\/avalon-logo\.svg"/.test(hLogo) && !/кошики для кондиціонерів/.test(hLogo), "PDF: логотип замість напису");
 
 // ── 5. Журнал рахунків у скрипті таблиці ──
 const CODE = fs.readFileSync(path.join(__dirname, "..", "google-apps-script-v2.js"), "utf8");

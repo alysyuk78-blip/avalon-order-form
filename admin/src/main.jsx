@@ -2126,6 +2126,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         order_number: inv.order_number, buyer: d.buyer || { name: inv.buyer_name }, lines: d.lines || [],
         order_total: d.order_total, paid_before: d.paid_before, amount: inv.amount,
         stamp_url: window.location.origin + "/calc/img/stamp.png",
+        logo_url: window.location.origin + "/admin/img/avalon-logo.svg",
       });
     }
     // PDF: документ у новій вкладці з діалогом друку («Зберегти як PDF»). Вкладку відкриваємо одразу в натисканні,
@@ -2145,8 +2146,18 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         order_number: inv.order_number, buyer: d.buyer || { name: inv.buyer_name }, lines: d.lines || [],
         order_total: d.order_total, paid_before: d.paid_before, amount: inv.amount };
     }
-    function downloadInvoiceWord(inv) {
-      const blob = new Blob([invoiceLib.buildInvoiceDocx(invoiceDataOf(inv))], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    async function fetchPng(url) {
+      try {
+        const r = await fetch(url, { cache: "force-cache" });
+        return r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
+      } catch (e) { return null; }
+    }
+    // Логотип і печатка ТОВ вбудовуються у файл (без інтернету теж видно). Без печатки рахунок ТОВ не віддаємо.
+    async function downloadInvoiceWord(inv) {
+      const data = invoiceDataOf(inv);
+      const [logo, stamp] = await Promise.all([fetchPng("/admin/img/avalon-logo.png"), data.seller === "tov" ? fetchPng("/calc/img/stamp.png") : null]);
+      if (data.seller === "tov" && !stamp) throw new Error("Не вдалося завантажити печатку ТОВ — спробуйте ще раз.");
+      const blob = new Blob([invoiceLib.buildInvoiceDocx(data, { logo, stamp })], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -2176,6 +2187,9 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       // Найменування можна виправити перед створенням (без Word); суми й кількості — з замовлення.
       const [names, setNames] = useState({});
       const [draft, setDraft] = useState(null); // { i, text } — рядок, який зараз правлять олівцем
+      // Правки привʼязані до номера рядка: якщо позиції замовлення змінились — скидаємо, щоб назва не перескочила на інший товар.
+      const linesKey = JSON.stringify(autoLines.map(l => [l.name, l.qty, l.sum]));
+      useEffect(() => { setNames({}); setDraft(null); }, [linesKey]);
       const lines = autoLines.map((l, i) => (names[i] != null ? { ...l, name: names[i] } : l));
       const orderTotal = lines.reduce((sum, l) => sum + l.sum, 0);
       // Правка найменувань уже створеного рахунку: { number, names: [...] }.
@@ -2255,7 +2269,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                   <span><b>{inv.number}</b> від {invoiceDateLabel(inv.date)} · {inv.seller} · {money(inv.amount)}{inv.buyer_name ? " · " + inv.buyer_name : ""}{inv.created_by === "менеджер" ? " · створив менеджер" : ""}</span>
                   <span className="invoices-actions">
                     <button type="button" className="btn secondary small" onClick={() => openInvoicePrint(window.open("", "_blank"), invoiceHtmlOf(inv))}>PDF</button>
-                    <button type="button" className="btn secondary small" onClick={() => downloadInvoiceWord(inv)}>Word</button>
+                    <button type="button" className="btn secondary small" onClick={() => { setError(""); downloadInvoiceWord(inv).catch(e => setError(e.message || "Не вдалося підготувати Word")); }}>Word</button>
                     <button type="button" className="btn secondary small" disabled={busy}
                       onClick={() => setEditing({ number: inv.number, names: ((inv.data && inv.data.lines) || []).map(l => l.name) })}>✏️ Найменування</button>
                   </span>
@@ -2263,7 +2277,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                     <div className="invoice-names-edit">
                       {editing.names.map((n, i) => (
                         <div className="field" key={i}><label>Позиція {i + 1}</label>
-                          <textarea rows={2} value={n} onChange={e => { const v = e.target.value; setEditing(ed => ({ ...ed, names: ed.names.map((x, j) => (j === i ? v : x)) })); }} /></div>
+                          <textarea rows={2} maxLength={400} value={n} onChange={e => { const v = e.target.value; setEditing(ed => ({ ...ed, names: ed.names.map((x, j) => (j === i ? v : x)) })); }} /></div>
                       ))}
                       <p className="margin-calc-note">Змінюється лише текст найменувань — номер, суми й кількості рахунку ті самі.</p>
                       <div className="quick-actions">
@@ -2315,7 +2329,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                   <div key={i} className="invoice-line-name">
                     {draft && draft.i === i ? (
                       <>
-                        <textarea rows={3} autoFocus value={draft.text} onChange={e => { const v = e.target.value; setDraft(d => ({ ...d, text: v })); }} />
+                        <textarea rows={3} autoFocus maxLength={400} value={draft.text} onChange={e => { const v = e.target.value; setDraft(d => ({ ...d, text: v })); }} />
                         <div className="quick-actions">
                           <button type="button" className="btn small" disabled={!String(draft.text || "").trim()}
                             onClick={() => { const v = String(draft.text).trim(); setNames(n => { const c = { ...n }; if (v === autoLines[i].name) delete c[i]; else c[i] = v; return c; }); setDraft(null); }}>Зберегти</button>
@@ -2349,7 +2363,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               {error && <div className="error">{error}</div>}
               <div className="quick-actions">
                 <button type="button" className="btn" disabled={busy} onClick={create}>{busy ? "Створюю…" : "Створити рахунок (PDF)"}</button>
-                <button type="button" className="btn secondary" disabled={busy} onClick={() => { setOpen(false); setError(""); }}>Скасувати</button>
+                <button type="button" className="btn secondary" disabled={busy} onClick={() => { setOpen(false); setError(""); setNames({}); setDraft(null); }}>Скасувати</button>
               </div>
             </div>
           )}
