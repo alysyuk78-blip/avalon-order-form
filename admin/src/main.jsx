@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import finance from '../../lib/admin-finance.js';
 import pricing from '../../lib/avalon-pricing.js';
+import invoiceLib from '../../lib/avalon-invoice.js';
 
     const { groupPaymentMetrics, marginOwed } = finance;
     // До погодження («Нове», «В опрацюванні підрядником», «Погодження клієнтом») маржа не «до отримання» — навіть
@@ -2090,6 +2091,185 @@ import pricing from '../../lib/avalon-pricing.js';
     }
 
     // Платежі замовлення: передоплати/доплати клієнта і виплати маржі підрядником.
+    // ── Рахунок на оплату (06.11.2026): ФОП чи ТОВ, сума — залишок (можна змінити), СФ-0001… з журналом ──
+    const INVOICE_SELLER_LIST = [invoiceLib.AVALON_INVOICE_SELLERS.fop, invoiceLib.AVALON_INVOICE_SELLERS.tov];
+    /** Назва позиції в рахунку для клієнта: що, модель, розміри (В×Ш×Г), колір, візерунок. */
+    function invoiceLineName(item) {
+      const model = String(item.basket_model || "").trim();
+      if (/^доплата за колір/i.test(model)) return "Доплата за небазовий колір";
+      const kind = item.product_kind === SERVICE_KIND ? "" : item.product_kind === "Кронштейни" ? "Кронштейни"
+        : item.product_kind === "Інший виріб" ? "" : "Кошик для кондиціонера";
+      const size = [item.size_h, item.size_w, item.size_d].map(v => Number(v) || 0);
+      const parts = [
+        [kind, model || item.construction || item.basket_type].filter(Boolean).join(" "),
+        model && item.construction && item.construction.indexOf(model) < 0 ? item.construction : "",
+        size[0] && size[1] ? size.filter(Boolean).join("×") + " мм" : "",
+        item.color || "", item.pattern ? "візерунок " + item.pattern : "",
+      ].map(x => String(x || "").trim()).filter(Boolean);
+      return parts.join(", ") || "Товар за замовленням";
+    }
+    function invoiceLinesFromItems(items) {
+      return (items || []).filter(it => (Number(it.revenue) || 0) > 0).map(it => ({
+        name: invoiceLineName(it), qty: Number(it.quantity) || 1, unit: it.unit || "шт.", sum: Math.round(Number(it.revenue) || 0),
+      }));
+    }
+    function invoiceDateLabel(iso) {
+      const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+      return m ? m[3] + "." + m[2] + "." + m[1] : String(iso || "");
+    }
+    function invoiceHtmlOf(inv) {
+      const d = inv.data || {};
+      return invoiceLib.buildInvoiceHtml({
+        number: inv.number, date: invoiceDateLabel(inv.date), seller: /ТОВ/.test(inv.seller) ? "tov" : inv.seller === "tov" ? "tov" : "fop",
+        order_number: inv.order_number, buyer: d.buyer || { name: inv.buyer_name }, lines: d.lines || [],
+        order_total: d.order_total, paid_before: d.paid_before, amount: inv.amount,
+        stamp_url: window.location.origin + "/calc/img/stamp.png",
+      });
+    }
+    // PDF: документ у новій вкладці з діалогом друку («Зберегти як PDF»). Вкладку відкриваємо одразу в натисканні,
+    // інакше браузер заблокує її як спливаюче вікно.
+    function openInvoicePrint(win, html) {
+      if (!win) return false;
+      win.document.open();
+      win.document.write(html.replace("</body>", "<script>window.onload=function(){setTimeout(function(){window.print()},300)}<\/script></body>"));
+      win.document.close();
+      return true;
+    }
+    function downloadInvoiceWord(inv) {
+      const blob = new Blob(["﻿", invoiceLib.invoiceWordHtml(invoiceHtmlOf(inv))], { type: "application/msword" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "Рахунок " + inv.number + " " + (inv.order_number || "") + ".doc";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+    function InvoicesSection({ token, orderNumber, order, items, summary, invoices: initial }) {
+      const [invoices, setInvoices] = useState(initial || []);
+      useEffect(() => { setInvoices(initial || []); }, [initial]);
+      const [open, setOpen] = useState(false);
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState("");
+      const lines = invoiceLinesFromItems(items);
+      const orderTotal = lines.reduce((sum, l) => sum + l.sum, 0);
+      const paid = Math.max(0, Math.round(Number(summary && summary.client_paid) || 0));
+      const rest = Math.max(0, orderTotal - paid);
+      const last = invoices[invoices.length - 1];
+      const lastBuyer = (last && last.data && last.data.buyer) || null;
+      const [form, setForm] = useState(() => ({
+        seller: lastBuyer && last && /ТОВ/.test(last.seller) ? "tov" : (Number(order && order.commission_pct) > 0 ? "tov" : "fop"),
+        amount: "",
+        buyer: lastBuyer || { kind: "person", name: (order && order.client) || "", phone: (order && order.phone) || "" },
+      }));
+      const pending = useRef("");
+      const amount = form.amount === "" ? (rest >= 1 ? rest : orderTotal) : Math.round(Number(form.amount) || 0);
+      const setBuyer = (k, v) => setForm(f => ({ ...f, buyer: { ...f.buyer, [k]: v } }));
+      const b = form.buyer;
+      async function create() {
+        setError("");
+        if (!lines.length) return setError("У замовленні немає позицій з ціною — спершу порахуйте товар.");
+        if (!(amount >= 1)) return setError("Вкажіть суму рахунку.");
+        if (!String(b.name || "").trim()) return setError("Вкажіть покупця.");
+        // Вкладку для PDF відкриваємо зараз (у натисканні), документ запишемо після відповіді сервера.
+        const win = window.open("", "_blank");
+        if (win) win.document.write("<p style='font-family:Arial;padding:20px'>Готую рахунок…</p>");
+        setBusy(true);
+        try {
+          if (!pending.current) pending.current = newRequestId();
+          const res = await api("/api/admin/order?resource=invoice", { method: "POST", token, body: {
+            order_number: orderNumber, request_id: pending.current, seller: form.seller, amount,
+            buyer: b, lines, order_total: orderTotal, paid_before: paid } });
+          pending.current = "";
+          setInvoices(res.invoices || []);
+          setOpen(false);
+          setForm(f => ({ ...f, amount: "" }));
+          if (!openInvoicePrint(win, invoiceHtmlOf(res.invoice))) setError("Рахунок " + res.invoice.number + " створено. Браузер заблокував нову вкладку — натисніть «PDF» у списку.");
+        } catch (e) {
+          if (win) win.close();
+          setError(e.message || "Не вдалося створити рахунок");
+        } finally { setBusy(false); }
+      }
+      const seller = invoiceLib.AVALON_INVOICE_SELLERS[form.seller];
+      const vat = seller.vat ? invoiceLib.avalonVatOf(amount) : 0;
+      return (
+        <div className="invoices-block">
+          <div className="invoices-head">
+            <b>Рахунки на оплату</b>
+            {!open && <button type="button" className="btn secondary small" onClick={() => setOpen(true)} disabled={!lines.length}
+              title={lines.length ? "" : "Спершу порахуйте товар"}>Виставити рахунок</button>}
+          </div>
+          {invoices.length > 0 && (
+            <ul className="invoices-list">
+              {invoices.slice().reverse().map(inv => (
+                <li key={inv.number}>
+                  <span><b>{inv.number}</b> від {invoiceDateLabel(inv.date)} · {inv.seller} · {money(inv.amount)}{inv.buyer_name ? " · " + inv.buyer_name : ""}</span>
+                  <span className="invoices-actions">
+                    <button type="button" className="btn secondary small" onClick={() => openInvoicePrint(window.open("", "_blank"), invoiceHtmlOf(inv))}>PDF</button>
+                    <button type="button" className="btn secondary small" onClick={() => downloadInvoiceWord(inv)}>Word</button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {open && (
+            <div className="invoice-form">
+              <div className="field"><label>Кому платити</label>
+                <div className="quick-actions">
+                  {INVOICE_SELLER_LIST.map(x => (
+                    <button key={x.id} type="button" className={form.seller === x.id ? "active" : ""} onClick={() => setForm(f => ({ ...f, seller: x.id }))}>{x.label}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="field"><label>Покупець</label>
+                <div className="quick-actions">
+                  {[["person", "Фізична особа"], ["fop", "ФОП"], ["company", "Компанія"]].map(([k, l]) => (
+                    <button key={k} type="button" className={b.kind === k ? "active" : ""} onClick={() => setBuyer("kind", k)}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid2">
+                <div className="field"><label>{b.kind === "company" ? "Назва компанії" : b.kind === "fop" ? "ФОП (ПІБ)" : "ПІБ"}</label>
+                  <input value={b.name || ""} onChange={e => setBuyer("name", e.target.value)} /></div>
+                {b.kind !== "person" && <div className="field"><label>{b.kind === "company" ? "Код ЄДРПОУ" : "РНОКПП (ІПН)"}</label>
+                  <input value={b.code || ""} onChange={e => setBuyer("code", e.target.value)} /></div>}
+                {b.kind === "company" && <div className="field"><label>ІПН платника ПДВ (якщо є)</label>
+                  <input value={b.ipn || ""} onChange={e => setBuyer("ipn", e.target.value)} /></div>}
+                {b.kind !== "person" && <div className="field"><label>IBAN</label>
+                  <input value={b.iban || ""} onChange={e => setBuyer("iban", e.target.value)} placeholder="UA…" /></div>}
+                {b.kind !== "person" && <div className="field"><label>Банк</label>
+                  <input value={b.bank || ""} onChange={e => setBuyer("bank", e.target.value)} /></div>}
+                {b.kind !== "person" && <div className="field"><label>Адреса</label>
+                  <input value={b.address || ""} onChange={e => setBuyer("address", e.target.value)} /></div>}
+                <div className="field"><label>Телефон</label>
+                  <input value={b.phone || ""} onChange={e => setBuyer("phone", e.target.value)} /></div>
+                <div className="field"><label>E-mail</label>
+                  <input value={b.email || ""} onChange={e => setBuyer("email", e.target.value)} /></div>
+              </div>
+              <div className="field"><label htmlFor="invoice-amount">Сума рахунку, ₴</label>
+                <input id="invoice-amount" type="number" min="1" inputMode="decimal" placeholder={String(rest >= 1 ? rest : orderTotal)}
+                  value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+                <div className="quick-actions" style={{ marginTop: 6 }}>
+                  {rest >= 1 && rest !== orderTotal && <button type="button" onClick={() => setForm(f => ({ ...f, amount: String(rest) }))}>Залишок {money(rest)}</button>}
+                  <button type="button" onClick={() => setForm(f => ({ ...f, amount: String(orderTotal) }))}>Уся сума {money(orderTotal)}</button>
+                  <button type="button" onClick={() => setForm(f => ({ ...f, amount: String(Math.round(orderTotal / 2)) }))}>50 % — {money(Math.round(orderTotal / 2))}</button>
+                </div>
+              </div>
+              <p className="margin-calc-note">
+                За замовленням {money(orderTotal)}{paid >= 1 ? ", сплачено " + money(paid) : ""}. Рахунок на <b>{money(amount)}</b>
+                {seller.vat ? ", у т. ч. ПДВ " + money(vat) : ", без ПДВ"}. Отримувач — {seller.name}. Номер присвоїться автоматично (СФ-…).
+              </p>
+              {error && <div className="error">{error}</div>}
+              <div className="quick-actions">
+                <button type="button" className="btn" disabled={busy} onClick={create}>{busy ? "Створюю…" : "Створити рахунок (PDF)"}</button>
+                <button type="button" className="btn secondary" disabled={busy} onClick={() => { setOpen(false); setError(""); }}>Скасувати</button>
+              </div>
+            </div>
+          )}
+          {!open && error && <div className="error">{error}</div>}
+        </div>
+      );
+    }
+
     function PaymentsSection({ token, orderNumber, payments, summary, onChanged }) {
       const [form, setForm] = useState({ type: "Передоплата", amount: "", method: "Готівка", date: "", note: "", recipient: "" });
       const isOwner = tokenRole(token) !== "manager";
@@ -3729,6 +3909,11 @@ import pricing from '../../lib/avalon-pricing.js';
                 onChanged && onChanged(next);
               }}
             />
+
+            {order.status !== "Скасовано" && (
+              <InvoicesSection token={token} orderNumber={orderNumber} order={order} items={data.items || []}
+                summary={data.payment_summary} invoices={data.invoices} />
+            )}
 
             <div className="section-title">Швидкі дії</div>
             <div className="quick-actions">
