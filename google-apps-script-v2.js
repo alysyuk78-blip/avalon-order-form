@@ -38,7 +38,7 @@ var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "delete_order_item", 
   "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment",
   "settlement_pdf", "settlement_send", "migrate_legacy_payments",
   "rates_save", "rates_delete", "order_reprice",
-  "cash_add", "cash_delete", "cash_settle", "cash_settle_undo", "cash_take"];
+  "cash_add", "cash_delete", "cash_settle", "cash_settle_undo", "cash_take", "invoice_create"];
 
 function doPost(e) {
   // Тіло читаємо ДО блокування: кабінет робить кілька запитів паралельно, і якщо
@@ -4354,6 +4354,80 @@ function adminCashSettleUndo_(data) {
   return { status: "ok", removed: rows.length, box: adminCashBox_() };
 }
 
+// ===================== РАХУНКИ НА ОПЛАТУ =====================
+// Власник 06.11.2026: рахунок для оплати з CRM, нумерація СФ-0001, СФ-0002… по порядку і журнал у картці.
+// Сам документ (PDF / Word) кабінет будує з даних, збережених тут, — повторне завантаження дає той самий рахунок.
+var SHEET_INVOICES = "Рахунки";
+var INVOICE_SELLERS = ["fop", "tov"];
+function invoicesSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_INVOICES);
+  if (sh) return sh;
+  sh = ss.insertSheet(SHEET_INVOICES);
+  var headers = ["Дата", "№ рахунку", "№ замовлення", "Отримувач", "Покупець", "Сума, ₴", "ID запиту", "Дані", "Створив"];
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  headerStyle(sh, headers.length);
+  [110, 110, 150, 120, 260, 120, 210, 300, 110].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  sh.getRange("A2:A").setNumberFormat("dd.MM.yyyy");
+  sh.getRange("F2:F").setNumberFormat("#,##0 ₴");
+  return sh;
+}
+function readInvoices_(orderNumber) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_INVOICES);
+  if (!sh || sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, Math.min(9, sh.getMaxColumns())).getValues().map(function (r, i) {
+    var data = {};
+    try { data = JSON.parse(String(r[7] || "{}")) || {}; } catch (e) { data = {}; }
+    return { row: i + 2, date: toISODate(r[0]) || String(r[0] || ""), number: String(r[1] || ""), order_number: String(r[2] || "").trim(),
+             seller: String(r[3] || ""), buyer_name: String(r[4] || "").replace(/^'/, ""), amount: Number(r[5]) || 0, request_id: String(r[6] || ""), data: data,
+             created_by: String(r[8] || "") };
+  }).filter(function (x) { return x.number && (!orderNumber || x.order_number === orderNumber); });
+}
+/** Створити рахунок: наступний номер СФ-NNNN, запис у журнал. Повтор із тим самим ID повертає той самий рахунок. */
+function adminInvoiceCreate_(data) {
+  var num = String((data && data.order_number) || "").trim();
+  var rid = String((data && data.request_id) || "").trim();
+  if (!num) throw new Error("Не вказано замовлення");
+  if (!/^[A-Za-z0-9_-]{6,60}$/.test(rid)) throw new Error("Немає ID запиту");
+  var seller = String((data && data.seller) || "");
+  if (INVOICE_SELLERS.indexOf(seller) < 0) throw new Error("Невідомий отримувач оплати");
+  var amount = Math.round(Number(data && data.amount) || 0);
+  if (!(amount >= 1) || amount > 10000000) throw new Error("Вкажіть суму рахунку");
+  var all = readInvoices_("");
+  var dup = all.filter(function (x) { return x.request_id === rid; })[0];
+  if (dup) return { status: "ok", duplicate: true, invoice: dup, invoices: all.filter(function (x) { return x.order_number === num; }) };
+  if (!adminFindOrderRows_(num).length) throw new Error("Замовлення " + num + " не знайдено");
+  // Лічильник не зменшується: якщо рядок журналу видалять вручну, виданий клієнту номер не повториться.
+  var props = PropertiesService.getScriptProperties();
+  var max = all.reduce(function (m, x) { var n = Number(String(x.number).replace(/\D/g, "")) || 0; return Math.max(m, n); },
+    Number(props.getProperty("INVOICE_SEQ")) || 0);
+  var number = "СФ-" + ("000" + (max + 1)).slice(-Math.max(4, String(max + 1).length));
+  props.setProperty("INVOICE_SEQ", String(max + 1));
+  var date = Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd");
+  var buyer = (data && data.buyer) || {};
+  var payload = JSON.stringify({ buyer: buyer, lines: (data && data.lines) || [], order_total: Number(data && data.order_total) || 0,
+    paid_before: Number(data && data.paid_before) || 0 });
+  if (payload.length > 40000) throw new Error("Забагато даних у рахунку");
+  var sh = invoicesSheet_();
+  var row = sh.getLastRow() + 1;
+  // Імʼя покупця — завжди текстом (з «=» на початку таблиця зробила б з нього формулу).
+  sh.getRange(row, 1, 1, 9).setValues([[date, number, num, seller === "tov" ? "ТОВ «Валон-А»" : "ФОП Арцаблюк",
+    sheetText_(String(buyer.name || "").slice(0, 200)), amount, rid, payload, data && data.created_by === "manager" ? "менеджер" : "власник"]]);
+  sh.getRange(row, 1).setNumberFormat("dd.MM.yyyy");
+  sh.getRange(row, 6).setNumberFormat("#,##0 ₴");
+  SpreadsheetApp.flush();
+  var list = readInvoices_(num);
+  return { status: "ok", invoice: list.filter(function (x) { return x.request_id === rid; })[0], invoices: list };
+}
+function adminFindOrderRows_(orderNumber) {
+  var sh = adminOrdersSheet_();
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  var nums = sh.getRange(2, 1, last - 1, 1).getValues(), rows = [];
+  for (var i = 0; i < nums.length; i++) if (String(nums[i][0] || "").trim() === orderNumber) rows.push(i + 2);
+  return rows;
+}
+
 // ===================== АКТ ЗВІРКИ З ПІДРЯДНИКОМ =====================
 // Модель: клієнт платить підряднику, підрядник перераховує власнику маржу.
 // ПРАВИЛО ВЛАСНИКА: маржа вважається такою, що підлягає виплаті, ЛИШЕ коли клієнт
@@ -5412,6 +5486,8 @@ function handleAdminRequest_(data) {
     if (action === "cash_settle") return jsonOut(adminCashSettle_(data));
     if (action === "cash_settle_undo") return jsonOut(adminCashSettleUndo_(data));
     if (action === "cash_take") return jsonOut(adminCashTake_(data));
+    if (action === "invoice_create") return jsonOut(adminInvoiceCreate_(data));
+    if (action === "invoice_list") return jsonOut({ status: "ok", invoices: readInvoices_(String((data && data.order_number) || "").trim()) });
     // Чати з клієнтами (Telegram Business). Аркуш «Чати» пишуть під власним блокуванням.
     if (action === "chat_ingest") return jsonOut(adminChatIngest_(data));
     if (action === "chat_log_out") return jsonOut(adminChatLogOut_(data));
@@ -5735,6 +5811,8 @@ function adminGetOrder_(data) {
     status: "ok", order: group, items: items,
     pricing: pricingInfo_(),
     payments: pay,
+    // Журнал рахунків — не головне в картці: збій його читання не заважає відкрити замовлення.
+    invoices: (function () { try { return readInvoices_(orderNumber); } catch (invErr) { console.error("Рахунки: " + invErr); return []; } })(),
     payment_summary: (function () {
       var rev = group ? (Number(group.revenue) || 0) : 0;
       var prof = group ? (Number(group.profit) || 0) : 0;
