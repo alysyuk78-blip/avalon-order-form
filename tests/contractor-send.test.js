@@ -347,7 +347,7 @@ function testContractorSendFlow() {
 
 // ── Аркуш «Замовлення» в памʼяті (сценарії зі статусами й терміном) ─────────
 function makeSheet(rows) {
-  const W = 50;
+  const W = 52;
   const pad = (r) => { const a = r.slice(); while (a.length < W) a.push(""); return a; };
   const data = [new Array(W).fill("")].concat(rows.map(pad));
   return {
@@ -384,7 +384,7 @@ function makeSheet(rows) {
 }
 
 function orderRow(num, status, extra) {
-  const r = new Array(50).fill("");
+  const r = new Array(52).fill("");
   r[0] = num; r[2] = status; r[4] = "Олександр Заєць"; r[5] = "'+380673406685"; r[6] = "Київ";
   r[16] = 1; r[19] = 9650; r[21] = 13790; r[22] = 4140; r[40] = "Ковш для трактора"; r[41] = "Інший виріб";
   Object.keys(extra || {}).forEach((k) => { r[Number(k)] = extra[k]; });
@@ -467,7 +467,7 @@ function testStatusesMigrationAndCanon() {
   assert.equal(mapped.processing_task, "Розробити конструктив");
 
   const widths = CODE.match(/var widths = \[([^\]]+)\]/)[1].split(",").length;
-  assert.equal(ctx.ADMIN_ORDER_COLS, 50);
+  assert.equal(ctx.ADMIN_ORDER_COLS, 52);
   assert.equal(widths, ctx.ADMIN_ORDER_COLS, "ширин колонок стільки ж, скільки колонок");
 }
 
@@ -761,6 +761,34 @@ function testServiceKind() {
   assert.equal(us.data[1][13], "", "розміри кошика прибрані");
   uctx.adminUpdateOrder_({ order_number: "ORD-150926-030", patch: { product_kind: "Кошик", quantity: 2.4 } });
   assert.equal(us.data[1][16], 2, "для кошика — ціла кількість, як і раніше");
+
+  // Отримувач і платник (AY) та коментарі до блоків (AZ) — у всіх рядках замовлення.
+  const ps = makeSheet([orderRow("ORD-150926-031", "Нове", { 41: "Кошик" }), orderRow("ORD-150926-031", "Нове", { 41: "Кошик" })]);
+  uctx.adminOrdersSheet_ = () => ps;
+  uctx.nowIsoKyiv_ = () => "2026-11-06T15:30:00";
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { parties: {
+    recipient: { name: "  Іван  Петренко ", phone: "+380501112233" },
+    payer: { kind: "company", name: "ТОВ «Клієнт»", code: "12345678", hack: "x" } } } });
+  const saved = JSON.parse(ps.data[1][50]);
+  assert.deepEqual(saved.recipient, { name: "Іван Петренко", phone: "+380501112233" });
+  assert.equal(saved.payer.kind, "company"); assert.equal(saved.payer.code, "12345678"); assert.ok(!("hack" in saved.payer), "лише відомі поля");
+  assert.equal(ps.data[2][50], ps.data[1][50], "в обох рядках замовлення");
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", actor: "manager", patch: { block_note: { block: "finance", text: " Ціну погоджено з підрядником " } } });
+  assert.deepEqual(JSON.parse(ps.data[1][51]), { finance: { text: "Ціну погоджено з підрядником", by: "менеджер", at: "2026-11-06T15:30:00" } });
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { block_note: { block: "product", text: "Візерунок — як на ескізі №2" } } });
+  assert.equal(JSON.parse(ps.data[2][51]).product.by, "власник");
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { block_note: { block: "finance", text: "" } } });
+  assert.ok(!("finance" in JSON.parse(ps.data[1][51])), "порожній текст — коментар прибрано");
+  assert.throws(() => uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { block_note: { block: "evil", text: "x" } } }), /Невідомий блок/);
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { parties: { recipient: null, payer: null } } });
+  assert.equal(ps.data[1][50], "", "знято пташки — знову замовник");
+  assert.deepEqual(uctx.mapOrderRow_(2, ps.data[1]).parties, {});
+  // Підрядник бачить отримувача в «Доставці» (з тими самими пташками, що й адресу).
+  const rrow = orderRow(ORD, "Нове", { 26: "Нова пошта", 27: "Відділення №5", 50: JSON.stringify({ recipient: { name: "Іван <Петренко>", phone: "+380501112233" } }) });
+  const rctx = processingContext(makeSheet([rrow]), makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" }), makeCalendar(), []);
+  const rtext = rctx.adminContractorPreview_({ order_number: ORD, options: { address: true } }).text;
+  assert.ok(rtext.includes("• Отримувач: <b>Іван &lt;Петренко&gt;, +380501112233</b>"), "отримувач у доставці: " + rtext.slice(-300));
+  assert.ok(!rctx.adminContractorPreview_({ order_number: ORD, options: { address: false } }).text.includes("Отримувач:"), "без адреси — без отримувача");
 
   // Повідомлення підряднику для рядка-послуги.
   const row = orderRow(ORD, "Нове", { 7: "Порошкове фарбування; Гнуття металу", 8: "Фарбування кришки", 40: "Фарбування кришки", 41: "Послуга", 42: "Ширина кришки 450 мм\nФарбування: верх — золото", 9: "золото/чорний" });
