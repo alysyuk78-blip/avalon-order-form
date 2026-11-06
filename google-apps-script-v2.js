@@ -4364,10 +4364,10 @@ function invoicesSheet_() {
   var sh = ss.getSheetByName(SHEET_INVOICES);
   if (sh) return sh;
   sh = ss.insertSheet(SHEET_INVOICES);
-  var headers = ["Дата", "№ рахунку", "№ замовлення", "Отримувач", "Покупець", "Сума, ₴", "ID запиту", "Дані"];
+  var headers = ["Дата", "№ рахунку", "№ замовлення", "Отримувач", "Покупець", "Сума, ₴", "ID запиту", "Дані", "Створив"];
   sh.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sh, headers.length);
-  [110, 110, 150, 120, 260, 120, 210, 300].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  [110, 110, 150, 120, 260, 120, 210, 300, 110].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.getRange("A2:A").setNumberFormat("dd.MM.yyyy");
   sh.getRange("F2:F").setNumberFormat("#,##0 ₴");
   return sh;
@@ -4375,11 +4375,12 @@ function invoicesSheet_() {
 function readInvoices_(orderNumber) {
   var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_INVOICES);
   if (!sh || sh.getLastRow() < 2) return [];
-  return sh.getRange(2, 1, sh.getLastRow() - 1, 8).getValues().map(function (r, i) {
+  return sh.getRange(2, 1, sh.getLastRow() - 1, Math.min(9, sh.getMaxColumns())).getValues().map(function (r, i) {
     var data = {};
     try { data = JSON.parse(String(r[7] || "{}")) || {}; } catch (e) { data = {}; }
     return { row: i + 2, date: toISODate(r[0]) || String(r[0] || ""), number: String(r[1] || ""), order_number: String(r[2] || "").trim(),
-             seller: String(r[3] || ""), buyer_name: String(r[4] || ""), amount: Number(r[5]) || 0, request_id: String(r[6] || ""), data: data };
+             seller: String(r[3] || ""), buyer_name: String(r[4] || "").replace(/^'/, ""), amount: Number(r[5]) || 0, request_id: String(r[6] || ""), data: data,
+             created_by: String(r[8] || "") };
   }).filter(function (x) { return x.number && (!orderNumber || x.order_number === orderNumber); });
 }
 /** Створити рахунок: наступний номер СФ-NNNN, запис у журнал. Повтор із тим самим ID повертає той самий рахунок. */
@@ -4396,8 +4397,12 @@ function adminInvoiceCreate_(data) {
   var dup = all.filter(function (x) { return x.request_id === rid; })[0];
   if (dup) return { status: "ok", duplicate: true, invoice: dup, invoices: all.filter(function (x) { return x.order_number === num; }) };
   if (!adminFindOrderRows_(num).length) throw new Error("Замовлення " + num + " не знайдено");
-  var max = all.reduce(function (m, x) { var n = Number(String(x.number).replace(/\D/g, "")) || 0; return Math.max(m, n); }, 0);
+  // Лічильник не зменшується: якщо рядок журналу видалять вручну, виданий клієнту номер не повториться.
+  var props = PropertiesService.getScriptProperties();
+  var max = all.reduce(function (m, x) { var n = Number(String(x.number).replace(/\D/g, "")) || 0; return Math.max(m, n); },
+    Number(props.getProperty("INVOICE_SEQ")) || 0);
   var number = "СФ-" + ("000" + (max + 1)).slice(-Math.max(4, String(max + 1).length));
+  props.setProperty("INVOICE_SEQ", String(max + 1));
   var date = Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd");
   var buyer = (data && data.buyer) || {};
   var payload = JSON.stringify({ buyer: buyer, lines: (data && data.lines) || [], order_total: Number(data && data.order_total) || 0,
@@ -4405,8 +4410,9 @@ function adminInvoiceCreate_(data) {
   if (payload.length > 40000) throw new Error("Забагато даних у рахунку");
   var sh = invoicesSheet_();
   var row = sh.getLastRow() + 1;
-  sh.getRange(row, 1, 1, 8).setValues([[date, number, num, seller === "tov" ? "ТОВ «Валон-А»" : "ФОП Арцаблюк",
-    String(buyer.name || "").slice(0, 200), amount, rid, payload]]);
+  // Імʼя покупця — завжди текстом (з «=» на початку таблиця зробила б з нього формулу).
+  sh.getRange(row, 1, 1, 9).setValues([[date, number, num, seller === "tov" ? "ТОВ «Валон-А»" : "ФОП Арцаблюк",
+    sheetText_(String(buyer.name || "").slice(0, 200)), amount, rid, payload, data && data.created_by === "manager" ? "менеджер" : "власник"]]);
   sh.getRange(row, 1).setNumberFormat("dd.MM.yyyy");
   sh.getRange(row, 6).setNumberFormat("#,##0 ₴");
   SpreadsheetApp.flush();

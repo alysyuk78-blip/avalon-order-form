@@ -51,6 +51,16 @@ assert.ok(/Без ПДВ/.test(hFop) && !/ПДВ 20/.test(hFop));
 assert.ok(/Чотири тисячі двісті двадцять дев'ять гривень 00 копійок/.test(hFop));
 assert.ok(!/<script>/.test(hFop) && /Сергій &lt;script&gt;/.test(hFop), "текст покупця екранується");
 assert.ok(/Всього до оплати:/.test(hFop) && !/Сплачено раніше/.test(hFop));
+assert.ok(/протягом 3 днів/.test(hFop) && !/10 днів/.test(hFop));
+assert.ok(!/display:\s*flex/.test(hFop), "без flex — Word показує шапку й сторони таблицями");
+// Рахунок на всю суму, коли клієнт уже платив, — «Сплачено раніше» видно (щоб не заплатили двічі).
+const hAll = inv.buildInvoiceHtml({ number: "СФ-0003", date: "06.11.2026", seller: "fop", buyer: { name: "К" }, lines,
+  order_total: 10000, paid_before: 6000, amount: 10000 });
+assert.ok(/Сплачено раніше:<\/td><td class="r">6 000 ₴/.test(hAll) && /більше за залишок/.test(hAll), "рахунок на всю суму при оплаті");
+// Ціна з копійками, коли сума не ділиться на кількість.
+const hKop = inv.buildInvoiceHtml({ number: "СФ-0004", date: "06.11.2026", seller: "fop", buyer: { name: "К" },
+  lines: [{ name: "Кронштейни", qty: 3, unit: "комп.", sum: 1000 }], order_total: 1000, amount: 1000 });
+assert.ok(/333,33 ₴/.test(hKop), "ціна 1 000 / 3 = 333,33");
 const hTov = inv.buildInvoiceHtml({ number: "СФ-0002", date: "06.11.2026", seller: "tov", order_number: "ORD-1",
   buyer: { kind: "company", name: "ТОВ «Клієнт»", code: "12345678" }, lines, order_total: 4229, paid_before: 1000, amount: 3229,
   stamp_url: "https://x/calc/img/stamp.png" });
@@ -81,9 +91,10 @@ function makeSheet(data, w) {
 }
 const orders = makeSheet([new Array(50).fill(""), Object.assign(new Array(50).fill(""), { 0: "ORD-031126-001" })], 50);
 const sheets = {};
-const ss = { getSheetByName: (n) => sheets[n] || null, insertSheet: (n) => (sheets[n] = makeSheet([], 8)) };
+const propStore = {};
+const ss = { getSheetByName: (n) => sheets[n] || null, insertSheet: (n) => (sheets[n] = makeSheet([], 26)) };
 const ctx = vm.createContext({ console, Date, SpreadsheetApp: { getActiveSpreadsheet: () => ss, flush() {} },
-  PropertiesService: { getScriptProperties: () => ({ getProperty: () => null }) },
+  PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k in propStore ? propStore[k] : null), setProperty: (k, v) => { propStore[k] = String(v); } }) },
   Utilities: { formatDate: () => "2026-11-06" } });
 vm.runInContext(CODE, ctx);
 ctx.adminOrdersSheet_ = () => orders;
@@ -100,7 +111,17 @@ const a2 = ctx.adminInvoiceCreate_(Object.assign({}, base, { request_id: "inv-00
 assert.equal(a2.invoice.number, "СФ-0002");
 assert.equal(a2.invoice.seller, "ТОВ «Валон-А»");
 assert.equal(a2.invoices.length, 2);
-assert.equal(ctx.readInvoices_("ORD-031126-001").length, 2);
+assert.equal(a2.invoice.created_by, "власник");
+// Видалили останній рядок журналу вручну — номер не повторюється.
+sheets["Рахунки"].data.pop();
+const a3 = ctx.adminInvoiceCreate_(Object.assign({}, base, { request_id: "inv-000006", created_by: "manager",
+  buyer: { kind: "person", name: "=HYPERLINK(1)" } }));
+assert.equal(a3.invoice.number, "СФ-0003", "лічильник не зменшується");
+assert.equal(a3.invoice.created_by, "менеджер");
+assert.equal(sheets["Рахунки"].data[sheets["Рахунки"].data.length - 1][4], "'=HYPERLINK(1)", "імʼя — текстом, не формулою");
+assert.equal(a3.invoice.buyer_name, "=HYPERLINK(1)");
+sheets["Рахунки"].data.push(a2.invoice && ["2026-11-06", "СФ-0002", "ORD-031126-001", "ТОВ «Валон-А»", "Сергій", 2000, "inv-000002", "{}", "власник"]);
+assert.equal(ctx.readInvoices_("ORD-031126-001").length, 3);
 assert.throws(() => ctx.adminInvoiceCreate_(Object.assign({}, base, { request_id: "inv-000003", order_number: "ORD-999999-999" })), /не знайдено/);
 assert.throws(() => ctx.adminInvoiceCreate_(Object.assign({}, base, { request_id: "inv-000004", seller: "xxx" })), /отримувач/);
 assert.throws(() => ctx.adminInvoiceCreate_(Object.assign({}, base, { request_id: "inv-000005", amount: 0 })), /суму/);

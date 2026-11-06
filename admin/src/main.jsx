@@ -2100,10 +2100,12 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const kind = item.product_kind === SERVICE_KIND ? "" : item.product_kind === "Кронштейни" ? "Кронштейни"
         : item.product_kind === "Інший виріб" ? "" : "Кошик для кондиціонера";
       const size = [item.size_h, item.size_w, item.size_d].map(v => Number(v) || 0);
+      // Розміри — як усюди в кабінеті й калькуляторі: висота × ширина × глибина, з підписом.
+      const sizeText = size[0] && size[1] ? (size[2] ? size.join("×") + " мм (В×Ш×Г)" : size[0] + "×" + size[1] + " мм (В×Ш)") : "";
       const parts = [
         [kind, model || item.construction || item.basket_type].filter(Boolean).join(" "),
         model && item.construction && item.construction.indexOf(model) < 0 ? item.construction : "",
-        size[0] && size[1] ? size.filter(Boolean).join("×") + " мм" : "",
+        sizeText,
         item.color || "", item.pattern ? "візерунок " + item.pattern : "",
       ].map(x => String(x || "").trim()).filter(Boolean);
       return parts.join(", ") || "Товар за замовленням";
@@ -2157,40 +2159,48 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const last = invoices[invoices.length - 1];
       const lastBuyer = (last && last.data && last.data.buyer) || null;
       const [form, setForm] = useState(() => ({
-        seller: lastBuyer && last && /ТОВ/.test(last.seller) ? "tov" : (Number(order && order.commission_pct) > 0 ? "tov" : "fop"),
+        // Кому платити — щоразу обирають самі (помилка = гроші не на ту особу); підстановки немає.
+        seller: "",
         amount: "",
         buyer: lastBuyer || { kind: "person", name: (order && order.client) || "", phone: (order && order.phone) || "" },
       }));
-      const pending = useRef("");
+      // ID запиту — один на ті самі дані: повтор після збою не створить другий рахунок, а змінена форма — новий.
+      const pending = useRef({ key: "", id: "" });
       const amount = form.amount === "" ? (rest >= 1 ? rest : orderTotal) : Math.round(Number(form.amount) || 0);
       const setBuyer = (k, v) => setForm(f => ({ ...f, buyer: { ...f.buyer, [k]: v } }));
       const b = form.buyer;
       async function create() {
         setError("");
+        if (!form.seller) return setError("Оберіть, кому платити: ФОП чи ТОВ.");
         if (!lines.length) return setError("У замовленні немає позицій з ціною — спершу порахуйте товар.");
         if (!(amount >= 1)) return setError("Вкажіть суму рахунку.");
+        if (amount > orderTotal) return setError("Сума рахунку більша за все замовлення (" + money(orderTotal) + ").");
         if (!String(b.name || "").trim()) return setError("Вкажіть покупця.");
+        if (paid >= 1 && amount > rest && !window.confirm("Клієнт уже сплатив " + money(paid) + ", залишок — " + money(rest)
+          + ".\nРахунок на " + money(amount) + " більший за залишок. Створити все одно?")) return;
         // Вкладку для PDF відкриваємо зараз (у натисканні), документ запишемо після відповіді сервера.
         const win = window.open("", "_blank");
         if (win) win.document.write("<p style='font-family:Arial;padding:20px'>Готую рахунок…</p>");
         setBusy(true);
         try {
-          if (!pending.current) pending.current = newRequestId();
+          const key = JSON.stringify([form.seller, amount, b, lines, paid]);
+          if (pending.current.key !== key) pending.current = { key, id: newRequestId() };
           const res = await api("/api/admin/order?resource=invoice", { method: "POST", token, body: {
-            order_number: orderNumber, request_id: pending.current, seller: form.seller, amount,
+            order_number: orderNumber, request_id: pending.current.id, seller: form.seller, amount,
             buyer: b, lines, order_total: orderTotal, paid_before: paid } });
-          pending.current = "";
+          pending.current = { key: "", id: "" };
           setInvoices(res.invoices || []);
           setOpen(false);
           setForm(f => ({ ...f, amount: "" }));
-          if (!openInvoicePrint(win, invoiceHtmlOf(res.invoice))) setError("Рахунок " + res.invoice.number + " створено. Браузер заблокував нову вкладку — натисніть «PDF» у списку.");
+          if (!openInvoicePrint(win, invoiceHtmlOf(res.invoice))) setError("Рахунок " + res.invoice.number + (res.duplicate ? " уже був створений раніше" : " створено") + ". Браузер заблокував нову вкладку — натисніть «PDF» у списку.");
+          else if (res.duplicate) setError("Цей рахунок уже створено раніше: " + res.invoice.number + " — відкрито його.");
         } catch (e) {
           if (win) win.close();
           setError(e.message || "Не вдалося створити рахунок");
         } finally { setBusy(false); }
       }
-      const seller = invoiceLib.AVALON_INVOICE_SELLERS[form.seller];
-      const vat = seller.vat ? invoiceLib.avalonVatOf(amount) : 0;
+      const seller = invoiceLib.AVALON_INVOICE_SELLERS[form.seller] || null;
+      const vat = seller && seller.vat ? invoiceLib.avalonVatOf(amount) : 0;
       return (
         <div className="invoices-block">
           <div className="invoices-head">
@@ -2202,7 +2212,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             <ul className="invoices-list">
               {invoices.slice().reverse().map(inv => (
                 <li key={inv.number}>
-                  <span><b>{inv.number}</b> від {invoiceDateLabel(inv.date)} · {inv.seller} · {money(inv.amount)}{inv.buyer_name ? " · " + inv.buyer_name : ""}</span>
+                  <span><b>{inv.number}</b> від {invoiceDateLabel(inv.date)} · {inv.seller} · {money(inv.amount)}{inv.buyer_name ? " · " + inv.buyer_name : ""}{inv.created_by === "менеджер" ? " · створив менеджер" : ""}</span>
                   <span className="invoices-actions">
                     <button type="button" className="btn secondary small" onClick={() => openInvoicePrint(window.open("", "_blank"), invoiceHtmlOf(inv))}>PDF</button>
                     <button type="button" className="btn secondary small" onClick={() => downloadInvoiceWord(inv)}>Word</button>
@@ -2256,7 +2266,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               </div>
               <p className="margin-calc-note">
                 За замовленням {money(orderTotal)}{paid >= 1 ? ", сплачено " + money(paid) : ""}. Рахунок на <b>{money(amount)}</b>
-                {seller.vat ? ", у т. ч. ПДВ " + money(vat) : ", без ПДВ"}. Отримувач — {seller.name}. Номер присвоїться автоматично (СФ-…).
+                {seller ? (seller.vat ? ", у т. ч. ПДВ " + money(vat) : ", без ПДВ") + ". Отримувач — " + seller.name : ". Оберіть, кому платити"}. Номер присвоїться автоматично (СФ-…).
               </p>
               {error && <div className="error">{error}</div>}
               <div className="quick-actions">
