@@ -2202,7 +2202,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           const file = await makeInvoiceFile(inv, format);
           saveFile(file);
           setReady({ number: inv.number, file });
-        } catch (e) { setError(e.message || "Не вдалося підготувати файл рахунку"); } finally { setMaking(""); }
+          return true;
+        } catch (e) { setError(e.message || "Не вдалося підготувати файл рахунку"); return false; } finally { setMaking(""); }
       }
       async function shareFile() {
         try { await navigator.share({ files: [ready.file], title: ready.file.name.replace(/\.(pdf|docx)$/, "") }); }
@@ -2269,8 +2270,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           setForm(f => ({ ...f, amount: "" }));
           setNames({}); setDraft(null);
           setBusy(false);
-          await produce(res.invoice, "pdf");
-          if (res.duplicate) setError("Цей рахунок уже створено раніше: " + res.invoice.number + " — це він.");
+          const ok = await produce(res.invoice, "pdf");
+          if (ok && res.duplicate) setError("Цей рахунок уже створено раніше: " + res.invoice.number + " — це він.");
         } catch (e) {
           setError(e.message || "Не вдалося створити рахунок");
         } finally { setBusy(false); }

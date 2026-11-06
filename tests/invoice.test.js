@@ -13,7 +13,7 @@ const core = src.slice(src.indexOf("// AVALON-INVOICE-CORE-START"), src.indexOf(
 assert.equal(crypto.createHash("sha256").update(core).digest("hex"), INVOICE_CORE_SHA256,
   "ядро рахунку змінилось — онови й копію в калькуляторі (src/lib/avalonInvoice.mjs) і хеш в обох тестах");
 // Вигляд рахунку (PDF і Word) — той самий блок, що в калькуляторі.
-const INVOICE_DOC_SHA256 = "688134518f5b95018c224a993c8e0f36be2ff7603be01a3ce42274fec8217449";
+const INVOICE_DOC_SHA256 = "e17a3e02b6e7e647dfb5feb948fb8488c63bb94fa7be37e7389a5841d305ea54";
 const docBlock = src.slice(src.indexOf("// AVALON-INVOICE-DOC-START"), src.indexOf("// AVALON-INVOICE-DOC-END"));
 assert.equal(crypto.createHash("sha256").update(docBlock).digest("hex"), INVOICE_DOC_SHA256,
   "вигляд рахунку змінився — скопіюй блок AVALON-INVOICE-DOC у калькулятор (src/lib/avalonInvoice.mjs) і онови хеш в обох тестах");

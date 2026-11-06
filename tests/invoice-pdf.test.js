@@ -35,5 +35,12 @@ const base = { number: "СФ-0001", date: "06.11.2026", seller: "fop", order_num
   const calc = await inv.buildInvoicePdf(Object.assign({}, base, { order_number: "", notes: ["Доставка: за тарифом перевізника (не включено в суму)."],
     lines: lines.concat([{ name: "Знижка 5 %", qty: null, sum: -500 }]), order_total: 144025, amount: 144025 }), deps);
   assert.equal((await PDFDocument.load(calc)).getPageCount(), 1);
+  // Символи поза шрифтом (емодзі) не ламають рахунок — стають «?»; польські/чеські літери є в шрифті.
+  const odd = await inv.buildInvoicePdf(Object.assign({}, base, { buyer: { kind: "person", name: "Łukasz Šťastný 😀 ТОВ «Ёлка»" } }), deps);
+  assert.equal((await PDFDocument.load(odd)).getPageCount(), 1);
+  // Рахунок ТОВ на 4 довгі позиції — підпис із печаткою лишається на першій сторінці (місце — під коло 40 мм).
+  const five = Array.from({ length: 4 }, (_, i) => ({ name: lines[0].name + " — варіант " + (i + 1), qty: 2, unit: "шт.", sum: 6150 }));
+  const tov5 = await inv.buildInvoicePdf(Object.assign({}, base, { seller: "tov", lines: five, order_total: 24600, amount: 24600 }), deps);
+  assert.equal((await PDFDocument.load(tov5)).getPageCount(), 1, "підпис з печаткою не переїжджає сам на другу сторінку");
   console.log("invoice pdf tests: OK");
 })().catch((e) => { console.error(e); process.exit(1); });
