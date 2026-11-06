@@ -2421,11 +2421,14 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const rest = Math.max(0, orderTotal - paid);
       const last = invoices[invoices.length - 1];
       const lastBuyer = (last && last.data && last.data.buyer) || null;
+      // Покупець: платник замовлення (якщо вказано), далі — з останнього рахунку, далі — замовник.
+      const defaultBuyer = () => (order && order.parties && order.parties.payer && order.parties.payer.name ? { ...order.parties.payer } : null)
+        || lastBuyer || { kind: "person", name: (order && order.client) || "", phone: (order && order.phone) || "" };
       const [form, setForm] = useState(() => ({
         // Кому платити — щоразу обирають самі (помилка = гроші не на ту особу); підстановки немає.
         seller: "",
         amount: "",
-        buyer: lastBuyer || { kind: "person", name: (order && order.client) || "", phone: (order && order.phone) || "" },
+        buyer: defaultBuyer(),
       }));
       // ID запиту — один на ті самі дані: повтор після збою не створить другий рахунок, а змінена форма — новий.
       const pending = useRef({ key: "", id: "" });
@@ -2468,7 +2471,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         <div className="invoices-block">
           <div className="invoices-head">
             <b>Рахунки на оплату</b>
-            {!open && <button type="button" className="btn secondary small" onClick={() => setOpen(true)} disabled={!lines.length}
+            {!open && <button type="button" className="btn secondary small" onClick={() => { setForm(f => ({ ...f, buyer: defaultBuyer() })); setOpen(true); }} disabled={!lines.length}
               title={lines.length ? "" : "Спершу порахуйте товар"}>Виставити рахунок</button>}
           </div>
           {journalLoading && !invoices.length && <div className="margin-calc-note">Завантажую журнал рахунків…</div>}
@@ -2589,7 +2592,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       );
     }
 
-    function PaymentsSection({ token, orderNumber, payments, summary, onChanged }) {
+    function PaymentsSection({ token, orderNumber, payments, summary, onChanged, payerName, clientName }) {
       const [form, setForm] = useState({ type: "Передоплата", amount: "", method: "Готівка", date: "", note: "", recipient: "" });
       const isOwner = tokenRole(token) !== "manager";
       const typeOptions = isOwner ? PAYMENT_TYPES.concat([PAYMENT_SHARE]) : PAYMENT_TYPES;
@@ -2767,6 +2770,20 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             <div className="field"><label htmlFor="payment-date">Дата (порожньо = сьогодні)</label>
               <input id="payment-date" type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
           </div>
+          {payerName && payerName !== clientName && (
+            // Платник замовлення — не замовник: позначка «Платив: …» на початку примітки платежу.
+            <div className="field"><label>Хто платив</label>
+              <div className="quick-actions">
+                {[clientName, payerName].filter(Boolean).map(n => {
+                  const tag = "Платив: " + n;
+                  const on = form.note.startsWith(tag);
+                  const rest = form.note.replace(/^Платив: [^;]*;?\s*/, "");
+                  return <button key={n} type="button" className={on ? "active" : ""}
+                    onClick={() => setForm(f => ({ ...f, note: on ? rest : tag + (rest ? "; " + rest : "") }))}>{n}</button>;
+                })}
+              </div>
+            </div>
+          )}
           <div className="field"><label htmlFor="payment-note">Примітка</label>
             <input id="payment-note" value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="Напр. квитанція №, хто передав" /></div>
           {error && <div className="error">{error}</div>}
@@ -3706,6 +3723,11 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const [npCityRef, setNpCityRef] = useState("");
       useEffect(() => { setUnitDraft({}); unitBase.current = null; lastQty.current = null; }, [orderNumber, itemIdx]);
       useEffect(() => { setNpCityRef(""); }, [orderNumber]);
+      // Коментар до блоку картки, який зараз пишуть: { block, text }.
+      const [noteEdit, setNoteEdit] = useState(null);
+      // Отримувач і платник, які зараз правлять (null — як збережено).
+      const [partiesDraft, setPartiesDraft] = useState(null);
+      useEffect(() => { setNoteEdit(null); setPartiesDraft(null); }, [orderNumber]);
       const uploadQueueRef = useRef(Promise.resolve());
       const sendSectionRef = useRef(null);
 
@@ -3979,8 +4001,10 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           setData(res);
           applyItemToForm(res, itemIdx);
           onChanged && onChanged(res);
+          return true;
         } catch (e) {
           setError(e.message);
+          return false;
         } finally {
           setBusy(false);
         }
@@ -4105,6 +4129,63 @@ import invoiceLib from '../../lib/avalon-invoice.js';
 
       const profit = (Number(form.revenue) || 0) - (Number(form.cost_total) || 0);
       const marginPct = Number(form.revenue) ? Math.round((profit / Number(form.revenue)) * 1000) / 10 : 0;
+
+      // ── Коментарі до блоків картки (зберігаються в замовленні, видно хто й коли) ──
+      const blockNotes = (order && order.block_notes) || {};
+      async function saveBlockNote(block, text) {
+        if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return; }
+        setBusy(true); setError("");
+        try {
+          // Без applyItemToForm: незбережені правки в інших блоках не губляться.
+          const res = await api("/api/admin/order", { method: "PATCH", token,
+            body: { order_number: orderNumber, row: form.row, patch: { block_note: { block, text } }, expect: itemExpect(data && data.items && data.items[itemIdx]) } });
+          setData(res);
+          onChanged && onChanged(res);
+          setNoteEdit(null);
+        } catch (e) { setError(e.message); } finally { setBusy(false); }
+      }
+      const noteDate = (iso) => { const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/); return m ? m[3] + "." + m[2] + "." + m[1] + (m[4] ? " " + m[4] + ":" + m[5] : "") : String(iso || ""); };
+      function noteButton(block, label) {
+        const has = !!blockNotes[block];
+        return <button type="button" className={"block-note-btn" + (has ? " has" : "")} disabled={busy || stale}
+          title={(has ? "Змінити коментар" : "Додати коментар") + " до блоку «" + label + "»"} aria-label={"Коментар до блоку «" + label + "»"}
+          onClick={() => setNoteEdit({ block, text: (blockNotes[block] && blockNotes[block].text) || "" })}>💬{has ? "" : <span> коментар</span>}</button>;
+      }
+      function noteBody(block, label) {
+        const n = blockNotes[block];
+        if (noteEdit && noteEdit.block === block) {
+          return (
+            <div className="block-note-edit">
+              <textarea rows={3} maxLength={2000} autoFocus value={noteEdit.text} placeholder={"Коментар до блоку «" + label + "» — бачать лише в CRM"}
+                onChange={e => { const v = e.target.value; setNoteEdit(x => ({ ...x, text: v })); }} />
+              <div className="quick-actions">
+                <button type="button" className="btn small" disabled={busy} onClick={() => saveBlockNote(block, noteEdit.text)}>Зберегти</button>
+                {n && <button type="button" className="btn secondary small" disabled={busy} onClick={() => saveBlockNote(block, "")}>Видалити</button>}
+                <button type="button" className="btn secondary small" disabled={busy} onClick={() => setNoteEdit(null)}>Скасувати</button>
+              </div>
+            </div>
+          );
+        }
+        return n ? <div className="block-note"><span>{n.text}</span><small>{n.by || ""}{n.at ? " · " + noteDate(n.at) : ""}</small></div> : null;
+      }
+      // Заголовок блоку з 💬 і сам коментар під ним.
+      const blockTitle = (block, label, children) => (
+        <>
+          <div className="section-title with-note"><span>{children || label}</span>{noteButton(block, label)}</div>
+          {noteBody(block, label)}
+        </>
+      );
+      // Для блоків зі своїм заголовком (Платежі, Рахунки, Файли, Підрядник) — рядок під блоком.
+      const noteBar = (block, label) => (
+        <div className="block-note-bar">{noteButton(block, label)}{noteBody(block, label)}</div>
+      );
+
+      // ── Отримувач і платник (за замовчуванням — замовник) ──
+      const parties = partiesDraft || (order && order.parties) || {};
+      const setParty = (who, patch) => setPartiesDraft(p => {
+        const cur = p || (order && order.parties) || {};
+        return { ...cur, [who]: patch === null ? undefined : { ...(cur[who] || {}), ...patch } };
+      });
 
       // ── Ціни за 1 шт: «разом» = ціна за одиницю × кількість із розділу «Товар» ──
       const qtyOf = (f) => (Number(f.quantity) > 0 ? Number(f.quantity) : 1);
@@ -4313,6 +4394,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             <PaymentsSection
               token={token}
               orderNumber={orderNumber}
+              clientName={order.client}
+              payerName={order.parties && order.parties.payer ? order.parties.payer.name : ""}
               payments={data.payments}
               summary={data.payment_summary}
               onChanged={(result) => {
@@ -4325,10 +4408,14 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                 onChanged && onChanged(next);
               }}
             />
+            {noteBar("payments", "Платежі")}
 
             {order.status !== "Скасовано" && (
-              <InvoicesSection token={token} orderNumber={orderNumber} order={order} items={data.items || []}
-                summary={data.payment_summary} invoices={data.invoices} />
+              <>
+                <InvoicesSection token={token} orderNumber={orderNumber} order={order} items={data.items || []}
+                  summary={data.payment_summary} invoices={data.invoices} />
+                {noteBar("invoices", "Рахунки")}
+              </>
             )}
 
             <div className="section-title">Швидкі дії</div>
@@ -4380,6 +4467,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               onRetry={retryUpload}
               onDismiss={dismissUpload}
             />
+            {noteBar("files", "Файли")}
 
             <ContractorSendSection
               key={orderNumber}
@@ -4396,8 +4484,9 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               purposeRequest={purposeRequest}
               onSaveProcessing={saveProcessing}
             />
+            {noteBar("contractor", "Підрядник")}
 
-            <div className="section-title">Клієнт і контакти</div>
+            {blockTitle("client", "Замовник", <>Замовник (з ким спілкуємось)</>)}
             <div className="grid2">
               <div className="field"><label>Клієнт</label>
                 <input value={form.client} onChange={e => setForm({ ...form, client: e.target.value })} /></div>
@@ -4431,7 +4520,63 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               contact_email: form.contact_email, source: form.source,
             })}>Зберегти клієнта</button>
 
-            <div className="section-title">Товар{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</div>
+            {blockTitle("parties", "Отримувач і платник", <>Отримувач і платник</>)}
+            <p className="send-hint" style={{ margin: "0 0 8px" }}>Якщо не вказано — отримувач і платник той самий, що й замовник.</p>
+            <label className="parties-toggle"><input type="checkbox" checked={!!parties.recipient}
+              onChange={e => setParty("recipient", e.target.checked ? { name: "", phone: "" } : null)} /> Отримувач посилки — інша людина</label>
+            {parties.recipient && (
+              <div className="grid2">
+                <div className="field"><label htmlFor="recipient-name">Отримувач (ПІБ)</label>
+                  <input id="recipient-name" value={parties.recipient.name || ""} onChange={e => setParty("recipient", { name: e.target.value })} /></div>
+                <div className="field"><label htmlFor="recipient-phone">Телефон отримувача</label>
+                  <input id="recipient-phone" value={parties.recipient.phone || ""} onChange={e => setParty("recipient", { phone: e.target.value })} placeholder="+380…" /></div>
+              </div>
+            )}
+            <label className="parties-toggle"><input type="checkbox" checked={!!parties.payer}
+              onChange={e => setParty("payer", e.target.checked ? { kind: "company", name: "" } : null)} /> Платник — інший (на кого рахунок / хто оплачує)</label>
+            {parties.payer && (
+              <>
+                <div className="quick-actions" style={{ margin: "4px 0 8px" }}>
+                  {[["person", "Фізична особа"], ["fop", "ФОП"], ["company", "Компанія"]].map(([k, t]) => (
+                    <button key={k} type="button" className={parties.payer.kind === k ? "active" : ""} onClick={() => setParty("payer", { kind: k })}>{t}</button>
+                  ))}
+                </div>
+                <div className="grid2">
+                  <div className="field"><label htmlFor="payer-name">{parties.payer.kind === "company" ? "Назва компанії" : "ПІБ"}</label>
+                    <input id="payer-name" value={parties.payer.name || ""} onChange={e => setParty("payer", { name: e.target.value })} /></div>
+                  {parties.payer.kind !== "person" && (
+                    <div className="field"><label htmlFor="payer-code">{parties.payer.kind === "company" ? "Код ЄДРПОУ" : "РНОКПП"}</label>
+                      <input id="payer-code" value={parties.payer.code || ""} onChange={e => setParty("payer", { code: e.target.value })} /></div>
+                  )}
+                  {parties.payer.kind === "company" && (
+                    <div className="field"><label htmlFor="payer-ipn">ІПН (якщо платник ПДВ)</label>
+                      <input id="payer-ipn" value={parties.payer.ipn || ""} onChange={e => setParty("payer", { ipn: e.target.value })} /></div>
+                  )}
+                  {parties.payer.kind !== "person" && (
+                    <>
+                      <div className="field"><label htmlFor="payer-iban">IBAN</label>
+                        <input id="payer-iban" value={parties.payer.iban || ""} onChange={e => setParty("payer", { iban: e.target.value })} /></div>
+                      <div className="field"><label htmlFor="payer-bank">Банк</label>
+                        <input id="payer-bank" value={parties.payer.bank || ""} onChange={e => setParty("payer", { bank: e.target.value })} /></div>
+                      <div className="field"><label htmlFor="payer-address">Адреса</label>
+                        <input id="payer-address" value={parties.payer.address || ""} onChange={e => setParty("payer", { address: e.target.value })} /></div>
+                    </>
+                  )}
+                  <div className="field"><label htmlFor="payer-phone">Телефон</label>
+                    <input id="payer-phone" value={parties.payer.phone || ""} onChange={e => setParty("payer", { phone: e.target.value })} /></div>
+                  <div className="field"><label htmlFor="payer-email">E-mail</label>
+                    <input id="payer-email" value={parties.payer.email || ""} onChange={e => setParty("payer", { email: e.target.value })} /></div>
+                </div>
+              </>
+            )}
+            <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy || stale || !partiesDraft} onClick={async () => {
+              const p = partiesDraft || {};
+              if (p.payer && !String(p.payer.name || "").trim()) return setError("Вкажіть платника або зніміть пташку «Платник — інший».");
+              if (p.recipient && !String(p.recipient.name || "").trim() && !String(p.recipient.phone || "").trim()) return setError("Вкажіть отримувача або зніміть пташку «Отримувач — інша людина».");
+              if (await save({ parties: { recipient: p.recipient || null, payer: p.payer || null } })) setPartiesDraft(null);
+            }}>Зберегти отримувача й платника</button>
+
+            {blockTitle("product", "Товар", <>Товар{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</>)}
             {items.length > 1 && (
               <div className="item-list">
                 {items.map((it, i) => (
@@ -4571,7 +4716,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             })()}
             <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy || stale} onClick={saveItem}>Зберегти товар</button>
 
-            <div className="section-title">Фінанси{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</div>
+            {blockTitle("finance", "Фінанси", <>Фінанси{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</>)}
             {items.length > 1 && (
               <>
                 <div className="field">
@@ -4722,7 +4867,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             )}
 
             <button className="btn" style={{ marginTop: 8 }} disabled={busy || stale} onClick={saveFinance}>Зберегти фінанси</button>
-            <div className="section-title">Доставка та нотатки</div>
+            {blockTitle("delivery", "Доставка", <>Доставка та нотатки</>)}
             <div className="grid2">
               <div className="field"><label>Дата доставки</label>
                 <input type="date" value={(form.delivery_date || "").slice(0, 10)} onChange={e => setForm({ ...form, delivery_date: e.target.value })} /></div>
@@ -6454,6 +6599,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         lead: "Кожен платіж — у розділ «Платежі» того ж дня.",
         steps: [
           ["Оплата клієнта", "«Платежі» → тип «Передоплата», «Доплата» або «Оплата повністю» → сума → «Внести платіж». Картка показує, скільки сплачено і скільки лишилось. Борг клієнта рахується лише з «Виготовлення»: поки замовлення в опрацюванні чи на погодженні, несплачене — «до оплати», а сплачене — «Передоплата»."],
+          ["Отримувач і платник", "Картка → «Отримувач і платник». За замовчуванням усе — замовник (з ким спілкуємось). Посилку отримує інша людина — пташка «Отримувач посилки — інша людина», ПІБ і телефон: підрядник побачить їх у «Доставці» (для ТТН). Платить інша особа чи компанія — пташка «Платник — інший» і реквізити: рахунок на оплату підставить саме платника, а в платежі можна позначити «Хто платив»."],
+          ["Коментар до блоку", "Біля назви кожного блоку картки (Замовник, Товар, Фінанси, Доставка…) і під блоками Платежі, Рахунки, Файли, Підрядник — кнопка 💬. Напишіть коментар і «Зберегти»: його видно в картці з підписом, хто й коли написав. Підряднику й клієнту коментарі не надсилаються."],
           ["Рахунок на оплату", "Картка → «Рахунки на оплату» → «Виставити рахунок»: оберіть, кому платити (ФОП чи ТОВ), перевірте покупця й суму (за замовчуванням — залишок). Назву позиції можна виправити олівцем ✏️. «Створити рахунок (PDF)» — номер СФ-… присвоюється сам, PDF-файл зберігається на компʼютер. Кнопки «PDF» і «Word» у списку рахунків дають файл ще раз; «📤 Надіслати файл» відкриває «Поділитися» з самим файлом (Telegram, Viber, пошта) — клієнт отримує файл, а не посилання на CRM. «✏️ Найменування» змінює назви в уже створеному рахунку (номер і суми ті самі)."],
           ["Маржа від підрядника", "Коли підрядник перерахував вашу частину — внесіть платіж типом «Маржа від підрядника». Кабінет рахує, скільки ще має надійти."],
           ["Повернення", "Гроші, повернуті клієнтові, вносьте типом «Повернення клієнту»."],

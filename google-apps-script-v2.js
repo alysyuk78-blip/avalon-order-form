@@ -2147,7 +2147,9 @@ function buildOrderFromRows_(sh, orderNumber) {
         contact_email: String(r[39] || "").trim(),
         // AU–AV: термін і завдання опрацювання підрядником (для заголовка повідомлення).
         processing_due: ncol >= PROCESSING_DUE_COL ? toISODate(r[PROCESSING_DUE_COL - 1]) : "",
-        processing_task: ncol >= PROCESSING_TASK_COL ? String(r[PROCESSING_TASK_COL - 1] || "").trim() : ""
+        processing_task: ncol >= PROCESSING_TASK_COL ? String(r[PROCESSING_TASK_COL - 1] || "").trim() : "",
+        // AY: отримувач посилки, якщо це не замовник (для ТТН).
+        recipient: (ncol >= PARTIES_COL ? parseJsonCell_(r[PARTIES_COL - 1]).recipient : null) || null
       };
     }
     String(r[31] || "").split(/\n+/).forEach(function (line) {
@@ -2476,6 +2478,10 @@ function buildProductionMsg_(data, opts) {
   var transport = data.transport === "Інше" ? (data.transport_custom || "") : (data.transport || "");
   if (transport) del += "• Спосіб: <b>" + esc_(transport) + "</b>\n";
   if (show.address && data.delivery_address) del += "• Адреса: " + esc_(data.delivery_address) + "\n";
+  // Отримувач — інша людина, ніж замовник: підряднику для ТТН (разом з адресою — ті самі пташки).
+  if (show.address && data.recipient && (data.recipient.name || data.recipient.phone)) {
+    del += "• Отримувач: <b>" + esc_([data.recipient.name, data.recipient.phone].filter(Boolean).join(", ")) + "</b>\n";
+  }
   if (data.delivery_date) del += "• Дата: <b>" + fmtDate_(data.delivery_date) + "</b>\n";
   if (show.notes && data.notes) {
     // Рядки про довжину/віброподушки вже показані у кожній позиції окремо — у злитих
@@ -2865,13 +2871,15 @@ function setupOrders(sheet) {
     "Термін опрацювання підрядником", // AU (47): до якої дати підрядник має відповісти
     "Завдання підряднику",            // AV (48): що саме опрацювати (вартість, конструктив…)
     "Причина скасування",             // AW (49): обовʼязкова при скасуванні з CRM
-    "Коментар до позиції"             // AX (50): стосується лише цієї позиції замовлення
+    "Коментар до позиції",            // AX (50): стосується лише цієї позиції замовлення
+    "Отримувач і платник",            // AY (51): якщо це не замовник (JSON)
+    "Коментарі до блоків"             // AZ (52): коментарі до блоків картки CRM (JSON)
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
   // Ширини A..AW — рівно стільки ж, скільки заголовків (останні: опрацювання й причина скасування).
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150,150,260,260,280];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150,150,260,260,280,260,260];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -5329,9 +5337,12 @@ function adminMigrateLegacyPayments_(data) {
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 50; // A–AX (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT; опрацювання AU–AV; причина скасування AW; коментар до позиції AX)
+var ADMIN_ORDER_COLS = 52; // A–AZ (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT; опрацювання AU–AV; причина скасування AW; коментар до позиції AX; отримувач і платник AY; коментарі до блоків AZ)
 var CANCEL_REASON_COL = 49;  // AW: чому скасовано — обовʼязково при скасуванні з CRM
 var ITEM_COMMENT_COL = 50;   // AX: коментар САМЕ до цієї позиції — підрядник бачить його в її блоці
+var PARTIES_COL = 51;        // AY: отримувач і платник, якщо це не замовник (JSON, однаковий у всіх рядках замовлення)
+var BLOCK_NOTES_COL = 52;    // AZ: коментарі до блоків картки (JSON { блок: { text, by, at } }, у всіх рядках)
+var BLOCK_NOTE_KEYS = ["client", "parties", "product", "finance", "delivery", "payments", "invoices", "contractor", "files"];
 // Статуси замовлення. «В опрацюванні підрядником» — підрядник рахує виробничу
 // вартість / розробляє конструктив; «Погодження клієнтом» — клієнт отримав ціну й думає;
 // «Виготовлення» — раніше називалось «В роботі».
@@ -5414,13 +5425,13 @@ function ensureDiscountColumns_(sheet) {
 
 function ensureDiscountColumnsOnce_() {
   var props = PropertiesService.getScriptProperties();
-  // V9: після додавання AX (коментар до позиції) заголовки треба проставити ще раз.
-  if (props.getProperty("ORDERS_COLS_V9_READY") === "1") return;
+  // V10: після додавання AY–AZ (отримувач і платник, коментарі до блоків) заголовки треба проставити ще раз.
+  if (props.getProperty("ORDERS_COLS_V10_READY") === "1") return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) return;
   ensureDiscountColumns_(sheet);
-  props.setProperty("ORDERS_COLS_V9_READY", "1");
+  props.setProperty("ORDERS_COLS_V10_READY", "1");
 }
 
 /** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
@@ -5451,7 +5462,9 @@ function ensureContactColumns_(sheet) {
     { col: PROCESSING_DUE_COL, title: "Термін опрацювання підрядником", key: "Термін опрацювання", width: 150 },
     { col: PROCESSING_TASK_COL, title: "Завдання підряднику", key: "Завдання підряднику", width: 260 },
     { col: CANCEL_REASON_COL, title: "Причина скасування", key: "Причина скасування", width: 260 },
-    { col: ITEM_COMMENT_COL, title: "Коментар до позиції", key: "Коментар до позиції", width: 280 }
+    { col: ITEM_COMMENT_COL, title: "Коментар до позиції", key: "Коментар до позиції", width: 280 },
+    { col: PARTIES_COL, title: "Отримувач і платник", key: "Отримувач і платник", width: 260 },
+    { col: BLOCK_NOTES_COL, title: "Коментарі до блоків", key: "Коментарі до блоків", width: 260 }
   ];
   extra.forEach(function (e) {
     var head = String(sheet.getRange(1, e.col).getValue() || "");
@@ -5610,6 +5623,28 @@ function itemComment_(cell, rowNotes) {
   return out.join("\n");
 }
 
+/** Комірка з JSON-обʼєктом → обʼєкт (порожня чи зіпсована — {}). */
+function parseJsonCell_(v) {
+  var t = String(v == null ? "" : v).trim();
+  if (!t || t.charAt(0) !== "{") return {};
+  try { var o = JSON.parse(t); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; } catch (e) { return {}; }
+}
+/** Отримувач і платник з кабінету — лише відомі поля, обрізані; «той самий, що замовник» — порожньо. */
+function cleanParties_(src) {
+  var p = src && typeof src === "object" ? src : {};
+  function txt(v, max) { return String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, max || 200); }
+  var out = {};
+  var rc = p.recipient || {};
+  if (txt(rc.name) || txt(rc.phone)) out.recipient = { name: txt(rc.name), phone: txt(rc.phone, 40) };
+  var py = p.payer || {};
+  if (txt(py.name)) {
+    var kind = ["person", "fop", "company"].indexOf(py.kind) >= 0 ? py.kind : "person";
+    out.payer = { kind: kind, name: txt(py.name), code: txt(py.code, 20), ipn: txt(py.ipn, 20), iban: txt(py.iban, 40),
+      bank: txt(py.bank), address: txt(py.address, 300), phone: txt(py.phone, 40), email: txt(py.email, 120) };
+  }
+  return out;
+}
+
 function mapOrderRow_(rowIndex, v) {
   var notes = String(v[31] || "");
   var contactMethod = String(v[37] || "").trim();
@@ -5673,7 +5708,9 @@ function mapOrderRow_(rowIndex, v) {
     processing_due: toISODate(v[46]) || "",        // AU: термін опрацювання підрядником
     processing_task: String(v[47] || "").trim(),   // AV: що зробити підряднику
     cancel_reason: String(v[48] || "").trim(),     // AW: чому скасовано
-    item_comment: itemComment_(v[49], v[31])       // AX: коментар до цієї позиції
+    item_comment: itemComment_(v[49], v[31]),      // AX: коментар до цієї позиції
+    parties: parseJsonCell_(v[50]),                // AY: отримувач і платник (порожньо — це замовник)
+    block_notes: parseJsonCell_(v[51])             // AZ: коментарі до блоків картки
   };
   // Y — усі комісії рядка. Комісію з маржі (утримує підрядник) рахуємо зі ставки; решта —
   // ставка партнера «за кошик» (її Avalon виплачує партнерові сама).
@@ -5748,6 +5785,8 @@ function adminGroupOrders_(orders, payments) {
         processing_due: o.processing_due,  // термін опрацювання підрядником
         processing_task: o.processing_task,
         cancel_reason: o.cancel_reason,  // причина скасування (AW)
+        parties: o.parties || {},        // отримувач і платник (AY)
+        block_notes: o.block_notes || {},  // коментарі до блоків (AZ)
         list_price: 0,
         discount_uah: 0
       };
@@ -6441,6 +6480,24 @@ function adminUpdateOrder_(data) {
     var mp = !!patch.margin_paid;
     targetRows.forEach(function (r) { sh.getRange(r, 34).setValue(mp); });
     notifyOwnerPaymentChange_(sh, row, 34, mp);
+  }
+  // Отримувач і платник — спільні для замовлення: у всі його рядки.
+  if (patch.parties != null) {
+    var partiesCell = cleanParties_(patch.parties);
+    var partiesText = Object.keys(partiesCell).length ? JSON.stringify(partiesCell) : "";
+    targetRows.forEach(function (r) { sh.getRange(r, PARTIES_COL).setValue(partiesText); });
+  }
+  // Коментар до блоку картки (Замовник, Товар, Фінанси, …): хто й коли написав. Порожній текст — прибрати.
+  if (patch.block_note != null) {
+    var bn = patch.block_note || {};
+    var bkey = String(bn.block || "");
+    if (BLOCK_NOTE_KEYS.indexOf(bkey) < 0) throw new Error("Невідомий блок картки для коментаря");
+    var notesNow = parseJsonCell_(sh.getRange(targetRows[0], BLOCK_NOTES_COL).getValue());
+    var btext = String(bn.text == null ? "" : bn.text).trim().slice(0, 2000);
+    if (btext) notesNow[bkey] = { text: btext, by: data.actor === "manager" ? "менеджер" : "власник", at: nowIsoKyiv_() };
+    else delete notesNow[bkey];
+    var notesText = Object.keys(notesNow).length ? JSON.stringify(notesNow) : "";
+    targetRows.forEach(function (r) { sh.getRange(r, BLOCK_NOTES_COL).setValue(notesText); });
   }
   if (patch.notes != null) {
     // Примітки в картці — загальні для замовлення: оновлюємо їх у ВСІХ позиціях, інакше

@@ -1,4 +1,4 @@
-const { requireAdmin, setAdminCors, handleOptions } = require("../../lib/admin-auth");
+const { requireAdmin, setAdminCors, handleOptions, roleOf } = require("../../lib/admin-auth");
 const { callAdminSheets, sendError } = require("../../lib/admin-sheets");
 const { forRole } = require("../../lib/admin-redact");
 const filesHandler = require("../../lib/admin-files-handler");
@@ -99,6 +99,8 @@ module.exports = async function handler(req, res) {
         order_number: orderNumber,
         row: body.row,
         patch: body.patch || body,
+        // Хто зберігає — для підпису коментарів до блоків картки («власник» / «менеджер»).
+        actor: roleOf(req) === "manager" ? "manager" : "owner",
         // Що кабінет бачить у цій позиції — щоб не правити сусідню після зсуву рядків.
         ...(body.expect && typeof body.expect === "object" ? { expect: cleanExpect(body.expect) } : {}),
         ...pricedWith(body),
