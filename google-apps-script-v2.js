@@ -1861,7 +1861,10 @@ function tgSendTo_(chatId, text, threadId, photoUrl) {
   var res = tgApi_("sendMessage", payload);
   if (photoUrl && (!res || !res.ok)) {
     // Прев'ю не прийнято (старіший Bot API чи недоступне фото) — текст важливіший за картинку.
-    var plain = { chat_id: payload.chat_id, text: payload.text, parse_mode: "HTML", disable_web_page_preview: true };
+    // Фото не буде — і рядок «Фото вище…» прибираємо, щоб не вводити в оману.
+    var plainText = String(payload.text).indexOf(PHOTO_NOTE_MARK) === 0
+      ? String(payload.text).replace(/^🖼 <i>Фото вище[\s\S]*?<\/i>\n\n/, "") : payload.text;
+    var plain = { chat_id: payload.chat_id, text: plainText, parse_mode: "HTML", disable_web_page_preview: true };
     if (payload.message_thread_id) plain.message_thread_id = payload.message_thread_id;
     res = tgApi_("sendMessage", plain);
   }
@@ -1992,6 +1995,29 @@ function orderPreviewPhoto_(data) {
   return "";
 }
 
+/**
+ * Рядок під фото моделі в повідомленні підряднику: фото — лише форма кошика, візерунок на ньому умовний.
+ * 30.10.2026 коментар «Візерунок як на фото» ввів підрядника в оману — візерунок брали з фото моделі.
+ */
+var PHOTO_NOTE_MARK = "🖼 <i>Фото вище";
+function previewPhotoNote_(data) {
+  var items = (data && Array.isArray(data.items) && data.items.length) ? data.items : [data];
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    if (!it || it.product_type === "other" || it.product_type === "service") continue;
+    var info = modelInfo_(it);
+    if (!info) continue;
+    if (/^AVL-(?:K|SK)-/.test(info.id)) {
+      return PHOTO_NOTE_MARK + " — приклад виробу " + esc_(info.id) + " «" + esc_(info.name) + "», не креслення.</i>\n\n";
+    }
+    var pattern = String(it.pattern || "").trim();
+    return PHOTO_NOTE_MARK + " — лише модель " + esc_(info.id) + " «" + esc_(info.name) + "» (форма кошика). "
+      + "Візерунок на фото умовний, не з замовлення"
+      + (pattern ? "; замовлено візерунок <b>" + esc_(pattern) + "</b>" : "") + ".</i>\n\n";
+  }
+  return "";
+}
+
 function esc_(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -2036,7 +2062,8 @@ function createOrderTopic_(data, opts, prefix) {
   var r = tgApi_("createForumTopic", { chat_id: chat, name: num || "Замовлення" });
   if (r && r.ok && r.result && r.result.message_thread_id) threadId = r.result.message_thread_id;
   // якщо Теми вимкнені / бот не адмін — threadId лишиться null, повідомлення піде в загальний чат
-  var sent = tgSendTo_(chat, (prefix || "") + buildProductionMsg_(data, opts), threadId, orderPreviewPhoto_(data));
+  var photo = orderPreviewPhoto_(data);
+  var sent = tgSendTo_(chat, (photo ? previewPhotoNote_(data) : "") + (prefix || "") + buildProductionMsg_(data, opts), threadId, photo);
   if (num && sent && sent.ok) {
     p.setProperty("thread_" + num, threadId ? String(threadId) : "0"); // "0" = надіслано без теми
     p.setProperty("sent_" + num, nowIsoKyiv_());                        // коли — показуємо в CRM
@@ -2765,8 +2792,9 @@ function sendUpdateToContractor() {
   var ord = buildOrderFromRows_(sh, num);
   if (!ord) { ui.alert("Не вдалося зібрати дані замовлення " + num + "."); return; }
   var chat = p.getProperty("TG_CONTRACTOR_CHAT");
-  var text = "🔄 <b>ОНОВЛЕНО ЗАМОВЛЕННЯ</b> (зміни від замовника):\n\n" + buildProductionMsg_(ord);
-  var sent = tgSendTo_(chat, text, thread === "0" ? null : thread, orderPreviewPhoto_(ord));
+  var photo = orderPreviewPhoto_(ord);
+  var text = (photo ? previewPhotoNote_(ord) : "") + "🔄 <b>ОНОВЛЕНО ЗАМОВЛЕННЯ</b> (зміни від замовника):\n\n" + buildProductionMsg_(ord);
+  var sent = tgSendTo_(chat, text, thread === "0" ? null : thread, photo);
   if (sent && sent.ok) ui.alert("✅ Оновлення надіслано підряднику в гілку " + num + ".");
   else ui.alert("⚠️ Не вдалося надіслати. Перевір права бота «Керувати гілками» в групі.");
 }
@@ -7161,11 +7189,12 @@ function adminContractorPreview_(data) {
   var due = purpose === "processing" ? (toISODate(data.processing_due) || ord.processing_due) : "";
   var task = purpose === "processing"
     ? (data.processing_task != null ? String(data.processing_task).trim() : ord.processing_task) : "";
-  var text = contractorPrefix_(purpose, update, p.getProperty("sent_purpose_" + num) || "", due, task)
+  var photo = orderPreviewPhoto_(ord);
+  var text = (photo ? previewPhotoNote_(ord) : "") + contractorPrefix_(purpose, update, p.getProperty("sent_purpose_" + num) || "", due, task)
     + commentBlock_(data.comment)
     + buildProductionMsg_(ord, contractorOptions_(data.options));
   // photo — те саме прев'ю, що побачить підрядник над текстом.
-  return { status: "ok", text: text, photo: orderPreviewPhoto_(ord), update: update, sent_at: p.getProperty("sent_" + num) || "" };
+  return { status: "ok", text: text, photo: photo, update: update, sent_at: p.getProperty("sent_" + num) || "" };
 }
 
 function adminContractorSend_(data) {
@@ -7193,7 +7222,8 @@ function adminContractorSend_(data) {
     if (update) {
       // Уже надсилали — наступне повідомлення йде в ту саму гілку замовлення.
       var tg = contractorChat_();
-      var sent = tgSendTo_(tg.chat, prefix + buildProductionMsg_(ord, opts), thread === "0" ? null : thread, orderPreviewPhoto_(ord));
+      var photo = orderPreviewPhoto_(ord);
+      var sent = tgSendTo_(tg.chat, (photo ? previewPhotoNote_(ord) : "") + prefix + buildProductionMsg_(ord, opts), thread === "0" ? null : thread, photo);
       if (!sent || !sent.ok) throw new Error("Telegram не прийняв повідомлення: " + telegramError_(sent));
       p.setProperty("sent_" + num, nowIsoKyiv_());
     } else {
