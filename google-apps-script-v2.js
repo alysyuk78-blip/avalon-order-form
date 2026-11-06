@@ -1861,7 +1861,10 @@ function tgSendTo_(chatId, text, threadId, photoUrl) {
   var res = tgApi_("sendMessage", payload);
   if (photoUrl && (!res || !res.ok)) {
     // Прев'ю не прийнято (старіший Bot API чи недоступне фото) — текст важливіший за картинку.
-    var plain = { chat_id: payload.chat_id, text: payload.text, parse_mode: "HTML", disable_web_page_preview: true };
+    // Фото не буде — і рядок «Фото вище…» прибираємо, щоб не вводити в оману.
+    var plainText = String(payload.text).indexOf(PHOTO_NOTE_MARK) === 0
+      ? String(payload.text).replace(/^🖼 <i>Фото вище[\s\S]*?<\/i>\n\n/, "") : payload.text;
+    var plain = { chat_id: payload.chat_id, text: plainText, parse_mode: "HTML", disable_web_page_preview: true };
     if (payload.message_thread_id) plain.message_thread_id = payload.message_thread_id;
     res = tgApi_("sendMessage", plain);
   }
@@ -1996,6 +1999,7 @@ function orderPreviewPhoto_(data) {
  * Рядок під фото моделі в повідомленні підряднику: фото — лише форма кошика, візерунок на ньому умовний.
  * 30.10.2026 коментар «Візерунок як на фото» ввів підрядника в оману — візерунок брали з фото моделі.
  */
+var PHOTO_NOTE_MARK = "🖼 <i>Фото вище";
 function previewPhotoNote_(data) {
   var items = (data && Array.isArray(data.items) && data.items.length) ? data.items : [data];
   for (var i = 0; i < items.length; i++) {
@@ -2003,8 +2007,11 @@ function previewPhotoNote_(data) {
     if (!it || it.product_type === "other" || it.product_type === "service") continue;
     var info = modelInfo_(it);
     if (!info) continue;
+    if (/^AVL-(?:K|SK)-/.test(info.id)) {
+      return PHOTO_NOTE_MARK + " — приклад виробу " + esc_(info.id) + " «" + esc_(info.name) + "», не креслення.</i>\n\n";
+    }
     var pattern = String(it.pattern || "").trim();
-    return "🖼 <i>Фото вище — лише модель " + esc_(info.id) + " «" + esc_(info.name) + "» (форма кошика). "
+    return PHOTO_NOTE_MARK + " — лише модель " + esc_(info.id) + " «" + esc_(info.name) + "» (форма кошика). "
       + "Візерунок на фото умовний, не з замовлення"
       + (pattern ? "; замовлено візерунок <b>" + esc_(pattern) + "</b>" : "") + ".</i>\n\n";
   }

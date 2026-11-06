@@ -830,6 +830,21 @@ function testModelPhotoAndFinanceLines() {
   const tries = tg2.filter((x) => x.method === "sendMessage");
   assert.equal(tries.length, 2);
   assert.ok(tries[0].payload.link_preview_options && !tries[1].payload.link_preview_options, "повтор — без прев'ю");
+  assert.ok(tries[0].payload.text.startsWith("🖼 <i>Фото вище") && !/Фото вище/.test(tries[1].payload.text),
+    "фото не дійшло — рядка «Фото вище…» теж немає");
+
+  // Без візерунка — без «замовлено візерунок»; HTML у назві екранується; кронштейни — свій текст.
+  const noPat = processingContext(makeSheet([orderRow(ORD, "Нове", { 8: "Суцільний · AVL-04", 10: "", 13: 800, 14: 550, 15: 500, 16: 1, 40: "Зі знімною боковиною", 41: "Кошик" })]),
+    makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" }), makeCalendar(), []);
+  const np = noPat.adminContractorPreview_({ order_number: ORD, options: {} }).text;
+  assert.ok(np.startsWith("🖼 <i>Фото вище — лише модель AVL-04") && !/замовлено візерунок/.test(np.split("\n")[0]));
+  const esc = processingContext(makeSheet([orderRow(ORD, "Нове", { 8: "Суцільний · AVL-04", 10: "Інший: <ромби> & хвилі", 13: 800, 14: 550, 15: 500, 16: 1, 40: "Зі знімною боковиною", 41: "Кошик" })]),
+    makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" }), makeCalendar(), []);
+  assert.ok(esc.adminContractorPreview_({ order_number: ORD, options: {} }).text.split("\n")[0].includes("<b>Інший: &lt;ромби&gt; &amp; хвилі</b>"));
+  const br = processingContext(makeSheet([orderRow(ORD, "Нове", { 8: "Комплект кронштейнів · AVL-K-01", 16: 1, 40: "Кронштейни декоративні", 41: "Кронштейни" })]),
+    makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" }), makeCalendar(), []);
+  const brText = br.adminContractorPreview_({ order_number: ORD, options: {} }).text.split("\n")[0];
+  assert.ok(/приклад виробу AVL-K-01/.test(brText) && !/візерунок/i.test(brText), "кронштейни — без «візерунок умовний»: " + brText);
 
   // Замовлення без моделі каталогу (послуга) — жодного прев'ю, повідомлення як було.
   const svc = processingContext(makeSheet([orderRow("ORD-110926-777", "Нове", { 41: "Послуга", 7: "Лазерне різання", 40: "Різання" })]),

@@ -104,26 +104,33 @@ import invoiceLib from '../../lib/avalon-invoice.js';
     const EXECUTION_CHOICE_MODELS = ["AVL-03", "AVL-06", "AVL-06/1", "AVL-08"];
     // «Конструкція» в таблиці — «Виконання · AVL-xx[ + кришка]»: з неї формула бере модель і кришку.
     const CONSTRUCTION_CHOICES = CATALOG_MODELS_CRM.reduce((list, m) => {
-      list.push({ value: m.construction + " · " + m.id, label: m.id + " — " + m.name + " · " + m.construction.toLowerCase(), model: m });
+      const same = m.construction.toLowerCase() === m.name.toLowerCase();
+      list.push({ value: m.construction + " · " + m.id, label: m.id + " — " + m.name + (same ? "" : " · " + m.construction.toLowerCase()), model: m });
       if (EXECUTION_CHOICE_MODELS.includes(m.id)) list.push({ value: "Розбірний · " + m.id, label: m.id + " — " + m.name + " · розбірний", model: m });
       return list;
     }, []);
     const constructionBase = (v) => String(v || "").replace(/\s*\+\s*кришка\s*$/i, "").trim();
+    const constructionModelId = (v) => ((String(v || "").toUpperCase().match(/AVL-(?:SK-|K-)?\d{2}(?:\/\d)?/) || [])[0] || "");
     /**
      * Поле з вибором зі списку й варіантом «Інше…» (тоді — вільний текст). Значення, якого немає
      * в списку (старі замовлення, ручні правки), показується текстом — нічого не губиться.
+     * otherPrefix — з чого починається власний варіант (візерунок «Інший: …» дає надбавку за м²).
      */
-    function ChoiceField({ id, label, value, options, onChange, otherLabel = "Інше (вписати)…", placeholder }) {
+    function ChoiceField({ id, label, value, options, onChange, otherLabel = "Інше (вписати)…", placeholder, otherPrefix = "" }) {
       const opts = options.map(o => (typeof o === "string" ? { value: o, label: o } : o));
       const v = String(value == null ? "" : value);
       const inList = opts.some(o => o.value === v);
       const [custom, setCustom] = useState(!!v && !inList);
-      useEffect(() => { if (v && !inList) setCustom(true); }, [v, inList]);
+      useEffect(() => { setCustom(!!v && !inList); }, [v, inList]);
       return (
         <div className="field"><label htmlFor={id}>{label}</label>
           <select id={id} value={custom ? "__other" : v} onChange={e => {
             const next = e.target.value;
-            if (next === "__other") { setCustom(true); return; }
+            if (next === "__other") {
+              setCustom(true);
+              if (otherPrefix && !v.toLowerCase().startsWith(otherPrefix.trim().toLowerCase())) onChange(otherPrefix, null);
+              return;
+            }
             setCustom(false);
             onChange(next, opts.find(o => o.value === next));
           }}>
@@ -151,29 +158,33 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const data = await npCall("AddressGeneral", "searchSettlements", { CityName: query.trim(), Limit: "20", Page: "1" });
       return ((data[0] && data[0].Addresses) || []).map(a => ({ ref: a.DeliveryCity, name: a.MainDescription, full: a.Present, area: a.Area }));
     }
+    const NP_PAGE = 500;
     const npWarehouseCache = {};
     const npWarehouseOf = (w) => ({ description: w.Description, number: String(w.Number || ""), shortAddress: w.ShortAddress,
       postomat: String(w.CategoryOfWarehouse || "").toLowerCase() === "postomat" || /поштомат/i.test(w.Description || ""),
       placeMax: parseFloat(w.PlaceMaxWeightAllowed) || 0 });
-    // Без запиту — перші 500 відділень міста (запамʼятовуємо); з запитом — пошук по всьому довіднику міста
-    // (у великих містах відділень і поштоматів понад 500).
+    // Без запиту — перші 500 відділень міста (запамʼятовуємо); з запитом — пошук по всьому довіднику міста.
     async function npWarehouses(cityRef, query) {
       if (!cityRef) return [];
       const q = String(query || "").trim();
       if (q) return (await npCall("Address", "getWarehouses", { CityRef: cityRef, FindByString: q, Limit: "100", Page: "1" })).map(npWarehouseOf);
       if (!npWarehouseCache[cityRef]) {
-        npWarehouseCache[cityRef] = npCall("Address", "getWarehouses", { CityRef: cityRef, Limit: "500", Page: "1" })
+        npWarehouseCache[cityRef] = npCall("Address", "getWarehouses", { CityRef: cityRef, Limit: String(NP_PAGE), Page: "1" })
           .then(list => list.map(npWarehouseOf))
           .catch(e => { delete npWarehouseCache[cityRef]; throw e; });
       }
       return npWarehouseCache[cityRef];
     }
     const npNorm = (s) => String(s || "").toLowerCase().replace(/^(м\.|с\.|смт\.?|селище)\s*/, "").trim();
-    // Місто з тексту → ref Нової пошти (точний збіг назви, або єдиний результат).
+    // Місто з тексту → ref Нової пошти: лише якщо збіг ОДИН (однойменних сіл багато — тоді хай оберуть зі списку).
     async function npResolveCity(name) {
       const list = await npCities(name);
       const target = npNorm(name);
-      return list.find(c => npNorm(c.name) === target) || (list.length === 1 ? list[0] : null);
+      const exact = list.filter(c => npNorm(c.name) === target);
+      if (exact.length === 1) return exact[0];
+      // Місто, а не село: «м. Київ» серед однойменних — за повною назвою.
+      const city = exact.filter(c => /^м\./i.test(String(c.full || "").trim()));
+      return city.length === 1 ? city[0] : (list.length === 1 ? list[0] : null);
     }
     function NpSuggest({ id, value, onChange, placeholder, load, render, minChars = 2, disabled, footer }) {
       const [open, setOpen] = useState(false);
@@ -182,15 +193,17 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const [err, setErr] = useState(false);
       const timer = useRef(null);
       const seq = useRef(0);
+      const focused = useRef(false);
+      function cancel() { clearTimeout(timer.current); seq.current += 1; setLoading(false); }
       function run(text) {
-        clearTimeout(timer.current);
-        if (String(text || "").trim().length < minChars) { setItems([]); setLoading(false); return; }
+        cancel();
+        if (String(text || "").trim().length < minChars) { setItems([]); setOpen(false); return; }
         setLoading(true);
-        const my = ++seq.current;
+        const my = seq.current;
         timer.current = setTimeout(async () => {
           try { const list = await load(text); if (my === seq.current) { setItems(list); setErr(false); } }
           catch (e) { if (my === seq.current) { setItems([]); setErr(true); } }
-          finally { if (my === seq.current) { setLoading(false); setOpen(true); } }
+          finally { if (my === seq.current) { setLoading(false); if (focused.current) setOpen(true); } }
         }, 300);
       }
       useEffect(() => () => clearTimeout(timer.current), []);
@@ -198,15 +211,16 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         <div className="np-suggest">
           <input id={id} value={value} placeholder={placeholder} disabled={disabled} autoComplete="off"
             onChange={e => { onChange(e.target.value, null); run(e.target.value); }}
-            onFocus={() => { if (minChars === 0) run(""); else if (items.length) setOpen(true); }}
-            onBlur={() => setTimeout(() => setOpen(false), 150)} />
+            onFocus={() => { focused.current = true; if (minChars === 0) run(""); else if (items.length) setOpen(true); }}
+            onBlur={() => { focused.current = false; setTimeout(() => { if (!focused.current) setOpen(false); }, 150); }}
+            onKeyDown={e => { if (e.key === "Escape") { cancel(); setOpen(false); } }} />
           {loading && <span className="np-suggest-spin">…</span>}
           {open && (
             <div className="np-suggest-list">
               {err && <div className="np-suggest-note">⚠️ {NP_ERROR_TEXT}</div>}
               {!err && !items.length && !loading && <div className="np-suggest-note">Нічого не знайдено</div>}
               {items.map((it, i) => (
-                <button type="button" key={i} onMouseDown={e => { e.preventDefault(); onChange(it.value, it); setOpen(false); }}>{render(it)}</button>
+                <button type="button" key={i} onMouseDown={e => { e.preventDefault(); cancel(); onChange(it.value, it); setOpen(false); }}>{render(it)}</button>
               ))}
               {footer}
             </div>
@@ -214,11 +228,16 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         </div>
       );
     }
-    function NpCityField({ id, value, onChange, onRef }) {
+    // Обрали інше місто зі списку — відділення старого міста стирається (як у формі замовлення).
+    function NpCityField({ id, value, onChange, onRef, cityRef, onCityChanged }) {
       return (
         <NpSuggest id={id} value={value} placeholder="Почніть вводити назву міста…"
           load={async (q) => (await npCities(q)).map(c => ({ ...c, value: c.name }))}
-          onChange={(text, it) => { onChange(text); onRef(it ? it.ref : ""); }}
+          onChange={(text, it) => {
+            onChange(text);
+            onRef(it ? it.ref : "");
+            if (it && cityRef && it.ref !== cityRef && onCityChanged) onCityChanged();
+          }}
           render={c => <><b>{c.name}</b><small>{c.full}</small></>} />
       );
     }
@@ -226,20 +245,26 @@ import invoiceLib from '../../lib/avalon-invoice.js';
     function NpBranchField({ id, value, onChange, city, cityRef, onCityRef }) {
       const [postomats, setPostomats] = useState(false);
       const [resolving, setResolving] = useState(false);
-      // Місто вписано вручну чи прийшло із замовлення — шукаємо його ref, щоб відділення вантажились одразу.
+      // Місто вписано вручну чи прийшло із замовлення — шукаємо його ref (з паузою, не на кожну літеру).
       useEffect(() => {
         if (cityRef || !String(city || "").trim()) return;
         let alive = true;
-        setResolving(true);
-        npResolveCity(city).then(c => { if (alive && c) onCityRef(c.ref); }).catch(() => {}).finally(() => { if (alive) setResolving(false); });
-        return () => { alive = false; };
+        const t = setTimeout(() => {
+          setResolving(true);
+          npResolveCity(city).then(c => { if (alive && c) onCityRef(c.ref); }).catch(() => {}).finally(() => { if (alive) setResolving(false); });
+        }, 600);
+        return () => { alive = false; clearTimeout(t); };
       }, [city, cityRef]);
       const load = async (q) => {
         const t = String(q || "").trim().toLowerCase();
-        const own = (await npWarehouses(cityRef)).filter(w => postomats || !w.postomat);
+        const own = await npWarehouses(cityRef);
         let found = t ? own.filter(w => w.description.toLowerCase().includes(t) || w.number === t) : own;
-        // Не знайшли серед перших 500 — питаємо Нову пошту напряму.
-        if (t && !found.length) found = (await npWarehouses(cityRef, q)).filter(w => postomats || !w.postomat);
+        // У місті понад 500 відділень (Київ, Харків…) — довідник шукаємо ще й напряму, щоб знайти №1200 тощо.
+        if (t && (own.length >= NP_PAGE || !found.length)) {
+          const seen = new Set(found.map(w => w.description));
+          (await npWarehouses(cityRef, q)).forEach(w => { if (!seen.has(w.description)) { seen.add(w.description); found.push(w); } });
+        }
+        found = found.filter(w => postomats || !w.postomat);
         // Спершу — відділення саме з таким номером, далі ті, чий номер з нього починається.
         const rank = (w) => (w.number === t ? 0 : (t && w.number.startsWith(t) ? 1 : 2));
         found = found.slice().sort((x, y) => rank(x) - rank(y) || (Number(x.number) || 0) - (Number(y.number) || 0));
@@ -251,6 +276,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             placeholder={cityRef ? "Номер або адреса відділення…" : (resolving ? "Шукаю місто в Новій пошті…" : "Спершу оберіть місто зі списку (або впишіть вручну)")}
             load={cityRef ? load : async () => []}
             onChange={(text) => onChange(text)}
+            footer={<div className="np-suggest-note">Показано до 60 — уточніть номер чи вулицю, якщо потрібного немає.</div>}
             render={w => <><b>{w.description}</b><small>{[w.shortAddress, w.postomat ? "поштомат" : "", !w.postomat && w.placeMax > 0 ? "до " + w.placeMax + " кг на місце" : ""].filter(Boolean).join(" · ")}</small></>} />
           <label className="np-postomat-toggle"><input type="checkbox" checked={postomats} onChange={e => setPostomats(e.target.checked)} /> показувати поштомати</label>
         </>
@@ -3673,9 +3699,12 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const [purposeRequest, setPurposeRequest] = useState(null);   // «на опрацювання» / «у виробництво»
       // Ціни «за 1 шт», які зараз вписують (поки поле в роботі — показуємо сам текст, без перерахунку назад).
       const [unitDraft, setUnitDraft] = useState({});
+      // Ціни за одиницю, від яких рахуються суми, поки змінюють кількість (знімаються з форми при першій зміні).
+      const unitBase = useRef(null);
+      const lastQty = useRef(null); // остання правильна кількість у формі (поле могли стерти посеред введення)
       // Місто в довіднику Нової пошти — щоб відділення підтягувались за ним.
       const [npCityRef, setNpCityRef] = useState("");
-      useEffect(() => { setUnitDraft({}); }, [orderNumber, itemIdx]);
+      useEffect(() => { setUnitDraft({}); unitBase.current = null; lastQty.current = null; }, [orderNumber, itemIdx]);
       useEffect(() => { setNpCityRef(""); }, [orderNumber]);
       const uploadQueueRef = useRef(Promise.resolve());
       const sendSectionRef = useRef(null);
@@ -4092,27 +4121,78 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       // Кошик за формулою перераховує сервер при збереженні товару.
       const manualPriced = (f) => pricing.avalonIsIndividualPricing(f.basket_type, f.pattern)
         || !((!f.product_kind || f.product_kind === "Кошик") && calcPosition(f, ratesFor(order.rates_from)));
+      // Кількість так, як її збереже таблиця: виріб — ціле від 1, послуга — до сотих.
+      const normQty = (f, raw) => {
+        const n = Number(raw);
+        if (!(n > 0)) return 0;
+        return f.product_kind === SERVICE_KIND ? Math.round(n * 100) / 100 : Math.max(1, Math.round(n));
+      };
       function setQuantity(raw) {
         setForm(f => {
           const next = { ...f, quantity: raw };
-          const saved = items[itemIdx] || {};
-          const oldQ = Number(saved.quantity) > 0 ? Number(saved.quantity) : 1;
-          const newQ = Number(raw);
-          if (!(newQ > 0) || !manualPriced(next)) return next;
-          const k = newQ / oldQ;
-          const scale = (v) => (v === "" || v == null || !Number(v) ? v : String(Math.round(Number(v) * k)));
-          return { ...next, cost_total: scale(saved.cost_total), list_price: scale(saved.list_price),
-            discount_uah: scale(saved.discount_uah), revenue: scale(saved.revenue) };
+          const newQ = normQty(f, raw);
+          if (!newQ || !manualPriced(next)) return next;
+          // База — поточні суми форми (зокрема ще не збережені правки) на кількість до зміни.
+          // Суми змінили в «Фінансах» (вручну, знижкою, «Підставити ціну») — база знімається заново.
+          const pr = unitBase.current && unitBase.current.produced;
+          if (pr && (pr.cost !== f.cost_total || pr.list !== f.list_price || pr.revenue !== f.revenue)) unitBase.current = null;
+          if (!unitBase.current) {
+            const q0 = normQty(f, f.quantity) || lastQty.current || normQty(f, (items[itemIdx] || {}).quantity) || 1;
+            const per = (v) => (v === "" || v == null ? null : (Number(v) || 0) / q0);
+            unitBase.current = { cost: per(f.cost_total), list: per(f.list_price), uah: per(f.discount_uah), revenue: per(f.revenue) };
+          }
+          const b = unitBase.current;
+          lastQty.current = newQ;
+          const tot = (u) => (u == null ? "" : String(Math.round(u * newQ)));
+          const out = { ...next, cost_total: tot(b.cost), list_price: tot(b.list) };
+          const list = Number(out.list_price) || 0;
+          const pctValue = Number(f.discount_pct) || 0;
+          if (out.list_price !== "" && pctValue > 0) {
+            // Як у таблиці (applyFinanceToRow_): ціна зі знижкою до гривні, знижка ₴ — доповнення.
+            out.revenue = String(Math.round(list * (1 - pctValue / 100)));
+            out.discount_uah = String(list - Number(out.revenue));
+          } else if (out.list_price !== "" && b.uah) {
+            out.discount_uah = tot(b.uah);
+            out.revenue = String(Math.max(0, list - Number(out.discount_uah)));
+          } else {
+            out.discount_uah = b.uah == null ? f.discount_uah : tot(b.uah);
+            out.revenue = tot(b.revenue);
+          }
+          b.produced = { cost: out.cost_total, list: out.list_price, revenue: out.revenue };
+          return out;
         });
         setUnitDraft({});
       }
+      // Порожня клітинка лишається порожньою (null — «не змінювати»), а не стає нулем.
+      const blankOr = (v, empty) => (v === "" || v == null ? empty : Number(v));
       const financeFields = () => ({
-        cost_total: form.cost_total === "" ? null : Number(form.cost_total),
-        list_price: form.list_price === "" ? null : Number(form.list_price),
-        discount_pct: form.discount_pct === "" ? 0 : Number(form.discount_pct),
-        discount_uah: form.discount_uah === "" ? 0 : Number(form.discount_uah),
-        revenue: form.revenue === "" ? null : Number(form.revenue),
+        cost_total: blankOr(form.cost_total, null),
+        list_price: blankOr(form.list_price, null),
+        discount_pct: blankOr(form.discount_pct, 0),
+        discount_uah: blankOr(form.discount_uah, 0),
+        revenue: blankOr(form.revenue, null),
       });
+      const savedQty = Number((items[itemIdx] || {}).quantity) || 1;
+      const qtyChanged = normQty(form, form.quantity) !== normQty(form, savedQty);
+      // Позиція мала хоч одну суму — тоді разом із кількістю зберігаємо й перемножені суми.
+      const savedHasMoney = ["cost_total", "list_price", "revenue"].some(k => { const v = (items[itemIdx] || {})[k]; return v !== "" && v != null; });
+      function saveItem() {
+        if (!normQty(form, form.quantity)) return setError("Вкажіть кількість (від 1; для послуги — більше 0).");
+        unitBase.current = null; lastQty.current = null;
+        return save(manualPriced(form) && qtyChanged && savedHasMoney ? { ...itemPatch(), ...financeFields() } : itemPatch());
+      }
+      function saveFinance() {
+        if (!normQty(form, form.quantity)) return setError("Вкажіть кількість (від 1; для послуги — більше 0).");
+        // Змінили кількість, але не зберегли товар: ручну позицію зберігаємо разом із кількістю (інакше суми
+        // були б за нову кількість, а в таблиці — стара); кошик за формулою спершу перераховує «Зберегти товар».
+        if (qtyChanged && !manualPriced(form)) return setError("Кількість змінено — спершу натисніть «Зберегти товар»: кошик перерахується за формулою.");
+        unitBase.current = null; lastQty.current = null;
+        return save({
+          ...(qtyChanged ? { quantity: normQty(form, form.quantity) } : {}),
+          ...financeFields(),
+          commission_pct: form.commission_pct === "" ? null : Number(form.commission_pct),
+        });
+      }
 
       // Поля розділу «Товар» — одним набором для «Зберегти товар» і «Застосувати розрахунок».
       function itemPatch() {
@@ -4324,7 +4404,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               <div className="field"><label>Телефон</label>
                 <input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></div>
               <div className="field"><label htmlFor="order-city">Місто</label>
-                <NpCityField id="order-city" value={form.city} onChange={v => setForm(f => ({ ...f, city: v }))} onRef={setNpCityRef} /></div>
+                <NpCityField id="order-city" value={form.city} onChange={v => setForm(f => ({ ...f, city: v }))} onRef={setNpCityRef}
+                  cityRef={npCityRef} onCityChanged={() => setForm(f => ({ ...f, address: /нов|^\s*$/i.test(f.transport || "") ? "" : f.address }))} /></div>
               <div className="field"><label>Спосіб зв'язку</label>
                 <select value={form.contact_method} onChange={e => setForm({ ...form, contact_method: e.target.value })}>
                   <option value="">— не вказано —</option>
@@ -4429,10 +4510,20 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                         onChange={(v, opt) => setForm(f => {
                           if (!opt) return { ...f, construction: v };
                           const m = opt.model;
-                          const hadCover = /\+\s*кришка\s*$/i.test(f.construction || "");
-                          const cover = m.coverAllowed !== false && !m.bracket && (hadCover || m.defaultCover);
-                          return { ...f, construction: v + (cover ? " + кришка" : ""), basket_model: m.name,
-                            product_kind: m.bracket ? "Кронштейни" : (f.product_kind || "Кошик"), unit: m.bracket ? "комп." : (f.unit || "шт.") };
+                          // Та сама модель (змінили лише виконання) — кришка як була; інша модель — як у каталозі.
+                          const sameModel = constructionModelId(f.construction) === m.id;
+                          const old = pricing.avalonParseOptions(f.construction, f.specs);
+                          const allowed = m.coverAllowed !== false && !m.bracket;
+                          const top = !allowed ? "" : (sameModel ? old.topCover : (m.defaultCover ? (old.topCover || "plain") : ""));
+                          const kind = m.bracket ? "Кронштейни" : "Кошик";
+                          // Характеристики переписуємо разом із конструкцією: «Стінки: розбірні», кришки (як у розрахунку).
+                          const type = pricing.avalonModelType(v, m.name);
+                          const next = m.bracket
+                            ? { construction: v, specs: f.specs }
+                            : pricing.applyOptionsToText(v, f.specs, { ...old, topCover: top, bottomCover: allowed ? old.bottomCover : "",
+                                universalSectional: /розбір/i.test(v) }, type);
+                          return { ...f, construction: next.construction, specs: next.specs, basket_model: m.name, product_kind: kind,
+                            unit: m.bracket ? "комп." : (f.unit === "комп." || !f.unit ? "шт." : f.unit) };
                         })} />
                     )}
                     {!isServiceItem && (
@@ -4442,7 +4533,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                     <ChoiceField id="order-color" label="Колір" value={form.color} options={FORM_COLORS} otherLabel="Інший колір (вписати RAL)…"
                       placeholder="Напр. RAL 6005 зелений" onChange={v => setForm(f => ({ ...f, color: v }))} />
                     {!isServiceItem && (
-                      <ChoiceField id="order-pattern" label="Візерунок" value={form.pattern} options={FORM_PATTERNS} otherLabel="Інший (за ескізом)…"
+                      <ChoiceField id="order-pattern" label="Візерунок" value={form.pattern} options={FORM_PATTERNS} otherLabel="Інший (за ескізом)…" otherPrefix="Інший: "
                         placeholder="Інший: опис ескізу (з «Інший» — надбавка за м²)" onChange={v => setForm(f => ({ ...f, pattern: v }))} />
                     )}
                     <div className="field"><label>Кількість</label>
@@ -4478,9 +4569,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                 </>
               );
             })()}
-            <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy || stale} onClick={() => save(
-              manualPriced(form) && Number(form.quantity) !== Number((items[itemIdx] || {}).quantity)
-                ? { ...itemPatch(), ...financeFields() } : itemPatch())}>Зберегти товар</button>
+            <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy || stale} onClick={saveItem}>Зберегти товар</button>
 
             <div className="section-title">Фінанси{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</div>
             {items.length > 1 && (
@@ -4520,18 +4609,20 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                 <input id="fin-cost-unit" type="number" step="any" value={unitDraft.cost ?? perUnit(form.cost_total, form)} onChange={e => {
                   const raw = e.target.value;
                   setUnitDraft(d => ({ ...d, cost: raw }));
+                  unitBase.current = null;
                   setForm(f => ({ ...f, cost_total: raw === "" ? "" : String(Math.round(Number(raw) * qtyOf(f))) }));
                 }} onBlur={() => setUnitDraft(d => ({ ...d, cost: undefined }))} /></div>
               <div className="field"><label htmlFor="fin-list-unit">Роздрібна ціна за 1 {form.unit || "шт."}</label>
                 <input id="fin-list-unit" type="number" step="any" value={unitDraft.list ?? perUnit(form.list_price, form)} onChange={e => {
                   const raw = e.target.value;
                   setUnitDraft(d => ({ ...d, list: raw }));
+                  unitBase.current = null;
                   setForm(f => withList(f, raw === "" ? "" : String(Math.round(Number(raw) * qtyOf(f)))));
                 }} onBlur={() => setUnitDraft(d => ({ ...d, list: undefined }))} /></div>
               <div className="field"><label>Собівартість (разом{qtyOf(form) !== 1 ? " за " + qtyOf(form) + " " + (form.unit || "шт.") : ""})</label>
-                <input type="number" value={form.cost_total} onChange={e => { setUnitDraft({}); setForm({ ...form, cost_total: e.target.value }); }} /></div>
+                <input type="number" value={form.cost_total} onChange={e => { setUnitDraft({}); unitBase.current = null; setForm({ ...form, cost_total: e.target.value }); }} /></div>
               <div className="field"><label>Роздрібна ціна (разом{qtyOf(form) !== 1 ? " за " + qtyOf(form) + " " + (form.unit || "шт.") : ""})</label>
-                <input type="number" value={form.list_price} onChange={e => { setUnitDraft({}); setForm(withList(form, e.target.value)); }} /></div>
+                <input type="number" value={form.list_price} onChange={e => { setUnitDraft({}); unitBase.current = null; setForm(withList(form, e.target.value)); }} /></div>
               <div className="field"><label>Знижка %</label>
                 <input type="number" step="0.1" value={form.discount_pct} onChange={e => {
                   const pctValue = Number(e.target.value) || 0;
@@ -4630,10 +4721,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               </div>
             )}
 
-            <button className="btn" style={{ marginTop: 8 }} disabled={busy || stale} onClick={() => save({
-              ...financeFields(),
-              commission_pct: form.commission_pct === "" ? null : Number(form.commission_pct),
-            })}>Зберегти фінанси</button>
+            <button className="btn" style={{ marginTop: 8 }} disabled={busy || stale} onClick={saveFinance}>Зберегти фінанси</button>
             <div className="section-title">Доставка та нотатки</div>
             <div className="grid2">
               <div className="field"><label>Дата доставки</label>
@@ -4937,7 +5025,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               <div className="field"><label>Імʼя та прізвище *</label>
                 <input value={form.client} onChange={e => set("client", e.target.value)} placeholder="Напр. Олег Петренко" /></div>
               <div className="field"><label htmlFor="new-city">Місто</label>
-                <NpCityField id="new-city" value={form.city} onChange={v => set("city", v)} onRef={setNpCityRef} /></div>
+                <NpCityField id="new-city" value={form.city} onChange={v => set("city", v)} onRef={setNpCityRef}
+                  cityRef={npCityRef} onCityChanged={() => setForm(f => ({ ...f, delivery_address: /нов|^\s*$/i.test(f.transport || "") ? "" : f.delivery_address }))} /></div>
               <div className="field"><label>Телефон</label>
                 <input value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="+380 __ ___ __ __" />
                 {phoneMatch && (
@@ -6340,7 +6429,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         steps: [
           ["Вкажіть модель і три розміри", "Конструкцію, тип, колір і візерунок обирайте зі списку — назви ті самі, що у формі замовлення; модель підставляється сама, кришка — як у каталозі (AVL-06/07/08 з нею). Свого варіанту немає — «Інше (вписати)». Щойно в кошика є модель, ширина, висота й глибина — ціна порахована. Розміри — готового кошика, у міліметрах; формула округлює їх угору до 10 мм."],
           ["Подивіться розкладку", "Блок «Розрахунок за формулою калькулятора» показує кожну складову: стінки й кришку за площею, гнуття ламелей, кронштейни чи систему кріплення — і націнку. Те саме можна показати підрядникові."],
-          ["Ціна за 1 шт", "У «Фінансах» можна вписати собівартість і роздрібну ціну за одиницю — «разом» рахується саме: × кількість із розділу «Товар». Для позицій з ручною ціною зміна кількості в «Товарі» перемножує суми (збережіть товар); кошик за формулою перераховується сам."],
+          ["Ціна за 1 шт", "У «Фінансах» можна вписати собівартість і роздрібну ціну за одиницю — «разом» рахується саме: × кількість із розділу «Товар». Позиція з ручною ціною (антивандальний, складний візерунок, не кошик): зміна кількості в «Товарі» перемножує суми — збережіть «Зберегти товар» (або «Зберегти фінанси» — кількість збережеться разом із сумами). Кошик за формулою після зміни кількості спершу збережіть «Зберегти товар» — його перерахує формула."],
           ["Колір", "Базові кольори — сірий RAL 7016, чорний RAL 9005, білий RAL 9016. За будь-який інший до замовлення один раз додається позиція «Доплата за колір». Блок розрахунку показує її окремим рядком і «Разом із доплатою» — так само, як калькулятор. Щоб не брати її з цього замовлення — видаліть цю позицію у списку позицій."],
           ["Візерунок", "Візерунки K1, K2, K5, K7, K10 входять у ціну. «Інший» (свій ескіз клієнта) дає надбавку за кожен м². Складні K3, K4, K6, K8, K9 і антивандальне виконання формула не рахує — ціну називає підрядник."],
           ["Калькулятор", "Коли відомі лише розміри блока кондиціонера або потрібні пропозиція клієнту, рахунок, монтаж чи доставка — «Порахувати в калькуляторі». Позиція завантажиться сама, а розрахунок збережеться в неї ж."],
@@ -6378,7 +6467,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         title: "Клієнт щось змінив",
         lead: "Змінюйте дані в картці — ціну перерахує формула.",
         steps: [
-          ["Розмір, кількість, модель, кришка", "Розділ «Товар» → виправте → «Зберегти товар». Ціна перерахується сама, знижка у відсотках лишиться."],
+          ["Розмір, кількість, модель, кришка", "Розділ «Товар» → виправте → «Зберегти товар». Кошик за формулою перерахується сам, знижка у відсотках лишиться. У позиції з ручною ціною зміна кількості перемножує суми за ціною за одиницю; нову модель чи розміри — дізнайтесь ціну в підрядника й впишіть у «Фінанси»."],
           ["Колір", "Змініть колір у «Товарі». Став небазовим — додасться «Доплата за колір», став базовим — вона зникне."],
           ["Знижка", "«Фінанси» → «Знижка %» → «Зберегти фінанси»."],
           ["Ціну вписано вручну", "Якщо позицію рахував підрядник (антивандальна, складний візерунок, виріб не з каталогу) — після зміни розмірів дізнайтесь у нього нову суму й виправте «Собівартість за 1 шт». Зміна лише кількості в «Товарі» сама перемножить суми за ціною за одиницю (збережіть товар)."],
