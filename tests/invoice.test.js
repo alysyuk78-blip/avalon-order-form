@@ -82,7 +82,8 @@ assert.ok(/w:tblLayout w:type="fixed"/.test(docXml), "фіксовані шир�
 for (const part of ["[Content_Types].xml", "_rels/.rels", "word/document.xml"]) assert.ok(Buffer.from(docx).includes(Buffer.from(part)), part);
 // Порядок елементів за схемою Word: tblW → jc → tblBorders; tcW → gridSpan → shd.
 const tovXml = inv.invoiceDocxXml(Object.assign({}, wd, { seller: "tov", paid_before: 1000, amount: 3229 }));
-assert.ok(!/<w:tblPr><w:jc/.test(tovXml) && /<w:tblW [^>]*\/><w:jc w:val="right"\/><w:tblBorders>/.test(tovXml), "jc після tblW");
+assert.ok(!/<w:tblPr><w:(?!tblW)/.test(tovXml), "у tblPr першим іде tblW");
+assert.ok(!/<w:shd [^>]*\/><w:tcBorders/.test(tovXml) && !/<w:tcMar>.*?<\/w:tcMar><w:shd/.test(tovXml), "tcPr: tcBorders → shd → tcMar");
 assert.ok(!/<w:shd [^>]*\/><w:gridSpan/.test(docXml) && /<w:gridSpan w:val="2"\/>/.test(docXml), "gridSpan перед shd");
 // Невидимі службові символи не ламають XML.
 const ctlXml = inv.invoiceDocxXml(Object.assign({}, wd, { lines: [{ name: "Кошик\u0001\u001f x", qty: 1, unit: "шт.", sum: 100 }], order_total: 100, amount: 100 }));
@@ -92,7 +93,7 @@ const png = (w, h) => { const b = new Uint8Array(33); b.set([0x89, 0x50, 0x4e, 0
 const has = (zip, s) => Buffer.from(zip).includes(Buffer.from(s));
 const tovDocx = inv.buildInvoiceDocx(Object.assign({}, wd, { seller: "tov" }), { logo: png(800, 800), stamp: png(1024, 962) });
 assert.ok(has(tovDocx, "word/media/logo.png") && has(tovDocx, "word/media/stamp.png") && has(tovDocx, 'r:embed="rIdStamp"') && has(tovDocx, "word/_rels/document.xml.rels"), "ТОВ: логотип і печатка");
-assert.ok(has(tovDocx, 'cx="1463040" cy="1374458"'), "печатка 1,6 дюйма за пропорцією файлу");
+assert.ok(has(tovDocx, 'cx="2462400" cy="2313309"') && has(tovDocx, "<wp:anchor ") && has(tovDocx, "<wp:wrapNone/>"), "печатка: коло 40 мм (картинка 68,4 мм), поверх тексту біля підпису");
 const fopDocx = inv.buildInvoiceDocx(wd, { logo: png(800, 800), stamp: png(1024, 962) });
 assert.ok(has(fopDocx, "word/media/logo.png") && !has(fopDocx, "stamp.png") && !has(fopDocx, "AVALON METAL DESIGN"), "ФОП: логотип замість напису, без печатки");
 assert.ok(has(docx, "AVALON METAL DESIGN") && !has(docx, "media/"), "без картинок — напис, як раніше");
