@@ -7,11 +7,13 @@
     "build:admin": "node scripts/build-admin.mjs",
     "sync:pricing": "node scripts/sync-pricing.mjs",
     "check:admin": "esbuild admin/src/main.jsx --bundle --outfile=/tmp/admin-check.js --loader:.jsx=jsx --define:__ADMIN_BUILD__=\"'dev'\"",
-    "test:quick": "node tests/admin-finance.test.js && node tests/admin-sheets.test.js && node tests/api-order.test.js && node tests/settlement-act.test.js && node tests/contractor-send.test.js && node tests/admin-files-api.test.js && node tests/admin-snapshot.test.js && node tests/admin-auth.test.js && node tests/avalon-pricing.test.js && node tests/vercel-routes.test.js && node tests/chats.test.js && node tests/labels.test.js && node tests/cash.test.js && node tests/invoice.test.js"
+    "test:quick": "node tests/admin-finance.test.js && node tests/admin-sheets.test.js && node tests/api-order.test.js && node tests/settlement-act.test.js && node tests/contractor-send.test.js && node tests/admin-files-api.test.js && node tests/admin-snapshot.test.js && node tests/admin-auth.test.js && node tests/avalon-pricing.test.js && node tests/vercel-routes.test.js && node tests/chats.test.js && node tests/labels.test.js && node tests/cash.test.js && node tests/invoice.test.js && node tests/invoice-pdf.test.js"
   },
   "devDependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
     "esbuild": "^0.25.0",
     "lucide-react": "^1.28.0",
+    "pdf-lib": "^1.17.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

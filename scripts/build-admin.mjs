@@ -25,6 +25,15 @@ await build({
   define: { __ADMIN_BUILD__: JSON.stringify(PLACEHOLDER) },
 });
 
+// Бібліотека для PDF-рахунку — окремим файлом: кабінет вантажить її лише при натисканні «PDF».
+await build({
+  entryPoints: ["admin/src/pdf-vendor.js"],
+  bundle: true,
+  outfile: "public/admin/assets/pdf-lib.js",
+  minify: true,
+  format: "iife",
+});
+
 // У хеш входить і index.html: усі стилі кабінету лежать там, і зміна лише стилів
 // теж має вмикати кнопку «Оновити».
 const bundle = await readFile(OUT_FILE, "utf8");

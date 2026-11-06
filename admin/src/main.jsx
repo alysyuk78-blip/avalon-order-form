@@ -2119,52 +2119,62 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
       return m ? m[3] + "." + m[2] + "." + m[1] : String(iso || "");
     }
-    function invoiceHtmlOf(inv) {
-      const d = inv.data || {};
-      return invoiceLib.buildInvoiceHtml({
-        number: inv.number, date: invoiceDateLabel(inv.date), seller: /ТОВ/.test(inv.seller) ? "tov" : inv.seller === "tov" ? "tov" : "fop",
-        order_number: inv.order_number, buyer: d.buyer || { name: inv.buyer_name }, lines: d.lines || [],
-        order_total: d.order_total, paid_before: d.paid_before, amount: inv.amount,
-        stamp_url: window.location.origin + "/calc/img/stamp.png",
-        logo_url: window.location.origin + "/admin/img/avalon-logo.svg",
-      });
-    }
-    // PDF: документ у новій вкладці з діалогом друку («Зберегти як PDF»). Вкладку відкриваємо одразу в натисканні,
-    // інакше браузер заблокує її як спливаюче вікно.
-    function openInvoicePrint(win, html) {
-      if (!win) return false;
-      win.document.open();
-      win.document.write(html.replace("</body>", "<script>window.onload=function(){setTimeout(function(){window.print()},300)}<\/script></body>"));
-      win.document.close();
-      return true;
-    }
-    // Word: справжній .docx (не веб-сторінка під виглядом .doc) — Pages, Google Документи й Word без підписки
-    // відкривають його без зсувів: ширини колонок задані жорстко.
+    // Рахунок віддаємо ФАЙЛОМ (PDF або Word), а не сторінкою: так «Поділитися» надсилає сам файл, а не посилання на CRM.
     function invoiceDataOf(inv) {
       const d = inv.data || {};
       return { number: inv.number, date: invoiceDateLabel(inv.date), seller: /ТОВ/.test(inv.seller) || inv.seller === "tov" ? "tov" : "fop",
         order_number: inv.order_number, buyer: d.buyer || { name: inv.buyer_name }, lines: d.lines || [],
         order_total: d.order_total, paid_before: d.paid_before, amount: inv.amount };
     }
-    async function fetchPng(url) {
+    async function fetchBytes(url) {
       try {
-        const r = await fetch(url, { cache: "force-cache" });
+        const r = await fetch(url);
         return r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
       } catch (e) { return null; }
     }
+    // Бібліотека PDF — окремий файл, вантажиться лише при першому «PDF» (кабінет від неї не важчає).
+    let pdfLibPromise = null;
+    function loadPdfLib() {
+      if (window.AvalonPdfLib) return Promise.resolve(window.AvalonPdfLib);
+      if (!pdfLibPromise) {
+        pdfLibPromise = new Promise((resolve, reject) => {
+          const el = document.createElement("script");
+          el.src = "/admin/assets/pdf-lib.js?v=" + BUILD_ID;
+          el.onload = () => (window.AvalonPdfLib ? resolve(window.AvalonPdfLib) : reject(new Error("Бібліотека PDF не завантажилась")));
+          el.onerror = () => { pdfLibPromise = null; reject(new Error("Не вдалося завантажити бібліотеку PDF — перевірте інтернет і спробуйте ще раз.")); };
+          document.head.appendChild(el);
+        });
+      }
+      return pdfLibPromise;
+    }
     // Логотип і печатка ТОВ вбудовуються у файл (без інтернету теж видно). Без печатки рахунок ТОВ не віддаємо.
-    async function downloadInvoiceWord(inv) {
-      const data = invoiceDataOf(inv);
-      const [logo, stamp] = await Promise.all([fetchPng("/admin/img/avalon-logo.png"), data.seller === "tov" ? fetchPng("/calc/img/stamp.png") : null]);
+    async function invoiceImages(data) {
+      const [logo, stamp] = await Promise.all([fetchBytes("/admin/img/avalon-logo.png"), data.seller === "tov" ? fetchBytes("/calc/img/stamp.png") : null]);
       if (data.seller === "tov" && !stamp) throw new Error("Не вдалося завантажити печатку ТОВ — спробуйте ще раз.");
-      const blob = new Blob([invoiceLib.buildInvoiceDocx(data, { logo, stamp })], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
-      const url = URL.createObjectURL(blob);
+      return { logo, stamp };
+    }
+    async function makeInvoiceFile(inv, format) {
+      const data = invoiceDataOf(inv);
+      const base = "Рахунок " + inv.number + (inv.order_number ? " " + inv.order_number : "");
+      if (format === "word") {
+        const bytes = invoiceLib.buildInvoiceDocx(data, await invoiceImages(data));
+        return new File([bytes], base + ".docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+      }
+      const [lib, regular, bold, images] = await Promise.all([loadPdfLib(), fetchBytes("/admin/fonts/Arimo-Regular.ttf"),
+        fetchBytes("/admin/fonts/Arimo-Bold.ttf"), invoiceImages(data)]);
+      if (!regular || !bold) throw new Error("Не вдалося завантажити шрифт для PDF — спробуйте ще раз.");
+      const bytes = await invoiceLib.buildInvoicePdf(data, { ...lib, fonts: { regular, bold }, images });
+      return new File([bytes], base + ".pdf", { type: "application/pdf" });
+    }
+    function saveFile(file) {
+      const url = URL.createObjectURL(file);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "Рахунок " + inv.number + " " + (inv.order_number || "") + ".docx";
+      a.download = file.name;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     }
+    const canShareFile = (file) => { try { return !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (e) { return false; } };
     function InvoicesSection({ token, orderNumber, order, items, summary, invoices: initial }) {
       const [invoices, setInvoices] = useState(initial || []);
       const [journalLoading, setJournalLoading] = useState(false);
@@ -2183,6 +2193,22 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const [open, setOpen] = useState(false);
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
+      // Готовий файл рахунку: { number, file } — для кнопки «Надіслати» (системне «Поділитися» з самим файлом).
+      const [ready, setReady] = useState(null);
+      const [making, setMaking] = useState("");
+      async function produce(inv, format) {
+        setError(""); setMaking(inv.number + ":" + format);
+        try {
+          const file = await makeInvoiceFile(inv, format);
+          saveFile(file);
+          setReady({ number: inv.number, file });
+          return true;
+        } catch (e) { setError(e.message || "Не вдалося підготувати файл рахунку"); return false; } finally { setMaking(""); }
+      }
+      async function shareFile() {
+        try { await navigator.share({ files: [ready.file], title: ready.file.name.replace(/\.(pdf|docx)$/, "") }); }
+        catch (e) { if (e && e.name !== "AbortError") setError("Не вдалося надіслати: " + (e.message || e)); }
+      }
       const autoLines = invoiceLinesFromItems(items);
       // Найменування можна виправити перед створенням (без Word); суми й кількості — з замовлення.
       const [names, setNames] = useState({});
@@ -2201,6 +2227,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           const res = await api("/api/admin/order?resource=invoice", { method: "POST", token, body: {
             action: "update_lines", order_number: orderNumber, number: editing.number, names: editing.names } });
           setInvoices(res.invoices || []);
+          setReady(r => (r && r.number === editing.number ? null : r)); // старий файл — з попередніми назвами
           setEditing(null);
         } catch (e) { setError(e.message || "Не вдалося зберегти"); } finally { setBusy(false); }
       }
@@ -2230,9 +2257,6 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         if (!String(b.name || "").trim()) return setError("Вкажіть покупця.");
         if (paid >= 1 && amount > rest && !window.confirm("Клієнт уже сплатив " + money(paid) + ", залишок — " + money(rest)
           + ".\nРахунок на " + money(amount) + " більший за залишок. Створити все одно?")) return;
-        // Вкладку для PDF відкриваємо зараз (у натисканні), документ запишемо після відповіді сервера.
-        const win = window.open("", "_blank");
-        if (win) win.document.write("<p style='font-family:Arial;padding:20px'>Готую рахунок…</p>");
         setBusy(true);
         try {
           const key = JSON.stringify([form.seller, amount, b, lines, paid]);
@@ -2245,10 +2269,10 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           setOpen(false);
           setForm(f => ({ ...f, amount: "" }));
           setNames({}); setDraft(null);
-          if (!openInvoicePrint(win, invoiceHtmlOf(res.invoice))) setError("Рахунок " + res.invoice.number + (res.duplicate ? " уже був створений раніше" : " створено") + ". Браузер заблокував нову вкладку — натисніть «PDF» у списку.");
-          else if (res.duplicate) setError("Цей рахунок уже створено раніше: " + res.invoice.number + " — відкрито його.");
+          setBusy(false);
+          const ok = await produce(res.invoice, "pdf");
+          if (ok && res.duplicate) setError("Цей рахунок уже створено раніше: " + res.invoice.number + " — це він.");
         } catch (e) {
-          if (win) win.close();
           setError(e.message || "Не вдалося створити рахунок");
         } finally { setBusy(false); }
       }
@@ -2268,11 +2292,18 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                 <li key={inv.number}>
                   <span><b>{inv.number}</b> від {invoiceDateLabel(inv.date)} · {inv.seller} · {money(inv.amount)}{inv.buyer_name ? " · " + inv.buyer_name : ""}{inv.created_by === "менеджер" ? " · створив менеджер" : ""}</span>
                   <span className="invoices-actions">
-                    <button type="button" className="btn secondary small" onClick={() => openInvoicePrint(window.open("", "_blank"), invoiceHtmlOf(inv))}>PDF</button>
-                    <button type="button" className="btn secondary small" onClick={() => { setError(""); downloadInvoiceWord(inv).catch(e => setError(e.message || "Не вдалося підготувати Word")); }}>Word</button>
-                    <button type="button" className="btn secondary small" disabled={busy}
+                    <button type="button" className="btn secondary small" disabled={!!making} onClick={() => produce(inv, "pdf")}>{making === inv.number + ":pdf" ? "Готую…" : "PDF"}</button>
+                    <button type="button" className="btn secondary small" disabled={!!making} onClick={() => produce(inv, "word")}>{making === inv.number + ":word" ? "Готую…" : "Word"}</button>
+                    <button type="button" className="btn secondary small" disabled={busy || !!making}
                       onClick={() => setEditing({ number: inv.number, names: ((inv.data && inv.data.lines) || []).map(l => l.name) })}>✏️ Найменування</button>
                   </span>
+                  {ready && ready.number === inv.number && (
+                    <div className="invoice-ready">
+                      <span>Файл збережено: <b>{ready.file.name}</b></span>
+                      {canShareFile(ready.file) && <button type="button" className="btn small" onClick={shareFile}>📤 Надіслати файл</button>}
+                      <button type="button" className="link-btn" onClick={() => saveFile(ready.file)}>зберегти ще раз</button>
+                    </div>
+                  )}
                   {editing && editing.number === inv.number && (
                     <div className="invoice-names-edit">
                       {editing.names.map((n, i) => (
@@ -2281,7 +2312,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                       ))}
                       <p className="margin-calc-note">Змінюється лише текст найменувань — номер, суми й кількості рахунку ті самі.</p>
                       <div className="quick-actions">
-                        <button type="button" className="btn" disabled={busy} onClick={saveNames}>{busy ? "Зберігаю…" : "Зберегти"}</button>
+                        <button type="button" className="btn" disabled={busy || !!making} onClick={saveNames}>{busy ? "Зберігаю…" : "Зберегти"}</button>
                         <button type="button" className="btn secondary" disabled={busy} onClick={() => setEditing(null)}>Скасувати</button>
                       </div>
                     </div>
@@ -6109,6 +6140,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         lead: "Кожен платіж — у розділ «Платежі» того ж дня.",
         steps: [
           ["Оплата клієнта", "«Платежі» → тип «Передоплата», «Доплата» або «Оплата повністю» → сума → «Внести платіж». Картка показує, скільки сплачено і скільки лишилось. Борг клієнта рахується лише з «Виготовлення»: поки замовлення в опрацюванні чи на погодженні, несплачене — «до оплати», а сплачене — «Передоплата»."],
+          ["Рахунок на оплату", "Картка → «Рахунки на оплату» → «Виставити рахунок»: оберіть, кому платити (ФОП чи ТОВ), перевірте покупця й суму (за замовчуванням — залишок). Назву позиції можна виправити олівцем ✏️. «Створити рахунок (PDF)» — номер СФ-… присвоюється сам, PDF-файл зберігається на компʼютер. Кнопки «PDF» і «Word» у списку рахунків дають файл ще раз; «📤 Надіслати файл» відкриває «Поділитися» з самим файлом (Telegram, Viber, пошта) — клієнт отримує файл, а не посилання на CRM. «✏️ Найменування» змінює назви в уже створеному рахунку (номер і суми ті самі)."],
           ["Маржа від підрядника", "Коли підрядник перерахував вашу частину — внесіть платіж типом «Маржа від підрядника». Кабінет рахує, скільки ще має надійти."],
           ["Повернення", "Гроші, повернуті клієнтові, вносьте типом «Повернення клієнту»."],
           ["Переплата", "Якщо внесено більше, ніж належить, картка покаже помаранчеву позначку «Переплата клієнта» або «Підрядник переплатив маржу», а замовлення зʼявиться в «Нагадуваннях». Найчастіше це платіж не того типу: видаліть його в списку платежів і внесіть знову з правильним типом."],

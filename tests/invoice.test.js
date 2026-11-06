@@ -12,6 +12,11 @@ const src = fs.readFileSync(path.join(__dirname, "..", "lib", "avalon-invoice.js
 const core = src.slice(src.indexOf("// AVALON-INVOICE-CORE-START"), src.indexOf("// AVALON-INVOICE-CORE-END"));
 assert.equal(crypto.createHash("sha256").update(core).digest("hex"), INVOICE_CORE_SHA256,
   "ядро рахунку змінилось — онови й копію в калькуляторі (src/lib/avalonInvoice.mjs) і хеш в обох тестах");
+// Вигляд рахунку (PDF і Word) — той самий блок, що в калькуляторі.
+const INVOICE_DOC_SHA256 = "e17a3e02b6e7e647dfb5feb948fb8488c63bb94fa7be37e7389a5841d305ea54";
+const docBlock = src.slice(src.indexOf("// AVALON-INVOICE-DOC-START"), src.indexOf("// AVALON-INVOICE-DOC-END"));
+assert.equal(crypto.createHash("sha256").update(docBlock).digest("hex"), INVOICE_DOC_SHA256,
+  "вигляд рахунку змінився — скопіюй блок AVALON-INVOICE-DOC у калькулятор (src/lib/avalonInvoice.mjs) і онови хеш в обох тестах");
 
 // ── 2. Реквізити: IBAN, ЄДРПОУ, РНОКПП, ІПН — контрольні цифри ──
 function ibanOk(s) { const r = s.slice(4) + s.slice(0, 4); return BigInt(r.split("").map((c) => parseInt(c, 36)).join("")) % 97n === 1n; }
@@ -80,6 +85,14 @@ assert.ok(/Сергій &lt;&amp;&gt;/.test(docXml) && !/<&>/.test(docXml), "т�
 assert.ok(/Чотири тисячі двісті двадцять дев'ять гривень 00 копійок/.test(docXml) && /Без ПДВ/.test(docXml));
 assert.ok(/w:tblLayout w:type="fixed"/.test(docXml), "фіксовані ширини колонок — без зсувів у Google Документах і Pages");
 for (const part of ["[Content_Types].xml", "_rels/.rels", "word/document.xml"]) assert.ok(Buffer.from(docx).includes(Buffer.from(part)), part);
+// Рядки без кількості (знижка, доставка), відʼємна сума й примітки — для рахунку з калькулятора.
+const calcInv = { number: "РК-061126-1405", date: "06.11.2026", seller: "fop", buyer: { kind: "company", name: "К", mfo: "305299" },
+  lines: [{ name: "Кошик", qty: 2, unit: "шт.", sum: 10000 }, { name: "Доставка: Нова пошта", qty: null, sum: 0 }, { name: "Знижка 5 %", qty: null, sum: -500 }],
+  order_total: 9500, amount: 9500, notes: ["Доставка: за тарифом перевізника (не включено в суму)."] };
+const hCalc = inv.buildInvoiceHtml(calcInv), xCalc = inv.invoiceDocxXml(calcInv);
+assert.ok(/−500 ₴/.test(hCalc) && /−500 ₴/.test(xCalc), "знижка — з мінусом");
+assert.ok(/9 500 ₴/.test(hCalc) && /Девʼять|Дев'ять тисяч п'ятсот/.test(hCalc), "разом після знижки");
+assert.ok(/за тарифом перевізника/.test(hCalc) && /за тарифом перевізника/.test(xCalc) && /МФО: 305299/.test(hCalc));
 // Порядок елементів за схемою Word: tblW → jc → tblBorders; tcW → gridSpan → shd.
 const tovXml = inv.invoiceDocxXml(Object.assign({}, wd, { seller: "tov", paid_before: 1000, amount: 3229 }));
 assert.ok(!/<w:tblPr><w:(?!tblW)/.test(tovXml), "у tblPr першим іде tblW");
