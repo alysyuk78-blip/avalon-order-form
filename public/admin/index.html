@@ -526,6 +526,14 @@
     .invoices-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; padding: 5px 0; border-top: 1px solid var(--line, #eef0ee); font-size: 13px; }
     .invoices-actions { display: inline-flex; gap: 6px; }
     .invoice-form { margin-top: 10px; }
+    .invoice-form textarea, .invoice-names-edit textarea { width: 100%; resize: vertical; font: inherit; }
+    .invoice-names-edit { flex-basis: 100%; margin-top: 6px; }
+    .invoice-line-name { margin-bottom: 8px; }
+    .invoice-line-view { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; border: 1px solid var(--line, #e3e6e3); border-radius: 6px; background: var(--bg-soft, #fafbfa); font-size: 13px; }
+    .invoice-line-view span { flex: 1; white-space: pre-wrap; }
+    .invoice-line-name .quick-actions { margin-top: 4px; }
+    .invoice-line-view .icon-btn { border: 0; background: none; cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 4px; border-radius: 4px; }
+    .invoice-line-view .icon-btn:hover { background: var(--line, #e3e6e3); }
     .field-static-sub { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
     .order-act-buttons { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
     .order-act-buttons small { color: var(--muted); }

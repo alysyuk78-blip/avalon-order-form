@@ -2126,6 +2126,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         order_number: inv.order_number, buyer: d.buyer || { name: inv.buyer_name }, lines: d.lines || [],
         order_total: d.order_total, paid_before: d.paid_before, amount: inv.amount,
         stamp_url: window.location.origin + "/calc/img/stamp.png",
+        logo_url: window.location.origin + "/admin/img/avalon-logo.svg",
       });
     }
     // PDF: документ у новій вкладці з діалогом друку («Зберегти як PDF»). Вкладку відкриваємо одразу в натисканні,
@@ -2137,12 +2138,30 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       win.document.close();
       return true;
     }
-    function downloadInvoiceWord(inv) {
-      const blob = new Blob(["﻿", invoiceLib.invoiceWordHtml(invoiceHtmlOf(inv))], { type: "application/msword" });
+    // Word: справжній .docx (не веб-сторінка під виглядом .doc) — Pages, Google Документи й Word без підписки
+    // відкривають його без зсувів: ширини колонок задані жорстко.
+    function invoiceDataOf(inv) {
+      const d = inv.data || {};
+      return { number: inv.number, date: invoiceDateLabel(inv.date), seller: /ТОВ/.test(inv.seller) || inv.seller === "tov" ? "tov" : "fop",
+        order_number: inv.order_number, buyer: d.buyer || { name: inv.buyer_name }, lines: d.lines || [],
+        order_total: d.order_total, paid_before: d.paid_before, amount: inv.amount };
+    }
+    async function fetchPng(url) {
+      try {
+        const r = await fetch(url, { cache: "force-cache" });
+        return r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
+      } catch (e) { return null; }
+    }
+    // Логотип і печатка ТОВ вбудовуються у файл (без інтернету теж видно). Без печатки рахунок ТОВ не віддаємо.
+    async function downloadInvoiceWord(inv) {
+      const data = invoiceDataOf(inv);
+      const [logo, stamp] = await Promise.all([fetchPng("/admin/img/avalon-logo.png"), data.seller === "tov" ? fetchPng("/calc/img/stamp.png") : null]);
+      if (data.seller === "tov" && !stamp) throw new Error("Не вдалося завантажити печатку ТОВ — спробуйте ще раз.");
+      const blob = new Blob([invoiceLib.buildInvoiceDocx(data, { logo, stamp })], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "Рахунок " + inv.number + " " + (inv.order_number || "") + ".doc";
+      a.download = "Рахунок " + inv.number + " " + (inv.order_number || "") + ".docx";
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     }
@@ -2164,8 +2183,27 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const [open, setOpen] = useState(false);
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
-      const lines = invoiceLinesFromItems(items);
+      const autoLines = invoiceLinesFromItems(items);
+      // Найменування можна виправити перед створенням (без Word); суми й кількості — з замовлення.
+      const [names, setNames] = useState({});
+      const [draft, setDraft] = useState(null); // { i, text } — рядок, який зараз правлять олівцем
+      // Правки привʼязані до номера рядка: якщо позиції замовлення змінились — скидаємо, щоб назва не перескочила на інший товар.
+      const linesKey = JSON.stringify(autoLines.map(l => [l.name, l.qty, l.sum]));
+      useEffect(() => { setNames({}); setDraft(null); }, [linesKey]);
+      const lines = autoLines.map((l, i) => (names[i] != null ? { ...l, name: names[i] } : l));
       const orderTotal = lines.reduce((sum, l) => sum + l.sum, 0);
+      // Правка найменувань уже створеного рахунку: { number, names: [...] }.
+      const [editing, setEditing] = useState(null);
+      async function saveNames() {
+        if (editing.names.some(n => !String(n || "").trim())) return setError("Найменування не може бути порожнім.");
+        setBusy(true); setError("");
+        try {
+          const res = await api("/api/admin/order?resource=invoice", { method: "POST", token, body: {
+            action: "update_lines", order_number: orderNumber, number: editing.number, names: editing.names } });
+          setInvoices(res.invoices || []);
+          setEditing(null);
+        } catch (e) { setError(e.message || "Не вдалося зберегти"); } finally { setBusy(false); }
+      }
       const paid = Math.max(0, Math.round(Number(summary && summary.client_paid) || 0));
       const rest = Math.max(0, orderTotal - paid);
       const last = invoices[invoices.length - 1];
@@ -2184,7 +2222,9 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       async function create() {
         setError("");
         if (!form.seller) return setError("Оберіть, кому платити: ФОП чи ТОВ.");
+        if (draft) return setError("Збережіть або скасуйте правку найменування (олівець).");
         if (!lines.length) return setError("У замовленні немає позицій з ціною — спершу порахуйте товар.");
+        if (lines.some(l => !String(l.name || "").trim())) return setError("Найменування позиції не може бути порожнім.");
         if (!(amount >= 1)) return setError("Вкажіть суму рахунку.");
         if (amount > orderTotal) return setError("Сума рахунку більша за все замовлення (" + money(orderTotal) + ").");
         if (!String(b.name || "").trim()) return setError("Вкажіть покупця.");
@@ -2204,6 +2244,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           setInvoices(res.invoices || []);
           setOpen(false);
           setForm(f => ({ ...f, amount: "" }));
+          setNames({}); setDraft(null);
           if (!openInvoicePrint(win, invoiceHtmlOf(res.invoice))) setError("Рахунок " + res.invoice.number + (res.duplicate ? " уже був створений раніше" : " створено") + ". Браузер заблокував нову вкладку — натисніть «PDF» у списку.");
           else if (res.duplicate) setError("Цей рахунок уже створено раніше: " + res.invoice.number + " — відкрито його.");
         } catch (e) {
@@ -2228,8 +2269,23 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                   <span><b>{inv.number}</b> від {invoiceDateLabel(inv.date)} · {inv.seller} · {money(inv.amount)}{inv.buyer_name ? " · " + inv.buyer_name : ""}{inv.created_by === "менеджер" ? " · створив менеджер" : ""}</span>
                   <span className="invoices-actions">
                     <button type="button" className="btn secondary small" onClick={() => openInvoicePrint(window.open("", "_blank"), invoiceHtmlOf(inv))}>PDF</button>
-                    <button type="button" className="btn secondary small" onClick={() => downloadInvoiceWord(inv)}>Word</button>
+                    <button type="button" className="btn secondary small" onClick={() => { setError(""); downloadInvoiceWord(inv).catch(e => setError(e.message || "Не вдалося підготувати Word")); }}>Word</button>
+                    <button type="button" className="btn secondary small" disabled={busy}
+                      onClick={() => setEditing({ number: inv.number, names: ((inv.data && inv.data.lines) || []).map(l => l.name) })}>✏️ Найменування</button>
                   </span>
+                  {editing && editing.number === inv.number && (
+                    <div className="invoice-names-edit">
+                      {editing.names.map((n, i) => (
+                        <div className="field" key={i}><label>Позиція {i + 1}</label>
+                          <textarea rows={2} maxLength={400} value={n} onChange={e => { const v = e.target.value; setEditing(ed => ({ ...ed, names: ed.names.map((x, j) => (j === i ? v : x)) })); }} /></div>
+                      ))}
+                      <p className="margin-calc-note">Змінюється лише текст найменувань — номер, суми й кількості рахунку ті самі.</p>
+                      <div className="quick-actions">
+                        <button type="button" className="btn" disabled={busy} onClick={saveNames}>{busy ? "Зберігаю…" : "Зберегти"}</button>
+                        <button type="button" className="btn secondary" disabled={busy} onClick={() => setEditing(null)}>Скасувати</button>
+                      </div>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -2268,6 +2324,29 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                 <div className="field"><label>E-mail</label>
                   <input value={b.email || ""} onChange={e => setBuyer("email", e.target.value)} /></div>
               </div>
+              <div className="field"><label>Найменування в рахунку</label>
+                {lines.map((l, i) => (
+                  <div key={i} className="invoice-line-name">
+                    {draft && draft.i === i ? (
+                      <>
+                        <textarea rows={3} autoFocus maxLength={400} value={draft.text} onChange={e => { const v = e.target.value; setDraft(d => ({ ...d, text: v })); }} />
+                        <div className="quick-actions">
+                          <button type="button" className="btn small" disabled={!String(draft.text || "").trim()}
+                            onClick={() => { const v = String(draft.text).trim(); setNames(n => { const c = { ...n }; if (v === autoLines[i].name) delete c[i]; else c[i] = v; return c; }); setDraft(null); }}>Зберегти</button>
+                          <button type="button" className="btn secondary small" onClick={() => setDraft(null)}>Скасувати</button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="invoice-line-view">
+                        <span>{l.name}</span>
+                        <button type="button" className="icon-btn" title="Змінити найменування" aria-label="Змінити найменування" onClick={() => setDraft({ i, text: l.name })}>✏️</button>
+                      </div>
+                    )}
+                    <small className="field-static-sub">{String(l.qty).replace(".", ",")} {l.unit} · {money(l.sum)}
+                      {names[i] != null && <> · змінено · <button type="button" className="link-btn" onClick={() => setNames(n => { const c = { ...n }; delete c[i]; return c; })}>повернути як було</button></>}</small>
+                  </div>
+                ))}
+              </div>
               <div className="field"><label htmlFor="invoice-amount">Сума рахунку, ₴</label>
                 <input id="invoice-amount" type="number" min="1" inputMode="decimal" placeholder={String(rest >= 1 ? rest : orderTotal)}
                   value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
@@ -2284,7 +2363,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               {error && <div className="error">{error}</div>}
               <div className="quick-actions">
                 <button type="button" className="btn" disabled={busy} onClick={create}>{busy ? "Створюю…" : "Створити рахунок (PDF)"}</button>
-                <button type="button" className="btn secondary" disabled={busy} onClick={() => { setOpen(false); setError(""); }}>Скасувати</button>
+                <button type="button" className="btn secondary" disabled={busy} onClick={() => { setOpen(false); setError(""); setNames({}); setDraft(null); }}>Скасувати</button>
               </div>
             </div>
           )}

@@ -56,22 +56,49 @@ assert.ok(!/display:\s*flex/.test(hFop), "без flex — Word показує ш
 // Рахунок на всю суму, коли клієнт уже платив, — «Сплачено раніше» видно (щоб не заплатили двічі).
 const hAll = inv.buildInvoiceHtml({ number: "СФ-0003", date: "06.11.2026", seller: "fop", buyer: { name: "К" }, lines,
   order_total: 10000, paid_before: 6000, amount: 10000 });
-assert.ok(/Сплачено раніше:<\/td><td class="r">6 000 ₴/.test(hAll) && /більше за залишок/.test(hAll), "рахунок на всю суму при оплаті");
+assert.ok(/Сплачено раніше:<\/td><td class="r">6\u00a0000\u00a0₴/.test(hAll) && /більше за залишок/.test(hAll), "рахунок на всю суму при оплаті");
 // Ціна з копійками, коли сума не ділиться на кількість.
 const hKop = inv.buildInvoiceHtml({ number: "СФ-0004", date: "06.11.2026", seller: "fop", buyer: { name: "К" },
   lines: [{ name: "Кронштейни", qty: 3, unit: "комп.", sum: 1000 }], order_total: 1000, amount: 1000 });
-assert.ok(/333,33 ₴/.test(hKop), "ціна 1 000 / 3 = 333,33");
+assert.ok(/333,33\u00a0₴/.test(hKop), "ціна 1 000 / 3 = 333,33");
 const hTov = inv.buildInvoiceHtml({ number: "СФ-0002", date: "06.11.2026", seller: "tov", order_number: "ORD-1",
   buyer: { kind: "company", name: "ТОВ «Клієнт»", code: "12345678" }, lines, order_total: 4229, paid_before: 1000, amount: 3229,
   stamp_url: "https://x/calc/img/stamp.png" });
 assert.ok(/Валон-А/.test(hTov) && /UA533052990000026005036003734/.test(hTov) && /ІПН: 141522322252/.test(hTov) && /Платник ПДВ/.test(hTov));
 assert.ok(/Сплачено раніше:/.test(hTov) && /До оплати за цим рахунком/.test(hTov));
-assert.ok(/у т\. ч\. ПДВ 20 %:<\/td><td class="r">538,17 ₴/.test(hTov), "ПДВ = 3229 / 6");
-assert.ok(/Сума без ПДВ:<\/td><td class="r">2 690,83 ₴/.test(hTov));
+assert.ok(/у т\. ч\. ПДВ 20 %:<\/td><td class="r">538,17\u00a0₴/.test(hTov), "ПДВ = 3229 / 6");
+assert.ok(/Сума без ПДВ:<\/td><td class="r">2\u00a0690,83\u00a0₴/.test(hTov));
 assert.ok(/stamp\.png/.test(hTov) && !/stamp\.png/.test(hFop), "печатка — лише ТОВ");
 assert.ok(/Код ЄДРПОУ: 12345678/.test(hTov));
-const word = inv.invoiceWordHtml(hFop);
-assert.ok(/urn:schemas-microsoft-com:office:word/.test(word) && /СФ-0001/.test(word) && /<style>/.test(word));
+// Word — справжній .docx: ZIP з трьох частин, документ XML коректний і з тими самими даними, що й PDF.
+const wd = { number: "СФ-0001", date: "06.11.2026", seller: "fop", order_number: "ORD-031126-001",
+  buyer: { kind: "person", name: "Сергій <&>" }, lines, order_total: 4229, paid_before: 0, amount: 4229 };
+const docx = inv.buildInvoiceDocx(wd);
+assert.equal(Buffer.from(docx.slice(0, 4)).toString("hex"), "504b0304", "ZIP");
+const docXml = inv.invoiceDocxXml(wd);
+assert.ok(/Сергій &lt;&amp;&gt;/.test(docXml) && !/<&>/.test(docXml), "текст у XML екранується");
+assert.ok(/Чотири тисячі двісті двадцять дев'ять гривень 00 копійок/.test(docXml) && /Без ПДВ/.test(docXml));
+assert.ok(/w:tblLayout w:type="fixed"/.test(docXml), "фіксовані ширини колонок — без зсувів у Google Документах і Pages");
+for (const part of ["[Content_Types].xml", "_rels/.rels", "word/document.xml"]) assert.ok(Buffer.from(docx).includes(Buffer.from(part)), part);
+// Порядок елементів за схемою Word: tblW → jc → tblBorders; tcW → gridSpan → shd.
+const tovXml = inv.invoiceDocxXml(Object.assign({}, wd, { seller: "tov", paid_before: 1000, amount: 3229 }));
+assert.ok(!/<w:tblPr><w:(?!tblW)/.test(tovXml), "у tblPr першим іде tblW");
+assert.ok(!/<w:shd [^>]*\/><w:tcBorders/.test(tovXml) && !/<w:tcMar>.*?<\/w:tcMar><w:shd/.test(tovXml), "tcPr: tcBorders → shd → tcMar");
+assert.ok(!/<w:shd [^>]*\/><w:gridSpan/.test(docXml) && /<w:gridSpan w:val="2"\/>/.test(docXml), "gridSpan перед shd");
+// Невидимі службові символи не ламають XML.
+const ctlXml = inv.invoiceDocxXml(Object.assign({}, wd, { lines: [{ name: "Кошик\u0001\u001f x", qty: 1, unit: "шт.", sum: 100 }], order_total: 100, amount: 100 }));
+assert.ok(/Кошик x/.test(ctlXml) && !/[\u0000-\u0008\u000E-\u001F]/.test(ctlXml), "керівні символи прибрано");
+// Логотип і печатка ТОВ вбудовуються як PNG; у ФОП печатки немає.
+const png = (w, h) => { const b = new Uint8Array(33); b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0); const dv = new DataView(b.buffer); dv.setUint32(16, w); dv.setUint32(20, h); return b; };
+const has = (zip, s) => Buffer.from(zip).includes(Buffer.from(s));
+const tovDocx = inv.buildInvoiceDocx(Object.assign({}, wd, { seller: "tov" }), { logo: png(800, 800), stamp: png(1024, 962) });
+assert.ok(has(tovDocx, "word/media/logo.png") && has(tovDocx, "word/media/stamp.png") && has(tovDocx, 'r:embed="rIdStamp"') && has(tovDocx, "word/_rels/document.xml.rels"), "ТОВ: логотип і печатка");
+assert.ok(has(tovDocx, 'cx="2462400" cy="2313309"') && has(tovDocx, "<wp:anchor ") && has(tovDocx, "<wp:wrapNone/>"), "печатка: коло 40 мм (картинка 68,4 мм), поверх тексту біля підпису");
+const fopDocx = inv.buildInvoiceDocx(wd, { logo: png(800, 800), stamp: png(1024, 962) });
+assert.ok(has(fopDocx, "word/media/logo.png") && !has(fopDocx, "stamp.png") && !has(fopDocx, "AVALON METAL DESIGN"), "ФОП: логотип замість напису, без печатки");
+assert.ok(has(docx, "AVALON METAL DESIGN") && !has(docx, "media/"), "без картинок — напис, як раніше");
+const hLogo = inv.buildInvoiceHtml(Object.assign({}, wd, { logo_url: "https://x/admin/img/avalon-logo.svg" }));
+assert.ok(/<img class="logo" src="https:\/\/x\/admin\/img\/avalon-logo\.svg"/.test(hLogo) && !/кошики для кондиціонерів/.test(hLogo), "PDF: логотип замість напису");
 
 // ── 5. Журнал рахунків у скрипті таблиці ──
 const CODE = fs.readFileSync(path.join(__dirname, "..", "google-apps-script-v2.js"), "utf8");
@@ -83,7 +110,7 @@ function makeSheet(data, w) {
       const R = nr || 1, C = nc || 1;
       const rng = { getValues: () => { const o = []; for (let i = 0; i < R; i++) o.push((data[r - 1 + i] || new Array(w).fill("")).slice(c - 1, c - 1 + C)); return o; },
         setValues: (v) => { v.forEach((vr, i) => { while (data.length < r + i) data.push(new Array(w).fill("")); vr.forEach((x, j) => { data[r - 1 + i][c - 1 + j] = x; }); }); return px; },
-        getValue: () => (data[r - 1] || [])[c - 1] };
+        getValue: () => (data[r - 1] || [])[c - 1], setValue: (v) => { rng.setValues([[v]]); return px; } };
       const px = new Proxy(rng, { get: (t, p) => (p in t ? t[p] : () => px) });
       return px;
     } };
@@ -125,10 +152,20 @@ assert.equal(ctx.readInvoices_("ORD-031126-001").length, 3);
 assert.throws(() => ctx.adminInvoiceCreate_(Object.assign({}, base, { request_id: "inv-000003", order_number: "ORD-999999-999" })), /не знайдено/);
 assert.throws(() => ctx.adminInvoiceCreate_(Object.assign({}, base, { request_id: "inv-000004", seller: "xxx" })), /отримувач/);
 assert.throws(() => ctx.adminInvoiceCreate_(Object.assign({}, base, { request_id: "inv-000005", amount: 0 })), /суму/);
+// Виправити найменування вже виставленого рахунку: номер і суми ті самі.
+const upd = ctx.adminInvoiceUpdateLines_({ order_number: "ORD-031126-001", number: "СФ-0001",
+  names: ["Кошик-екран під утеплювач AVL-02, розбірний", "Доплата за колір RAL 9016"] });
+assert.equal(upd.invoice.number, "СФ-0001");
+assert.equal(upd.invoice.amount, 4229);
+assert.equal(upd.invoice.data.lines[0].name, "Кошик-екран під утеплювач AVL-02, розбірний");
+assert.equal(upd.invoice.data.lines[0].sum, 4029, "суми не змінюються");
+assert.throws(() => ctx.adminInvoiceUpdateLines_({ order_number: "ORD-031126-001", number: "СФ-0001", names: ["лише одна"] }), /змінився/);
+assert.throws(() => ctx.adminInvoiceUpdateLines_({ order_number: "ORD-031126-001", number: "СФ-0001", names: ["x", " "] }), /порожнє/);
+assert.throws(() => ctx.adminInvoiceUpdateLines_({ order_number: "ORD-031126-001", number: "СФ-0999", names: ["x", "y"] }), /не знайдено/);
 // Документ із журналу — той самий, що створювали.
 const html = inv.buildInvoiceHtml({ number: a2.invoice.number, date: "06.11.2026", seller: "tov", order_number: "ORD-031126-001",
   buyer: a2.invoice.data.buyer, lines: a2.invoice.data.lines, order_total: a2.invoice.data.order_total, paid_before: 0, amount: a2.invoice.amount });
-assert.ok(/СФ-0002/.test(html) && /2 000 ₴/.test(html));
+assert.ok(/СФ-0002/.test(html) && /2\u00a0000\u00a0₴/.test(html));
 
 // ── 6. Сервер кабінету ──
 (async () => {
@@ -167,6 +204,12 @@ assert.ok(/СФ-0002/.test(html) && /2 000 ₴/.test(html));
   assert.equal((await call(Object.assign({}, ok, { buyer: { name: " " } }), manager)).statusCode, 400);
   assert.equal((await call(Object.assign({}, ok, { lines: [] }), manager)).statusCode, 400);
   assert.equal((await call(Object.assign({}, ok, { order_number: "x<y" }), manager)).statusCode, 400);
+  // Правка найменувань — через сервер, порожні не пропускає.
+  const up = await call({ action: "update_lines", order_number: "ORD-031126-001", number: "СФ-0001", names: [" Нова  назва ", "Друга"] }, manager);
+  assert.equal(up.statusCode, 200);
+  assert.deepEqual(calls.pop(), { action: "invoice_update_lines", payload: { order_number: "ORD-031126-001", number: "СФ-0001", names: ["Нова назва", "Друга"] } });
+  assert.equal((await call({ action: "update_lines", order_number: "ORD-031126-001", number: "СФ-0001", names: ["x", ""] }, manager)).statusCode, 400);
+  assert.equal((await call({ action: "update_lines", order_number: "ORD-031126-001", number: "1; DROP", names: ["x"] }, manager)).statusCode, 400);
   // Журнал рахунків для картки з кешу.
   const g = { statusCode: 200, body: null, setHeader() {}, status(c) { this.statusCode = c; return this; }, json(b) { this.body = b; return this; }, end() { return this; } };
   await handler({ method: "GET", query: { resource: "invoice", order_number: "ORD-031126-001" }, headers: { authorization: manager } }, g);
