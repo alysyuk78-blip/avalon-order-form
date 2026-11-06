@@ -38,7 +38,7 @@ var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "delete_order_item", 
   "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment",
   "settlement_pdf", "settlement_send", "migrate_legacy_payments",
   "rates_save", "rates_delete", "order_reprice",
-  "cash_add", "cash_delete", "cash_settle", "cash_settle_undo", "cash_take", "invoice_create"];
+  "cash_add", "cash_delete", "cash_settle", "cash_settle_undo", "cash_take", "invoice_create", "invoice_update_lines"];
 
 function doPost(e) {
   // Тіло читаємо ДО блокування: кабінет робить кілька запитів паралельно, і якщо
@@ -4419,6 +4419,30 @@ function adminInvoiceCreate_(data) {
   var list = readInvoices_(num);
   return { status: "ok", invoice: list.filter(function (x) { return x.request_id === rid; })[0], invoices: list };
 }
+/**
+ * Виправити найменування позицій уже виставленого рахунку (власник 06.11.2026: «потрібно вносити правки в
+ * найменування»). Номер, суми й кількості не змінюються — лише текст назв; повтор дає той самий стан.
+ */
+function adminInvoiceUpdateLines_(data) {
+  var num = String((data && data.order_number) || "").trim();
+  var number = String((data && data.number) || "").trim();
+  var names = (data && data.names) || [];
+  var inv = readInvoices_(num).filter(function (x) { return x.number === number; })[0];
+  if (!inv) throw new Error("Рахунок " + number + " не знайдено в замовленні " + num);
+  var lines = (inv.data && inv.data.lines) || [];
+  if (!Array.isArray(names) || names.length !== lines.length) throw new Error("Список позицій змінився — оновіть сторінку");
+  names.forEach(function (n, i) {
+    var t = String(n == null ? "" : n).replace(/\s+/g, " ").trim().slice(0, 400);
+    if (!t) throw new Error("Найменування позиції " + (i + 1) + " порожнє");
+    lines[i].name = t;
+  });
+  inv.data.lines = lines;
+  var sh = invoicesSheet_();
+  sh.getRange(inv.row, 8).setValue(JSON.stringify(inv.data));
+  SpreadsheetApp.flush();
+  var list = readInvoices_(num);
+  return { status: "ok", invoice: list.filter(function (x) { return x.number === number; })[0], invoices: list };
+}
 function adminFindOrderRows_(orderNumber) {
   var sh = adminOrdersSheet_();
   var last = sh.getLastRow();
@@ -5487,6 +5511,7 @@ function handleAdminRequest_(data) {
     if (action === "cash_settle_undo") return jsonOut(adminCashSettleUndo_(data));
     if (action === "cash_take") return jsonOut(adminCashTake_(data));
     if (action === "invoice_create") return jsonOut(adminInvoiceCreate_(data));
+    if (action === "invoice_update_lines") return jsonOut(adminInvoiceUpdateLines_(data));
     if (action === "invoice_list") return jsonOut({ status: "ok", invoices: readInvoices_(String((data && data.order_number) || "").trim()) });
     // Чати з клієнтами (Telegram Business). Аркуш «Чати» пишуть під власним блокуванням.
     if (action === "chat_ingest") return jsonOut(adminChatIngest_(data));
