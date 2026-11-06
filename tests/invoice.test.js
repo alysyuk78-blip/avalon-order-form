@@ -167,5 +167,10 @@ assert.ok(/СФ-0002/.test(html) && /2 000 ₴/.test(html));
   assert.equal((await call(Object.assign({}, ok, { buyer: { name: " " } }), manager)).statusCode, 400);
   assert.equal((await call(Object.assign({}, ok, { lines: [] }), manager)).statusCode, 400);
   assert.equal((await call(Object.assign({}, ok, { order_number: "x<y" }), manager)).statusCode, 400);
+  // Журнал рахунків для картки з кешу.
+  const g = { statusCode: 200, body: null, setHeader() {}, status(c) { this.statusCode = c; return this; }, json(b) { this.body = b; return this; }, end() { return this; } };
+  await handler({ method: "GET", query: { resource: "invoice", order_number: "ORD-031126-001" }, headers: { authorization: manager } }, g);
+  assert.equal(g.statusCode, 200);
+  assert.deepEqual(calls.pop(), { action: "invoice_list", payload: { order_number: "ORD-031126-001" } });
   console.log("invoice tests: OK");
 })().catch((e) => { console.error(e); process.exit(1); });

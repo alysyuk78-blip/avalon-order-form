@@ -5487,6 +5487,7 @@ function handleAdminRequest_(data) {
     if (action === "cash_settle_undo") return jsonOut(adminCashSettleUndo_(data));
     if (action === "cash_take") return jsonOut(adminCashTake_(data));
     if (action === "invoice_create") return jsonOut(adminInvoiceCreate_(data));
+    if (action === "invoice_list") return jsonOut({ status: "ok", invoices: readInvoices_(String((data && data.order_number) || "").trim()) });
     // Чати з клієнтами (Telegram Business). Аркуш «Чати» пишуть під власним блокуванням.
     if (action === "chat_ingest") return jsonOut(adminChatIngest_(data));
     if (action === "chat_log_out") return jsonOut(adminChatLogOut_(data));

@@ -2148,7 +2148,19 @@ import invoiceLib from '../../lib/avalon-invoice.js';
     }
     function InvoicesSection({ token, orderNumber, order, items, summary, invoices: initial }) {
       const [invoices, setInvoices] = useState(initial || []);
-      useEffect(() => { setInvoices(initial || []); }, [initial]);
+      const [journalLoading, setJournalLoading] = useState(false);
+      useEffect(() => { if (initial) setInvoices(initial); }, [initial]);
+      // Картка з кешу кабінету журналу рахунків не має — підвантажуємо його окремо.
+      useEffect(() => {
+        if (initial) return;
+        let alive = true;
+        setJournalLoading(true);
+        api("/api/admin/order?resource=invoice&order_number=" + encodeURIComponent(orderNumber), { token })
+          .then(res => { if (alive) setInvoices(res.invoices || []); })
+          .catch(() => {})
+          .finally(() => { if (alive) setJournalLoading(false); });
+        return () => { alive = false; };
+      }, [orderNumber, initial]);
       const [open, setOpen] = useState(false);
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState("");
@@ -2208,6 +2220,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             {!open && <button type="button" className="btn secondary small" onClick={() => setOpen(true)} disabled={!lines.length}
               title={lines.length ? "" : "Спершу порахуйте товар"}>Виставити рахунок</button>}
           </div>
+          {journalLoading && !invoices.length && <div className="margin-calc-note">Завантажую журнал рахунків…</div>}
           {invoices.length > 0 && (
             <ul className="invoices-list">
               {invoices.slice().reverse().map(inv => (
