@@ -809,6 +809,10 @@ function testModelPhotoAndFinanceLines() {
   const lp = sends[0].payload.link_preview_options;
   assert.ok(lp && lp.url.endsWith("avl-04-removable-side.jpg"), "фото моделі — прев'ю повідомлення");
   assert.equal(lp.show_above_text, true, "фото над текстом");
+  // Під фото — пояснення: на фото лише модель, візерунок — той, що в замовленні (30.10.2026 підрядника ввів в оману).
+  assert.ok(sends[0].payload.text.startsWith("🖼 <i>Фото вище — лише модель AVL-04 «Зі знімною боковиною» (форма кошика). "
+    + "Візерунок на фото умовний, не з замовлення; замовлено візерунок <b>K1</b>.</i>"), "рядок про фото — першим під картинкою");
+  assert.ok(preview.text.startsWith("🖼 <i>Фото вище — лише модель AVL-04"), "перегляд у кабінеті — той самий текст");
   assert.ok(!sends[0].payload.disable_web_page_preview, "прев'ю не вимкнене");
 
   // Telegram не прийняв прев'ю — повідомлення все одно доходить, просто без фото.
