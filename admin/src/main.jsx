@@ -2294,7 +2294,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                   <span className="invoices-actions">
                     <button type="button" className="btn secondary small" disabled={!!making} onClick={() => produce(inv, "pdf")}>{making === inv.number + ":pdf" ? "Готую…" : "PDF"}</button>
                     <button type="button" className="btn secondary small" disabled={!!making} onClick={() => produce(inv, "word")}>{making === inv.number + ":word" ? "Готую…" : "Word"}</button>
-                    <button type="button" className="btn secondary small" disabled={busy}
+                    <button type="button" className="btn secondary small" disabled={busy || !!making}
                       onClick={() => setEditing({ number: inv.number, names: ((inv.data && inv.data.lines) || []).map(l => l.name) })}>✏️ Найменування</button>
                   </span>
                   {ready && ready.number === inv.number && (
@@ -2312,7 +2312,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                       ))}
                       <p className="margin-calc-note">Змінюється лише текст найменувань — номер, суми й кількості рахунку ті самі.</p>
                       <div className="quick-actions">
-                        <button type="button" className="btn" disabled={busy} onClick={saveNames}>{busy ? "Зберігаю…" : "Зберегти"}</button>
+                        <button type="button" className="btn" disabled={busy || !!making} onClick={saveNames}>{busy ? "Зберігаю…" : "Зберегти"}</button>
                         <button type="button" className="btn secondary" disabled={busy} onClick={() => setEditing(null)}>Скасувати</button>
                       </div>
                     </div>
