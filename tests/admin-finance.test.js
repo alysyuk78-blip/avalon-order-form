@@ -381,12 +381,14 @@ function testPaymentDeletionChecksStableIdentity() {
     getLastRow: () => 5,
     getRange: () => ({
       getValues: () => [["ORD-010126-001", "Передоплата", 300, "Готівка", "", "payment-1"]],
+      setValues() {},
     }),
     deleteRow: () => { deleted = true; },
   };
   context.paymentsSheet_ = () => sheet;
   context.syncOrderPaymentState_ = () => ({});
   context.readPayments_ = () => [];
+  context.paymentGuardSnapshot_ = () => ({ available: 0, red: {} });   // каса тут не перевіряється (є в cash.test.js)
   context.SpreadsheetApp = { flush() {} };
 
   assert.throws(() => context.adminDeletePayment_({
