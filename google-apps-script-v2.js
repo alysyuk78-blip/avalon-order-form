@@ -1002,6 +1002,11 @@ function syncColorSurcharge_(sh, orderNumber, keepRow, dueBefore) {
       var val = base[col - 1];
       if (val !== "" && val != null) sh.getRange(written.row, col).setValue(val);
     });
+    // Отримувач і платник, коментарі до блоків — спільні для замовлення й у рядку доплати.
+    [PARTIES_COL, BLOCK_NOTES_COL].forEach(function (col) {
+      var shared = orderSharedCell_(sh, rows, col);
+      if (shared) sh.getRange(written.row, col).setValue(shared);
+    });
     return true;
   }
   // Небазових кольорів не лишилось — прибираємо доплату. Лише «чисту» (собівартість = ціна):
