@@ -538,6 +538,11 @@
     .block-note-edit { margin: 0 0 10px; }
     .block-note-edit textarea { width: 100%; font: inherit; }
     .head-with-note { display: inline-flex; align-items: center; gap: 6px; }
+    /* Коротко про замовлення під статусом картки */
+    .order-summary { margin: 4px 0 12px; padding: 8px 12px; border-radius: 10px; background: var(--control-bg); font-size: 13px; color: var(--muted); line-height: 1.6; }
+    .order-summary b { color: var(--ink); font-weight: 650; }
+    /* Помилку збереження видно завжди — внизу екрана, а не в кінці довгої картки */
+    .drawer-error { position: sticky; bottom: 0; z-index: 3; margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: #fdecec; box-shadow: 0 -4px 16px rgba(0,0,0,.08); }
     .parties-toggle { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13.5px; }
     .pay-actions { display: inline-flex; gap: 2px; white-space: nowrap; }
     td.nowrap { white-space: nowrap; }

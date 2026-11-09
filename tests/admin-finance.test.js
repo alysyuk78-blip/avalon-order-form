@@ -103,7 +103,7 @@ function testContractorMessageShowsMarginToPay() {
   const tov = plain({ commission_pct: 30, payment_method: "На рахунок ТОВ",
     items: [other({ cost_total: 9650, revenue: 13790, profit: 4140, commission: 1242 })] });
   assert.ok(tov.includes("Ціна для клієнта: 13 790 ₴"));
-  assert.ok(tov.includes("Маржа: 13 790 − 9 650 = 4 140 ₴"), "маржа показана разом з арифметикою");
+  assert.ok(tov.includes("Маржа Avalon: 13 790 − 9 650 = 4 140 ₴"), "маржа показана разом з арифметикою");
   assert.ok(tov.includes("Комісія (30% від маржі): − 1 242 ₴"));
   assert.ok(tov.includes("До виплати Avalon: 2 898 ₴"));
   assert.ok(tov.includes("після повної оплати клієнтом"));
@@ -123,8 +123,10 @@ function testContractorMessageShowsMarginToPay() {
   }
   assert.equal(tov.split("Вартість виробнича").length - 1, 1, "собівартість не дублюється");
   assert.ok(tov.includes("Форма оплати: На рахунок ТОВ"), "це форма оплати замовлення, а не доставки");
-  assert.ok(tov.indexOf("Форма оплати: На рахунок ТОВ") >= 0 && tov.indexOf("Форма оплати: На рахунок ТОВ") < tov.indexOf("МАРЖА AVALON"),
-    "спосіб оплати — у фінансах, а не всередині блоку маржі");
+  // Блок «ГРОШІ» (рішення власника 09.11.2026): вартість → ціна → форма оплати → маржа → до виплати, і він — останній.
+  const order = ["ГРОШІ", "Вартість виробнича", "Ціна для клієнта", "Форма оплати: На рахунок ТОВ", "Маржа Avalon:", "До виплати Avalon"].map((x) => tov.indexOf(x));
+  assert.ok(order.every((x, k) => x >= 0 && (k === 0 || x > order[k - 1])), "порядок у «Гроші»: " + order + "\n" + tov);
+  assert.ok(!tov.includes("ФІНАНСИ") && !tov.includes("МАРЖА AVALON"), "старі окремі блоки злито в «Гроші»");
 
   // Половина гривні: рядки мають сходитися до копійки.
   const half = plain({ commission_pct: 30,
@@ -139,7 +141,7 @@ function testContractorMessageShowsMarginToPay() {
 
   // Ціну ще не погоджено — блоку маржі немає.
   const noPrice = plain({ items: [other({ cost_total: 0, revenue: 0, profit: 0, commission: 0 })] });
-  assert.ok(!noPrice.includes("МАРЖА AVALON"));
+  assert.ok(!noPrice.includes("Маржа Avalon"));
 
   // Збиткова угода: виплати немає.
   const loss = plain({ commission_pct: 30,
@@ -353,6 +355,22 @@ function testRemovableSidePanelPricing() {
   assert.ok(/• [^\n]*: 2 250 ₴ × 2 шт\. = <b>4 500 ₴<\/b>/.test(mixed), mixed);
   assert.ok(/0,99 м² × 2 030 ₴\/м² × 2 шт\. = <b>4 019 ₴<\/b>/.test(mixed), mixed);
   assert.ok(!mixed.includes("Коригування"));
+
+  // Порядок блоків повідомлення (рішення власника 09.11.2026): від головного до довідкового.
+  const ordered = ctx.buildProductionMsg_({
+    order_number: "ORD-261026-010", first_name: "Букатюк В.В.", phone: "+380680265430", city: "Київ", payment_method: "На рахунок ФО-П",
+    transport: "Нова пошта", delivery_address: "м. Київ, відділення №200", delivery_date: "2026-11-20",
+    recipient: { name: "Панчук О.В.", phone: "0680265430" }, notes: "❓ Які терміни виконання?",
+    items: [{ product_type: "basket", construction_type: "Розбірна · AVL-02", basket_model_name: "Екран під утеплювач", color: "Білий RAL (9016)", pattern: "K1",
+      size_w: 850, size_h: 600, size_d: 75, quantity: 47, unit: "шт.", cost_total: 116090, revenue: 144525, profit: 28435,
+      specs: "Система кріплення: 2 кронштейни + 2 перемички", item_comment: "Перед виробництвом надішліть модель на погодження" }],
+  }, {}).replace(/<[^>]+>/g, "");
+  const at = ["📅 Дата доставки: 20.11.2026", "⚠️ ВАЖЛИВО", "Перед виробництвом надішліть", "📝 ПРИМІТКИ", "Які терміни", "🏭 ЩО ВИГОТОВИТИ",
+    "• Кількість: 47 шт.", "• Розміри: ширина 850 × висота 600 × глибина 75 мм", "• Колір:", "Система кріплення", "🚚 ДОСТАВКА", "Отримувач: Панчук",
+    "👤 ЗАМОВНИК", "Букатюк", "💰 ГРОШІ", "2 470 ₴ × 47 шт. = 116 090 ₴", "До виплати Avalon"].map((x) => ordered.indexOf(x));
+  assert.ok(at.every((x, k) => x >= 0 && (k === 0 || x > at[k - 1])), "порядок блоків: " + at + "\n" + ordered);
+  assert.equal(ordered.split("20.11.2026").length - 1, 1, "дата доставки — лише в шапці");
+  assert.ok(!ordered.includes("Додаткова інформація") && !ordered.includes("❗ Коментар"), "старі підписи прибрано");
 
   // Площа з повною точністю: показані множники дають показану суму (810×550×500).
   const precise = ctx.buildProductionMsg_({

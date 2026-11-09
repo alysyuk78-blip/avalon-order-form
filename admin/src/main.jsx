@@ -2712,7 +2712,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
 
       return (
         <section className="payments-section" aria-labelledby="payments-section-title">
-          <div className="section-title section-title--first with-note"><span id="payments-section-title">Платежі <GuideLink section="money" /></span>{note}</div>
+          <div className="section-title with-note"><span id="payments-section-title">Платежі <GuideLink section="money" /></span>{note}</div>
           {noteBody}
           {/* Не input: суми з підписом не вміщались у вузьке поле і обрізались. */}
           <div className="grid2">
@@ -4538,43 +4538,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               </div>
             )}
 
-            <QuickContact order={order} />
-
-            {order.status === STATUS_APPROVAL && (
-              <ClientReminder order={order} items={items} disabled={busy || stale}
-                onReminded={() => save({ client_reminded: true })} />
-            )}
-
-            <OrderChatSection token={token} orderNumber={orderNumber} />
-
-            <PaymentsSection
-              token={token}
-              orderNumber={orderNumber}
-              clientName={order.client}
-              payerName={order.parties && order.parties.payer ? order.parties.payer.name : ""}
-              payments={data.payments}
-              summary={data.payment_summary}
-              note={noteButton("payments", "Платежі")} noteBody={noteBody("payments", "Платежі")}
-              onChanged={(result) => {
-                const next = {
-                  ...data,
-                  payments: result?.payments || data.payments || [],
-                  payment_summary: result?.summary || data.payment_summary,
-                };
-                setData(next);
-                onChanged && onChanged(next);
-              }}
-            />
-
-            {order.status !== "Скасовано" && (
-              <>
-                <InvoicesSection token={token} orderNumber={orderNumber} order={order} items={data.items || []}
-                  summary={data.payment_summary} invoices={data.invoices}
-                  note={noteButton("invoices", "Рахунки")} noteBody={noteBody("invoices", "Рахунки")} />
-              </>
-            )}
-
-            <div className="section-title">Швидкі дії</div>
+            <div className="section-title section-title--first">Статус замовлення</div>
             <div className="quick-actions">
               {STATUSES.filter(s => s !== "Скасовано").map(s => (
                 <button
@@ -4612,35 +4576,27 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               </div>
             )}
 
-            <OrderFilesSection
-              files={files}
-              filesFresh={filesFresh}
-              onReload={loadFiles}
-              filesError={filesError}
-              uploads={uploads}
-              onAdd={addFiles}
-              onRemove={removeFile}
-              onRetry={retryUpload}
-              onDismiss={dismissUpload}
-              note={noteButton("files", "Файли")} noteBody={noteBody("files", "Файли")}
-            />
+            {/* Коротко про головне — щоб не гортати картку: сума, оплата, маржа, дата доставки. */}
+            {(() => {
+              const ps = data.payment_summary || {};
+              const revenue = items.reduce((sum, it) => sum + (Number(it.revenue) || 0), 0);
+              const profitKnown = items.some(it => it.profit != null && it.profit !== "");
+              const profit = items.reduce((sum, it) => sum + (Number(it.profit) || 0), 0);
+              const paid = Number(ps.client_paid) || 0;
+              const parts = [];
+              if (revenue > 0) parts.push(<span key="r">Сума <b>{money(revenue)}</b></span>);
+              if (revenue > 0) parts.push(<span key="p">Сплачено <b>{money(paid)}</b>{paid >= revenue - 0.5 ? " ✓" : ""}</span>);
+              if (revenue > 0 && profitKnown) parts.push(<span key="m">Маржа <b>{money(profit)}</b></span>);
+              if (form.delivery_date) parts.push(<span key="d">Доставка <b>{payDateLabel(form.delivery_date)}</b></span>);
+              return parts.length ? <div className="order-summary">{parts.reduce((acc, x, k) => k ? acc.concat([" · ", x]) : [x], [])}</div> : null;
+            })()}
 
-            <ContractorSendSection
-              key={orderNumber}
-              token={token}
-              orderNumber={orderNumber}
-              order={order}
-              items={items}
-              files={files}
-              filesFresh={filesFresh}
-              locked={stale}
-              sectionRef={sendSectionRef}
-              highlight={sendHighlight}
-              onSent={refreshAfterSend}
-              purposeRequest={purposeRequest}
-              onSaveProcessing={saveProcessing}
-              note={noteButton("contractor", "Підрядник")} noteBody={noteBody("contractor", "Підрядник")}
-            />
+            <QuickContact order={order} />
+
+            {order.status === STATUS_APPROVAL && (
+              <ClientReminder order={order} items={items} disabled={busy || stale}
+                onReminded={() => save({ client_reminded: true })} />
+            )}
 
             {blockTitle("client", "Замовник", <>Замовник (з ким спілкуємось)</>)}
             <div className="grid2">
@@ -4734,6 +4690,24 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             {partiesDraft && (
               <span className="send-hint" style={{ marginLeft: 10 }}>Незбережені зміни · <button type="button" className="link-btn" onClick={() => setPartiesDraft(null)}>скасувати</button></span>
             )}
+
+            <OrderChatSection token={token} orderNumber={orderNumber} />
+
+            <div className="section-title">Позиції в замовленні ({items.length})</div>
+            <div className="order-items-list">
+              {items.map(it => (
+                <div key={it.row} className="order-item-card">
+                  <div className="order-item-title">{it.basket_model ? it.basket_model + " · " : ""}{it.basket_type || "Кошик"} · {it.construction}</div>
+                  <div className="order-item-meta">
+                    {it.size_w || "—"}×{it.size_h || "—"}×{it.size_d || "—"} мм · {it.quantity} {it.unit || (it.product_kind === "Кронштейни" ? "комп." : "шт.")} · {it.color} · {it.pattern}
+                  </div>
+                  <div className="order-item-finance">
+                    <span>{money(it.revenue)}</span>
+                    <span>Маржа {money(it.profit)} · {pct(itemMarginPct(it))} від ціни</span>
+                  </div>
+                </div>
+              ))}
+            </div>
 
             {blockTitle("product", "Товар", <>Товар{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</>)}
             {items.length > 1 && (
@@ -4867,7 +4841,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                       onChange={e => setForm({ ...form, item_comment: e.target.value })}
                       placeholder="Стосується лише цієї позиції: кріплення, зʼєднання, особливості…" />
                     <small className="send-hint">
-                      Підрядник побачить його одразу під цією позицією{items.length > 1 ? " — а не наприкінці повідомлення для всіх" : ""}.
+                      Підрядник побачить його на початку повідомлення, у блоці «⚠️ Важливо»{items.length > 1 ? " — з назвою цієї позиції, щоб не віднести до всіх" : ""}.
                     </small>
                   </div>
                 </>
@@ -5053,22 +5027,64 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               notes: form.notes,
             })}>Зберегти деталі</button>
 
-            <div className="section-title">Позиції ({items.length})</div>
-            <div className="order-items-list">
-              {items.map(it => (
-                <div key={it.row} className="order-item-card">
-                  <div className="order-item-title">{it.basket_model ? it.basket_model + " · " : ""}{it.basket_type || "Кошик"} · {it.construction}</div>
-                  <div className="order-item-meta">
-                    {it.size_w || "—"}×{it.size_h || "—"}×{it.size_d || "—"} мм · {it.quantity} {it.unit || (it.product_kind === "Кронштейни" ? "комп." : "шт.")} · {it.color} · {it.pattern}
-                  </div>
-                  <div className="order-item-finance">
-                    <span>{money(it.revenue)}</span>
-                    <span>Маржа {money(it.profit)} · {pct(itemMarginPct(it))} від ціни</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {error && <div className="error">{error}</div>}
+            <OrderFilesSection
+              files={files}
+              filesFresh={filesFresh}
+              onReload={loadFiles}
+              filesError={filesError}
+              uploads={uploads}
+              onAdd={addFiles}
+              onRemove={removeFile}
+              onRetry={retryUpload}
+              onDismiss={dismissUpload}
+              note={noteButton("files", "Файли")} noteBody={noteBody("files", "Файли")}
+            />
+
+            <ContractorSendSection
+              key={orderNumber}
+              token={token}
+              orderNumber={orderNumber}
+              order={order}
+              items={items}
+              files={files}
+              filesFresh={filesFresh}
+              locked={stale}
+              sectionRef={sendSectionRef}
+              highlight={sendHighlight}
+              onSent={refreshAfterSend}
+              purposeRequest={purposeRequest}
+              onSaveProcessing={saveProcessing}
+              note={noteButton("contractor", "Підрядник")} noteBody={noteBody("contractor", "Підрядник")}
+            />
+
+            <PaymentsSection
+              token={token}
+              orderNumber={orderNumber}
+              clientName={order.client}
+              payerName={order.parties && order.parties.payer ? order.parties.payer.name : ""}
+              payments={data.payments}
+              summary={data.payment_summary}
+              note={noteButton("payments", "Платежі")} noteBody={noteBody("payments", "Платежі")}
+              onChanged={(result) => {
+                const next = {
+                  ...data,
+                  payments: result?.payments || data.payments || [],
+                  payment_summary: result?.summary || data.payment_summary,
+                };
+                setData(next);
+                onChanged && onChanged(next);
+              }}
+            />
+
+            {order.status !== "Скасовано" && (
+              <>
+                <InvoicesSection token={token} orderNumber={orderNumber} order={order} items={data.items || []}
+                  summary={data.payment_summary} invoices={data.invoices}
+                  note={noteButton("invoices", "Рахунки")} noteBody={noteBody("invoices", "Рахунки")} />
+              </>
+            )}
+
+            {error && <div className="error drawer-error" role="alert">{error}</div>}
           </div>
         </div>
       );
@@ -6698,17 +6714,17 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         lead: "Від заявки до завершення. Кроки йдуть у тому ж порядку, що й розділи в картці замовлення.",
         steps: [
           ["Відкрийте заявку", "Розділ «Замовлення». Заявка з сайту зʼявляється сама зі статусом «Нове», а в Telegram приходить сповіщення. Натисніть на замовлення — відкриється його картка. Знайти потрібне можна пошуком: за іменем, телефоном або номером. Клієнт подзвонив чи написав у месенджер — створіть замовлення самі (див. «Нове замовлення вручну»)."],
-          ["Перевірте клієнта", "Розділ «Клієнт і контакти»: імʼя, телефон, місто, зручний спосіб звʼязку. Звʼяжіться з клієнтом і уточніть, чого бракує. Виправили — натисніть «Зберегти клієнта»."],
+          ["Перевірте клієнта", "Картка йде згори вниз так, як ведеться замовлення: статус і коротко про суму й оплату → замовник → отримувач і платник → позиції, товар і фінанси → доставка → файли → надіслати підряднику → платежі й рахунки. Розділ «Замовник (з ким спілкуємось)»: імʼя, телефон, місто, зручний спосіб звʼязку. Звʼяжіться з клієнтом і уточніть, чого бракує. Виправили — натисніть «Зберегти клієнта»."],
           ["Перевірте товар", "Розділ «Товар»: модель, конструкція, колір, візерунок, ширина, висота й глибина в міліметрах, кількість, кришка. Без усіх трьох розмірів ціна не порахується. Якщо клієнт назвав лише кондиціонер — натисніть «Порахувати в калькуляторі» і введіть розміри зовнішнього блока: калькулятор сам підбере розміри кошика. Після правок — «Зберегти товар»."],
           ["Перевірте ціну", "Під товаром — блок «Розрахунок за формулою калькулятора». Напис «Фінанси позиції збігаються з розрахунком» означає, що ціна вже записана в замовлення. Якщо замість нього є кнопка «Застосувати розрахунок і зберегти» — натисніть її. Ціну не вигадуйте: її рахує формула за ставками підрядника. Виняток — велике замовлення з ціною, узгодженою з підрядником окремо: тоді блок згорнутий («Ціну позиції вписано вручну»), формула лише для довідки, а замінити вашу ціну формульною можна тільки з підтвердженням."],
           ["Знижка та оплата на ТОВ", "Знижку вписуйте в розділі «Фінанси» у поле «Знижка %» і натискайте «Зберегти фінанси» — вона збережеться й після зміни розмірів чи кількості. Клієнт платить на рахунок ТОВ — у полі «Комісія з маржі, %» поставте 30: ціна сама зросте так, щоб маржа не зменшилась."],
           ["Якщо формула ціну не рахує", "Антивандальне виконання, складні візерунки K3, K4, K6, K8, K9 і вироби не з каталогу рахує підрядник. У розділі «Надіслати підряднику» оберіть «На опрацювання», позначте завдання (наприклад, «Порахувати виробничу вартість»), вкажіть термін і надішліть. Статус стане «В опрацюванні підрядником». Коли підрядник назве суму — впишіть її в «Собівартість за 1 шт» (разом порахується саме: × кількість) або в «Собівартість (разом)», натисніть «Підставити ціну», а потім «Зберегти фінанси»."],
-          ["Узгодьте з клієнтом", "Назвіть суму, термін і спосіб оплати. Потрібна комерційна пропозиція, рахунок або картинка для месенджера — «Порахувати в калькуляторі». Дату, спосіб і адресу доставки впишіть у розділі «Доставка та нотатки». Поки клієнт думає, поставте у «Швидких діях» статус «Погодження клієнтом»."],
+          ["Узгодьте з клієнтом", "Назвіть суму, термін і спосіб оплати. Потрібна комерційна пропозиція, рахунок або картинка для месенджера — «Порахувати в калькуляторі». Дату, спосіб і адресу доставки впишіть у розділі «Доставка та нотатки». Поки клієнт думає, поставте у «Статусі замовлення» (угорі картки) «Погодження клієнтом»."],
           ["Клієнт думає — нагадайте", "У статусі «Погодження клієнтом» у картці зʼявляється блок із готовим текстом нагадування. Натисніть «Нагадати в Viber», «у WhatsApp» чи «у Telegram» — відкриється чат із клієнтом: у WhatsApp і Telegram текст уже вставлено, у Viber вставте його (Cmd+V або Ctrl+V) і надішліть. Кабінет запамʼятовує нагадування й через два дні тиші покаже замовлення в «Нагадуваннях»."],
 
           ["Внесіть передоплату", "Розділ «Платежі»: тип «Передоплата», сума, за потреби примітка — і «Внести платіж»."],
           ["Передайте у виробництво", "Клієнт погодив — додайте файли: ескіз візерунка, фото місця монтажу. У розділі «Надіслати підряднику» оберіть «У виробництво», позначте, які дані побачить підрядник, і надішліть. Статус стане «Виготовлення». Без цього кроку підрядник замовлення не побачить."],
-          ["Доведіть до кінця", "У «Швидких діях» міняйте статус: «Готове» → «Відправлено» → «Завершено». Решту оплати клієнта внесіть у «Платежі» («Доплата» або «Оплата повністю»), гроші від підрядника — типом «Маржа від підрядника»."],
+          ["Доведіть до кінця", "У «Статусі замовлення» (угорі картки) міняйте статус: «Готове» → «Відправлено» → «Завершено». Решту оплати клієнта внесіть у «Платежі» («Доплата» або «Оплата повністю»), гроші від підрядника — типом «Маржа від підрядника»."],
         ],
       },
       {
@@ -6765,7 +6781,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           ["Повернення", "Гроші, повернуті клієнтові, вносьте типом «Повернення клієнту»."],
           ["Виправити платіж", "✏️ біля платежу в списку — змініть суму, тип, спосіб, дату, «хто отримав» чи примітку й натисніть «Зберегти». Борг клієнта, маржа, каса й акти перерахуються самі. Записи розрахунку з підрядником («розрахунок») не змінюються — їх скасовують у «Касі». Якщо після платежу за замовленням уже проведено розрахунок із підрядником чи «Забрати маржу», змінити чи видалити його не можна (лише дату й примітку) — спершу скасуйте той розрахунок. Так само кабінет не дасть зміни, після якої в касі вийде мінус (готівку цього платежу вже віддано). «Частку підряднику» змінює лише власник."],
           ["Переплата", "Якщо внесено більше, ніж належить, картка покаже помаранчеву позначку «Переплата клієнта» або «Підрядник переплатив маржу», а замовлення зʼявиться в «Нагадуваннях». Найчастіше це платіж не того типу: натисніть ✏️ біля нього в списку платежів і виправте тип."],
-          ["Скасування", "«Швидкі дії» → «Скасувати» → вкажіть причину. Причина потрібна завжди — за нею видно, чому втрачаються замовлення."],
+          ["Скасування", "«Статус замовлення» (угорі картки) → «Скасувати» → вкажіть причину. Причина потрібна завжди — за нею видно, чому втрачаються замовлення."],
           ["Завершення", "Кошик доставлено, клієнт розрахувався, маржу отримано — поставте статус «Завершено»."],
         ],
       },
