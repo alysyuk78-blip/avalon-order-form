@@ -115,7 +115,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
     // Ключ для порівняння варіантів: регістр, пробіли й дужки не важать; латинські літери, схожі
     // на кириличні (K/К, P/Р…), — однакові.
     const CHOICE_LOOKALIKE = { a: "а", b: "в", c: "с", e: "е", h: "н", i: "і", k: "к", m: "м", o: "о", p: "р", t: "т", x: "х", y: "у" };
-    const choiceKey = (v) => String(v || "").toLowerCase().replace(/[a-z]/g, ch => CHOICE_LOOKALIKE[ch] || ch).replace(/[^0-9a-zа-яіїєґ]/g, "");
+    const choiceKey = (v) => String(v || "").toLowerCase().replace(/[a-z]/g, ch => CHOICE_LOOKALIKE[ch] || ch)
+      .replace(/[^0-9a-zа-яіїєґ]+/g, " ").trim();
     /**
      * Поле з вибором зі списку й варіантом «Інше…» (тоді — вільний текст). Значення, якого немає
      * в списку (старі замовлення, ручні правки), показується текстом — нічого не губиться.
@@ -2628,13 +2629,15 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       // сплатив частину — доплата (залишок); нічого — передоплата. Підставляємо, поки форму не чіпали.
       const revenueNow = Number(s.revenue) || 0, clientPaidNow = Number(s.client_paid) || 0;
       const clientLeftNow = Math.max(0, Math.round(revenueNow - clientPaidNow));
-      const suggest = revenueNow > 0 && clientLeftNow < 1 && marginLeftNet >= 1 ? { type: "Маржа від підрядника", amount: String(Math.round(marginLeftNet)) }
+      // Суми — вниз до гривні: маржа з комісією буває з копійками, а платежі цілі (інакше «переплата 1 ₴»).
+      const suggest = clientOverpaid >= 1 ? { type: "Повернення клієнту", amount: String(clientOverpaid) }
+        : revenueNow > 0 && clientLeftNow < 1 && marginLeftNet >= 1 ? { type: "Маржа від підрядника", amount: String(Math.floor(marginLeftNet)) }
         : clientPaidNow >= 1 ? { type: "Доплата", amount: clientLeftNow >= 1 ? String(clientLeftNow) : "" }
         : { type: "Передоплата", amount: "" };
       const formTouched = useRef(false);
       useEffect(() => { formTouched.current = false; }, [orderNumber]);
       useEffect(() => {
-        if (!formTouched.current) setForm(f => ({ ...f, type: suggest.type, amount: suggest.amount, recipient: "" }));
+        if (!formTouched.current) setForm(f => ({ ...f, type: suggest.type, amount: suggest.amount }));
       }, [orderNumber, suggest.type, suggest.amount]);
 
       async function add() {
@@ -2709,7 +2712,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
 
       return (
         <section className="payments-section" aria-labelledby="payments-section-title">
-          <div className="section-title section-title--first with-note" id="payments-section-title"><span>Платежі <GuideLink section="money" /></span>{note}</div>
+          <div className="section-title section-title--first with-note"><span id="payments-section-title">Платежі <GuideLink section="money" /></span>{note}</div>
           {noteBody}
           {/* Не input: суми з підписом не вміщались у вузьке поле і обрізались. */}
           <div className="grid2">
@@ -2851,7 +2854,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             </div>
             {paymentHasRecipient(form.type) && (
               <div className="field"><label htmlFor="payment-recipient">{form.type === "Повернення клієнту" ? "Хто повернув гроші" : "Хто отримав гроші"}</label>
-                <select id="payment-recipient" value={form.recipient} onChange={e => setForm({ ...form, recipient: e.target.value })}>
+                <select id="payment-recipient" value={form.recipient} onChange={e => { formTouched.current = true; setForm({ ...form, recipient: e.target.value }); }}>
                   <option value="">Підрядник</option>
                   <option value={PAYMENT_ME}>Я (готівка в касу, моя картка чи ФОП)</option>
                 </select>
@@ -2860,12 +2863,12 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             <div className="field"><label htmlFor="payment-amount">Сума, ₴</label>
               <input id="payment-amount" type="number" inputMode="decimal" min="0" value={form.amount} onChange={e => { formTouched.current = true; setForm({ ...form, amount: e.target.value }); }} /></div>
             <div className="field"><label htmlFor="payment-method">Спосіб</label>
-              <select id="payment-method" value={form.method} onChange={e => setForm({ ...form, method: e.target.value })}>
+              <select id="payment-method" value={form.method} onChange={e => { formTouched.current = true; setForm({ ...form, method: e.target.value }); }}>
                 {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
             <div className="field"><label htmlFor="payment-date">Дата (порожньо = сьогодні)</label>
-              <input id="payment-date" type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
+              <input id="payment-date" type="date" value={form.date} onChange={e => { formTouched.current = true; setForm({ ...form, date: e.target.value }); }} /></div>
           </div>
           {payerName && payerName !== clientName && (
             // Платник замовлення — не замовник: позначка «Платив: …» на початку примітки платежу.
@@ -2877,13 +2880,13 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                   const strip = (note) => { const who = ours(note); return who ? note.slice(("Платив: " + who).length).replace(/^; /, "") : note; };
                   const on = ours(form.note) === n;
                   return <button key={n} type="button" className={on ? "active" : ""}
-                    onClick={() => setForm(f => { const rest = strip(f.note); return { ...f, note: on ? rest : "Платив: " + n + (rest ? "; " + rest : "") }; })}>{n}</button>;
+                    onClick={() => { formTouched.current = true; setForm(f => { const rest = strip(f.note); return { ...f, note: on ? rest : "Платив: " + n + (rest ? "; " + rest : "") }; }); }}>{n}</button>;
                 })}
               </div>
             </div>
           )}
           <div className="field"><label htmlFor="payment-note">Примітка</label>
-            <input id="payment-note" value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="Напр. квитанція №, хто передав" /></div>
+            <input id="payment-note" value={form.note} onChange={e => { formTouched.current = true; setForm({ ...form, note: e.target.value }); }} placeholder="Напр. квитанція №, хто передав" /></div>
           {error && <div className="error">{error}</div>}
           <button className="btn" disabled={busy} onClick={add}>{busy ? "Внесення…" : "Внести платіж"}</button>
         </section>
@@ -3053,8 +3056,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const pick = () => { if (inputRef.current) inputRef.current.click(); };
       return (
         <section className="files-section" aria-labelledby="files-section-title">
-          <div className="section-title files-title" id="files-section-title">
-            <span className="head-with-note"><span>Файли{list.length ? " (" + list.length + ")" : ""}</span>{note}</span>
+          <div className="section-title files-title">
+            <span className="head-with-note"><span id="files-section-title">Файли{list.length ? " (" + list.length + ")" : ""}</span>{note}</span>
             <button type="button" className="file-add" aria-label="Додати файли" data-tooltip="Додати файли" onClick={pick}>
               <Plus aria-hidden="true" />
             </button>
@@ -3318,7 +3321,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
 
       return (
         <section ref={sectionRef} className={"contractor-send" + (highlight ? " highlight" : "")} aria-labelledby="contractor-send-title">
-          <div className="section-title with-note" id="contractor-send-title"><span>Надіслати підряднику <GuideLink section="contractor" /></span>{note}</div>
+          <div className="section-title with-note"><span id="contractor-send-title">Надіслати підряднику <GuideLink section="contractor" /></span>{note}</div>
           {noteBody}
           <p className="send-status">
             {sent
@@ -3569,6 +3572,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
     function PricingBlock({ form, setForm, saved, savedCommission, disabled, onApply, orderNumber, ratesFrom, canReprice, onReprice, items, orderStatus, colorWaived }) {
       usePricingInfo();   // ставки оновились — перерахувати показане
       const [showCalc, setShowCalc] = useState(false);
+      useEffect(() => { setShowCalc(false); }, [orderNumber, saved.row]);
       const rates = ratesFor(ratesFrom);
       const type = pricing.avalonModelType(form.construction, form.basket_model);
       const opts = pricing.avalonParseOptions(form.construction, form.specs);
@@ -3605,12 +3609,14 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       // Ціну вписано вручну (велике замовлення, індивідуальна ціна підрядника): товар не змінювали,
       // а збережені гроші — не формульні. Тоді формула — лише довідка, згорнута: одним натиском
       // вона затерла б узгоджену ціну (а клієнт міг уже заплатити й отримати рахунок).
-      const ownPrice = !!calc && !individual && inputsSaved && (num(saved.cost_total) > 0 || num(saved.revenue) > 0) && !moneySaved;
+      // launchReady — збережено й колір, знижку, прайс і комісію: щойно вписана знижка — не «ручна ціна».
+      const ownPrice = !!calc && !individual && launchReady && (num(saved.cost_total) > 0 || num(saved.revenue) > 0) && !moneySaved;
       const priceDiff = ownPrice ? calc.total - num(saved.revenue) : 0;
       if (ownPrice && !showCalc) {
         return (
           <div className="margin-calc pricing-block">
             <div className="margin-calc-title">Розрахунок за формулою калькулятора <GuideLink section="price" /></div>
+            <RatesNote ratesFrom={ratesFrom} canReprice={canReprice} onReprice={onReprice} disabled={disabled} />
             <p className="margin-calc-note" style={{ marginTop: 0 }}>
               Ціну позиції вписано вручну: собівартість <b>{money(saved.cost_total)}</b>, ціна продажу <b>{money(saved.revenue)}</b>.
               {" "}За формулою було б {money(calc.costTotal)} і {money(calc.total)}

@@ -2218,7 +2218,7 @@ function buildOrderFromRows_(sh, orderNumber) {
  * підрядник), а дропшиперську — ні (її Avalon платить партнеру сама). Без виручки
  * в таблиці (ціну ще не погоджено) блок не показуємо — нулі лише заплутали б.
  */
-function marginForContractorBlock_(items, commissionPct, clientPaid) {
+function marginForContractorBlock_(items, commissionPct, paid) {
   var revenue = 0, profit = 0, commission = 0, known = false, unpriced = 0;
   (items || []).forEach(function (it) {
     var rev = Number(it.revenue) || 0;
@@ -2248,17 +2248,21 @@ function marginForContractorBlock_(items, commissionPct, clientPaid) {
     s += "• Комісія (" + String(rate).replace(".", ",") + "% від маржі): − " + money2_(commission) + " ₴\n";
   }
   s += "• <b>До виплати Avalon: " + money2_(marginDue_(profit, commission, commissionPct)) + " ₴</b>\n";
-  // Клієнт уже сплатив усе (за журналом платежів) — маржа до виплати зараз, а не «колись».
-  s += (Number(clientPaid) || 0) >= revenue - 0.5 ? "  <i>клієнт оплатив повністю — до виплати зараз</i>\n" : "  <i>після повної оплати клієнтом</i>\n";
+  // «До виплати зараз» — лише коли ВСІ гроші клієнта отримав підрядник і всі позиції оцінено. Якщо частину
+  // отримав власник, маржа вже в нього — підрядник її не переказує (інакше переказав би вдруге).
+  var paidAllToContractor = !unpriced && paid && !(Number(paid.owner) || 0) && (Number(paid.client) || 0) >= revenue - 0.5;
+  s += paidAllToContractor ? "  <i>клієнт оплатив повністю — до виплати зараз</i>\n" : "  <i>після повної оплати клієнтом</i>\n";
   return { priceLine: priceLine, section: s };
 }
 
-/** Скільки клієнт уже сплатив за замовленням (журнал платежів); немає журналу — 0. */
+/** Скільки клієнт сплатив за замовленням і скільки з цього отримав власник (журнал платежів); немає журналу — null. */
 function contractorClientPaid_(num) {
   try {
     var pays = num ? readPayments_(String(num)) : [];
-    return pays.length ? (Number(paymentTotals_(pays).client_paid) || 0) : 0;
-  } catch (e) { return 0; }
+    if (!pays.length) return null;
+    var t = paymentTotals_(pays);
+    return { client: Number(t.client_paid) || 0, owner: Number(t.owner_received) || 0 };
+  } catch (e) { return null; }
 }
 
 /** Повідомлення-специфікація для підрядника (4 секції) — дзеркало формату з api/order.js. */
@@ -2457,7 +2461,10 @@ function buildProductionMsg_(data, opts) {
   function agreedCostText(c, it) {
     var qty = Number(it.quantity) || 1;
     if (qty <= 1) return "<b>" + money_(c) + " ₴</b>";
-    return money2_(Math.round(c / qty * 100) / 100) + " ₴ × " + qty + " " + itemUnit(it) + " = <b>" + money_(c) + " ₴</b>";
+    var unit = Math.round(c / qty * 100) / 100;
+    // Ціна за штуку з копійками не дає рівно суму (велика кількість) — без множення, щоб рядок сходився.
+    if (Math.abs(unit * qty - c) >= 0.5) return "<b>" + money_(c) + " ₴</b> (" + qty + " " + itemUnit(it) + ")";
+    return money2_(unit) + " ₴ × " + qty + " " + itemUnit(it) + " = <b>" + money_(c) + " ₴</b>";
   }
   function adjustmentLine(prefix, diff, b) {
     if (Math.abs(diff) < 1) return "";

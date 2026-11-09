@@ -111,13 +111,19 @@ function testContractorMessageShowsMarginToPay() {
     // Клієнт уже сплатив усе — «до виплати зараз», а не «після повної оплати».
     const its = [other({ cost_total: 9650, revenue: 13790, profit: 4140 })];
     const ctxPaid = loadAppsScript();
-    assert.ok(ctxPaid.marginForContractorBlock_(its, 0, 13790).section.includes("клієнт оплатив повністю — до виплати зараз"));
-    assert.ok(ctxPaid.marginForContractorBlock_(its, 0, 5000).section.includes("після повної оплати клієнтом"));
-    assert.equal(ctxPaid.contractorClientPaid_(""), 0, "без номера — 0, без помилки");
+    assert.ok(ctxPaid.marginForContractorBlock_(its, 0, { client: 13790, owner: 0 }).section.includes("клієнт оплатив повністю — до виплати зараз"));
+    assert.ok(ctxPaid.marginForContractorBlock_(its, 0, { client: 5000, owner: 0 }).section.includes("після повної оплати клієнтом"));
+    // Гроші (чи частину) отримав власник — маржа вже в нього, «до виплати зараз» не пишемо.
+    assert.ok(ctxPaid.marginForContractorBlock_(its, 0, { client: 13790, owner: 13790 }).section.includes("після повної оплати клієнтом"));
+    assert.ok(!ctxPaid.marginForContractorBlock_(its, 0, { client: 13790, owner: 3000 }).section.includes("до виплати зараз"));
+    // Частину позицій ще не оцінено — «повністю» не пишемо.
+    assert.ok(!ctxPaid.marginForContractorBlock_(its.concat([other({ cost_total: 0, revenue: 0, profit: 0 })]), 0, { client: 13790, owner: 0 }).section.includes("до виплати зараз"));
+    assert.ok(!ctxPaid.marginForContractorBlock_(its, 0, null).section.includes("до виплати зараз"), "журналу немає — як раніше");
+    assert.equal(ctxPaid.contractorClientPaid_(""), null, "без номера — null, без помилки");
   }
   assert.equal(tov.split("Вартість виробнича").length - 1, 1, "собівартість не дублюється");
   assert.ok(tov.includes("Форма оплати: На рахунок ТОВ"), "це форма оплати замовлення, а не доставки");
-  assert.ok(tov.indexOf("Оплата: На рахунок ТОВ") < tov.indexOf("МАРЖА AVALON"),
+  assert.ok(tov.indexOf("Форма оплати: На рахунок ТОВ") >= 0 && tov.indexOf("Форма оплати: На рахунок ТОВ") < tov.indexOf("МАРЖА AVALON"),
     "спосіб оплати — у фінансах, а не всередині блоку маржі");
 
   // Половина гривні: рядки мають сходитися до копійки.
@@ -331,6 +337,11 @@ function testRemovableSidePanelPricing() {
   }, { finance: true });
   assert.ok(edited.includes("• Вартість виробнича: 2 250 ₴ × 2 шт. = <b>4 500 ₴</b>"), edited);
   assert.ok(!edited.includes("Коригування") && !edited.includes("м² ×"), "без формули й коригування");
+  // Велика кількість, сума не ділиться без залишку — без множення, щоб рядок сходився.
+  const big = ctx.buildProductionMsg_({ order_number: "X",
+    items: [{ product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 400, unit: "шт.", cost_total: 1000001 }],
+  }, { finance: true });
+  assert.ok(big.includes("• Вартість виробнича: <b>1 000 001 ₴</b> (400 шт.)"), big);
   // Кілька позицій: узгоджена — одним рядком, формульна — з розкладкою.
   const mixed = ctx.buildProductionMsg_({
     order_number: "X",
