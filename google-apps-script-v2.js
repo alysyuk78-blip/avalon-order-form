@@ -2403,7 +2403,7 @@ function buildProductionMsg_(data, opts) {
       if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
         if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
       });
-        return;
+      return;
     }
     if (it.product_type === "other") {
       if (multiBlocks) m += "\n🧱 <b>Виріб " + (i + 1) + "</b>\n";
@@ -2413,7 +2413,7 @@ function buildProductionMsg_(data, opts) {
       if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
         if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
       });
-        return;
+      return;
     }
     if (it.product_type === "bracket") {
       if (multiBlocks) m += "\n🔩 <b>Кронштейни " + (i + 1) + "</b>\n";
@@ -2422,7 +2422,7 @@ function buildProductionMsg_(data, opts) {
       m += "• Віброподушки: <b>" + (it.vibro_pads ? "Так" : "Ні") + "</b>\n";
       if (color) m += "• Колір: <b>" + color + "</b>\n";
       m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
-        return;
+      return;
     }
     if (multiBlocks) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
     // Порожні «Тип:» і «Конструкція:» не друкуємо — у повідомленні вони виглядали як загублені дані.
