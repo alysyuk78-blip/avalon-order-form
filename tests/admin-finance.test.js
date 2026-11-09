@@ -433,6 +433,10 @@ function testRemovableSidePanelPricing() {
   const withCity = ctx.buildProductionMsg_({ order_number: "X", city: "Київ", transport: "Нова пошта", delivery_address: "Відділення №200: просп. Броварський, 31В",
     items: [{ product_type: "other", basket_model_name: "Ковш", quantity: 1 }] }, {}).replace(/<[^>]+>/g, "");
   assert.ok(withCity.includes("• Адреса: Київ, Відділення №200: просп. Броварський, 31В"), withCity);
+  // Населений пункт і номер відділення — жирним, решта — звичайно.
+  assert.equal(ctx.addressHtml_("Київ, Відділення №200 (до 200 кг): просп. Броварський, 31В"), "<b>Київ, Відділення №200</b> (до 200 кг): просп. Броварський, 31В");
+  assert.equal(ctx.addressHtml_("Львів, Поштомат №1234: вул. Івана Франка, 5"), "<b>Львів, Поштомат №1234</b>: вул. Івана Франка, 5");
+  assert.equal(ctx.addressHtml_("вул. Хрещатик, 1 <b>"), "вул. Хрещатик, 1 &lt;b&gt;", "без відділення — як є, з екрануванням");
 
   // Площа з повною точністю: показані множники дають показану суму (810×550×500).
   const precise = ctx.buildProductionMsg_({

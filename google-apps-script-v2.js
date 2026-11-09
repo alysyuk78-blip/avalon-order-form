@@ -2268,6 +2268,12 @@ function contractorClientPaid_(num) {
   } catch (e) { return null; }
 }
 
+/** Адреса для Telegram (HTML): населений пункт і номер відділення — жирним, решта (вага, вулиця) — звичайно. */
+function addressHtml_(address) {
+  var a = esc_(String(address || ""));
+  return a.replace(/^((?:[^,]{1,60},\s*)?(?:Відділення|Поштомат|Пункт[^№:,]{0,40})\s*№\s*\d+(?:\/\d+)?)/i, "<b>$1</b>");
+}
+
 /** Адреса з населеним пунктом попереду: «Відділення №200: …» → «Київ, Відділення №200: …» (якщо міста в адресі ще немає). */
 function addressWithCity_(address, city) {
   var a = String(address || "").trim(), c = String(city || "").trim();
@@ -2641,7 +2647,7 @@ function buildProductionMsg_(data, opts) {
   var del = "";
   var transport = data.transport === "Інше" ? (data.transport_custom || "") : (data.transport || "");
   if (transport) del += "• Спосіб: <b>" + esc_(transport) + "</b>\n";
-  if (show.address && data.delivery_address) del += "• Адреса: " + esc_(addressWithCity_(data.delivery_address, show.city ? data.city : "")) + "\n";
+  if (show.address && data.delivery_address) del += "• Адреса: " + addressHtml_(addressWithCity_(data.delivery_address, show.city ? data.city : "")) + "\n";
   // Отримувач — інша людина, ніж замовник: підряднику для ТТН (разом з адресою — ті самі пташки).
   if (DELIVERY_PAY_LABELS[data.delivery_pay]) del += "• Оплата доставки: <b>" + DELIVERY_PAY_LABELS[data.delivery_pay] + "</b>\n";
   if (show.address && data.recipient && (data.recipient.name || data.recipient.phone)) {
