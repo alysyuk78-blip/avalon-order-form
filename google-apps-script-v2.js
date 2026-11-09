@@ -2218,7 +2218,7 @@ function buildOrderFromRows_(sh, orderNumber) {
  * підрядник), а дропшиперську — ні (її Avalon платить партнеру сама). Без виручки
  * в таблиці (ціну ще не погоджено) блок не показуємо — нулі лише заплутали б.
  */
-function marginForContractorBlock_(items, commissionPct) {
+function marginForContractorBlock_(items, commissionPct, paid) {
   var revenue = 0, profit = 0, commission = 0, known = false, unpriced = 0;
   (items || []).forEach(function (it) {
     var rev = Number(it.revenue) || 0;
@@ -2237,8 +2237,7 @@ function marginForContractorBlock_(items, commissionPct) {
   // Частина позицій ще без ціни — сума неповна, і це має бути видно.
   var partial = unpriced ? " (без позицій, ціну яких ще не визначено)" : "";
   var priceLine = "• Ціна для клієнта" + partial + ": <b>" + money2_(revenue) + " ₴</b>\n";
-  var s = "\n🧮 <b>МАРЖА AVALON</b>\n";
-  s += "• Маржа: " + money2_(revenue) + " − " + money2_(cost) + " = <b>" + money2_(profit) + " ₴</b>\n";
+  var s = "• Маржа Avalon: " + money2_(revenue) + " − " + money2_(cost) + " = <b>" + money2_(profit) + " ₴</b>\n";
   if (profit <= 0) {
     s += "• <b>Маржі до виплати немає</b> — ціна не покриває собівартість.\n";
     return { priceLine: priceLine, section: s };
@@ -2248,8 +2247,21 @@ function marginForContractorBlock_(items, commissionPct) {
     s += "• Комісія (" + String(rate).replace(".", ",") + "% від маржі): − " + money2_(commission) + " ₴\n";
   }
   s += "• <b>До виплати Avalon: " + money2_(marginDue_(profit, commission, commissionPct)) + " ₴</b>\n";
-  s += "  <i>після повної оплати клієнтом</i>\n";
+  // «До виплати зараз» — лише коли ВСІ гроші клієнта отримав підрядник і всі позиції оцінено. Якщо частину
+  // отримав власник, маржа вже в нього — підрядник її не переказує (інакше переказав би вдруге).
+  var paidAllToContractor = !unpriced && paid && !(Number(paid.owner) || 0) && (Number(paid.client) || 0) >= revenue - 0.5;
+  s += paidAllToContractor ? "  <i>клієнт оплатив повністю — до виплати зараз</i>\n" : "  <i>після повної оплати клієнтом</i>\n";
   return { priceLine: priceLine, section: s };
+}
+
+/** Скільки клієнт сплатив за замовленням і скільки з цього отримав власник (журнал платежів); немає журналу — null. */
+function contractorClientPaid_(num) {
+  try {
+    var pays = num ? readPayments_(String(num)) : [];
+    if (!pays.length) return null;
+    var t = paymentTotals_(pays);
+    return { client: Number(t.client_paid) || 0, owner: Number(t.owner_received) || 0 };
+  } catch (e) { return null; }
 }
 
 /** Повідомлення-специфікація для підрядника (4 секції) — дзеркало формату з api/order.js. */
@@ -2270,14 +2282,15 @@ function buildProductionMsg_(data, opts) {
   function itemUnit(it) {
     return esc_(String(it.unit || (it.product_type === "bracket" ? "комп." : "шт.")).trim() || "шт.");
   }
-  // Коментар до КОНКРЕТНОЇ позиції — одразу під нею, щоб підрядник не відніс його до всіх.
-  function itemCommentLines(it) {
-    var text = String((it && (it.comment || it.item_comment || it.model_comment)) || "").trim();
-    if (!text) return "";
-    var lines = text.split(/\n+/).map(function (x) { return String(x || "").trim(); }).filter(function (x) { return x; });
-    if (!lines.length) return "";
-    var out = "• ❗ Коментар: <b>" + esc_(lines[0]) + "</b>\n";
-    for (var k = 1; k < lines.length; k++) out += "   <b>" + esc_(lines[k]) + "</b>\n";
+  // «Кількість» і «Розміри: ширина × висота × глибина мм» — однаково для всіх виробів.
+  function qtyDimsLines(it, basket) {
+    var out = "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
+    var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
+    if (w > 0) {
+      out += "• Розміри: ширина <b>" + w + "</b>" + (h > 0 ? " × висота <b>" + h + "</b>" : "") + (d > 0 ? " × глибина <b>" + d + "</b>" : "") + " мм\n";
+    } else if (basket) {
+      out += "• Розміри: <i>розрахує менеджер</i>\n";
+    }
     return out;
   }
   function itemLabel_(it, i) {
@@ -2313,8 +2326,50 @@ function buildProductionMsg_(data, opts) {
     };
   }
 
+  // Порядок — від головного до довідкового (як читає підрядник): що за замовлення і до коли →
+  // на що звернути увагу → що виготовити → куди відправити → хто клієнт → гроші.
   var m = "📌 <b>Замовлення №" + esc_(data.order_number) + "</b>\n";
   m += "🕐 " + nowKyiv_() + "\n";
+  if (data.delivery_date) m += "📅 Дата доставки: <b>" + fmtDate_(data.delivery_date) + "</b>\n";
+
+  // ⚠️ ВАЖЛИВО — коментарі до позицій (у кількох позиціях — з назвою позиції, щоб не віднести до всіх).
+  var important = "";
+  items.forEach(function (it, i) {
+    if (isColorSurchargeItem_(it)) return;
+    var text = String((it && (it.comment || it.item_comment || it.model_comment)) || "").trim();
+    var lines = text.split(/\n+/).map(function (x) { return String(x || "").trim(); }).filter(function (x) { return x; });
+    if (!lines.length) return;
+    important += "• " + (multiBlocks ? itemLabel_(it, i) + ": " : "") + "<b>" + esc_(lines[0]) + "</b>\n";
+    for (var k = 1; k < lines.length; k++) important += "   <b>" + esc_(lines[k]) + "</b>\n";
+  });
+  if (important) m += "\n⚠️ <b>ВАЖЛИВО</b>\n" + important;
+
+  // 📝 ПРИМІТКИ — загальні до замовлення (без дублів того, що вже стоїть у позиціях і контактах).
+  if (show.notes && data.notes) {
+    // Рядки про довжину/віброподушки вже показані у кожній позиції окремо — у злитих
+    // примітках вони лише дублюються (а в багатопозиційних могли б і заплутати).
+    // Контакти (Telegram / E-mail / Viber / WhatsApp) форма теж дописує в примітки —
+    // їх прибираємо завжди: підрядник бачить їх лише в «Замовнику», якщо дозволено.
+    // Коментарі позицій уже стоять у «Важливо». Стара форма дописувала їх ще й у загальні
+    // примітки («AVL-05: текст») — такі рядки прибираємо, щоб підрядник не відніс
+    // їх до всього замовлення. Так само — дубль посилання на кондиціонер із кодом моделі.
+    var itemCommentLines_ = {};
+    items.forEach(function (it) {
+      String((it && (it.comment || it.item_comment || it.model_comment)) || "").split(/\n+/).forEach(function (line) {
+        var key = String(line || "").trim().toLowerCase();
+        if (key) itemCommentLines_[key] = true;
+      });
+    });
+    var noteLines = String(data.notes).split(/\n+/).filter(function (line) {
+      var t = String(line || "").trim();
+      if (!t || /^(Довжина кронштейнів|Віброподушки|Telegram|E-mail|Viber|WhatsApp)\s*:/i.test(t)) return false;
+      if (itemCommentLines_[t.toLowerCase()]) return false;
+      var prefixed = t.match(/^AVL-[\w\/-]+:\s*(.+)$/i);
+      if (prefixed && (itemCommentLines_[prefixed[1].trim().toLowerCase()] || /^посилання на кондиціонер\s/i.test(prefixed[1]))) return false;
+      return true;
+    });
+    if (noteLines.length) m += "\n📝 <b>ПРИМІТКИ</b>\n" + noteLines.map(function (line) { return esc_(line); }).join("\n") + "\n";
+  }
 
   var who = [];
   var fullName = ((data.first_name || "") + " " + (data.last_name || "")).trim();
@@ -2326,12 +2381,12 @@ function buildProductionMsg_(data, opts) {
   if (show.telegram && data.contact_telegram) who.push("✈️ Telegram: @" + esc_(String(data.contact_telegram).replace(/^@/, "")));
   if (show.email && data.contact_email) who.push("✉️ " + esc_(data.contact_email));
   if (show.city && data.city) who.push("🏙 " + esc_(data.city));
-  if (who.length) m += "\n👤 <b>ЗАМОВНИК</b>\n" + who.join("\n") + "\n";
+  var whoBlock = who.length ? "\n👤 <b>ЗАМОВНИК</b>\n" + who.join("\n") + "\n" : "";
 
   // Лише послуги (різання, фарбування, гнуття…) — інший заголовок, щоб підрядник одразу
   // бачив, що це робота з матеріалом, а не виготовлення виробу.
   var onlyServices = items.every(function (it) { return it.product_type === "service"; }) && blocks > 0;
-  m += onlyServices ? "\n🛠 <b>ПОСЛУГИ</b>\n" : "\n🏭 <b>ВИРОБНИЦТВО</b>\n";
+  m += onlyServices ? "\n🛠 <b>ПОСЛУГИ</b>\n" : "\n🏭 <b>ЩО ВИГОТОВИТИ</b>\n";
   items.forEach(function (it, i) {
     var color = it.color ? esc_(it.color) + (it.color_custom ? " (" + esc_(it.color_custom) + ")" : "") : "";
     var pattern = it.pattern ? esc_(it.pattern) + (it.pattern_custom ? " (" + esc_(it.pattern_custom) + ")" : "") : "";
@@ -2343,25 +2398,21 @@ function buildProductionMsg_(data, opts) {
       var title = String(it.basket_model_name || it.basket_model || "").trim();
       if (ops.length) m += "• Послуга: <b>" + esc_(ops.join(", ")) + "</b>\n";
       if (title && title !== ops.join("; ")) m += "• Назва: <b>" + esc_(title) + "</b>\n";
+      m += qtyDimsLines(it);
+      if (color) m += "• Колір: <b>" + color + "</b>\n";
       if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
         if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
       });
-      if (color) m += "• Колір: <b>" + color + "</b>\n";
-      if (Number(it.size_w) > 0) m += "• Розміри (мм): <b>" + it.size_w + "×" + it.size_h + "×" + it.size_d + "</b>\n";
-      m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
-      m += itemCommentLines(it);
       return;
     }
     if (it.product_type === "other") {
       if (multiBlocks) m += "\n🧱 <b>Виріб " + (i + 1) + "</b>\n";
       if (it.basket_model_name || it.basket_model) m += "• Виріб: <b>" + esc_(it.basket_model_name || it.basket_model) + "</b>\n";
+      m += qtyDimsLines(it);
+      if (color) m += "• Колір: <b>" + color + "</b>\n";
       if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
         if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
       });
-      if (color) m += "• Колір: <b>" + color + "</b>\n";
-      if (Number(it.size_w) > 0) m += "• Розміри (мм): <b>" + it.size_w + "×" + it.size_h + "×" + it.size_d + "</b>\n";
-      m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
-      m += itemCommentLines(it);
       return;
     }
     if (it.product_type === "bracket") {
@@ -2371,7 +2422,6 @@ function buildProductionMsg_(data, opts) {
       m += "• Віброподушки: <b>" + (it.vibro_pads ? "Так" : "Ні") + "</b>\n";
       if (color) m += "• Колір: <b>" + color + "</b>\n";
       m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
-      m += itemCommentLines(it);
       return;
     }
     if (multiBlocks) m += "\n🧺 <b>Кошик " + (i + 1) + "</b>\n";
@@ -2385,6 +2435,8 @@ function buildProductionMsg_(data, opts) {
       constrLine = (constrLine ? constrLine + " · " : "") + (constrLine.toUpperCase().indexOf(model.id) < 0 ? model.id + " · " : "") + model.name;
     }
     if (String(constrLine || "").trim()) m += "• Конструкція: <b>" + esc_(constrLine) + "</b>\n";
+    // Кількість і розміри — одразу під моделлю: це головне, що треба знати про виріб.
+    m += qtyDimsLines(it, true);
     if (it.has_cover) m += "• Верхня кришка: <b>Так</b>\n";
     // У цих моделей кришка типово є (AVL-06 так і зветься «…з кришкою»). Якщо клієнт її
     // прибрав — підрядник має бачити це прямо, а не здогадуватись із назви моделі.
@@ -2396,18 +2448,11 @@ function buildProductionMsg_(data, opts) {
     if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
       if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
     });
-    if (Number(it.size_w) > 0) {
-      m += "• Розміри (мм):\n   Висота — <b>" + it.size_h + "</b>\n   Ширина — <b>" + it.size_w + "</b>\n   Глибина — <b>" + it.size_d + "</b>\n";
-    } else {
-      m += "• Розміри: <i>розрахує менеджер</i>\n";
-    }
-    m += "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
-    m += itemCommentLines(it);
   });
 
   // Ціна клієнта йде у «Фінанси», а маржа до виплати — окремим блоком після них.
   var marginInfo = show.finance
-    ? marginForContractorBlock_(items, data.commission_pct)
+    ? marginForContractorBlock_(items, data.commission_pct, contractorClientPaid_(data.order_number))
     : { priceLine: "", section: "" };
   // Розділ із заголовком — лише коли в ньому є хоч один рядок. Для «порахувати
   // виробничу вартість» ні цін, ні доставки ще немає, і порожні «ФІНАНСИ» / «ДОСТАВКА»
@@ -2425,7 +2470,7 @@ function buildProductionMsg_(data, opts) {
       return label + ": " + (qty > 1 ? money2_(Math.round(line.unit * 100) / 100) + " ₴" + times + " = " : "")
         + "<b>" + money_(line.cost) + " ₴</b>\n";
     }
-    var a = String(Math.round(line.area * 1000000) / 1000000);
+    var a = String(Math.round(line.area * 1000000) / 1000000).replace(".", ",");
     return label + ": " + a + " м² × " + (perM2Bold ? "<b>" + money_(line.rate) + " ₴/м²</b>" : money_(line.rate) + " ₴/м²")
       + times + " = <b>" + money_(line.cost) + " ₴</b>\n";
   }
@@ -2440,6 +2485,19 @@ function buildProductionMsg_(data, opts) {
   }
   // Сума, вписана менеджером, може відрізнятися від розрахунку за площею — показуємо різницю,
   // щоб рядки завжди сходились із «Вартістю виробничою».
+  // Різниця з формулою більша за округлення — ціну підрядника узгоджено окремо (велике замовлення).
+  function isAgreedCost(diff, b) {
+    return Math.abs(diff) >= 1 && Math.abs(diff) > Math.max(1, b.qty, b.lines.length);
+  }
+  // «2 470 ₴ × 47 шт. = 116 090 ₴» — без розкладки формули.
+  function agreedCostText(c, it) {
+    var qty = Number(it.quantity) || 1;
+    if (qty <= 1) return "<b>" + money_(c) + " ₴</b>";
+    var unit = Math.round(c / qty * 100) / 100;
+    // Ціна за штуку з копійками не дає рівно суму (велика кількість) — без множення, щоб рядок сходився.
+    if (Math.abs(unit * qty - c) >= 0.5) return "<b>" + money_(c) + " ₴</b> (" + qty + " " + itemUnit(it) + ")";
+    return money2_(unit) + " ₴ × " + qty + " " + itemUnit(it) + " = <b>" + money_(c) + " ₴</b>";
+  }
   function adjustmentLine(prefix, diff, b) {
     if (Math.abs(diff) < 1) return "";
     // Різниця в межах копійок на рядок/штуку — це округлення, а не рішення менеджера.
@@ -2451,7 +2509,9 @@ function buildProductionMsg_(data, opts) {
     items.forEach(function (it, i) {
       var b = breakdown(it), c = Number(it.cost_total) || b.total; grand += c;
       var label = itemLabel_(it, i);
-      if (b.sum > 0) {
+      if (b.sum > 0 && isAgreedCost(c - b.sum, b)) {
+        fin += "• " + label + ": " + agreedCostText(c, it) + "\n";
+      } else if (b.sum > 0) {
         fin += costLines(b, it, "• " + label, "  ", false);
         fin += adjustmentLine("  ", c - b.sum, b);
       } else if (c > 0) {
@@ -2470,16 +2530,17 @@ function buildProductionMsg_(data, opts) {
     if (grand > 0) fin += "• <b>Разом виробнича" + (pendingCount ? " (без позицій, що уточнюються)" : "") + ": " + money_(grand) + " ₴</b>\n";
   } else {
     var it = items[0], b = breakdown(it), c = Number(it.cost_total) || b.total;
-    if (b.sum > 0) {
+    var agreed = b.sum > 0 && isAgreedCost(c - b.sum, b);
+    if (b.sum > 0 && !agreed) {
       fin += costLines(b, it, "• Кошик", "• ", true);
       fin += adjustmentLine("• ", c - b.sum, b);
     }
-    if (c > 0) fin += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
+    if (agreed) fin += "• Вартість виробнича: " + agreedCostText(c, it) + "\n";
+    else if (c > 0) fin += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
   }
   fin += marginInfo.priceLine;
-  if (data.payment_method) fin += "• Оплата: <b>" + esc_(data.payment_method) + "</b>\n";
-  if (fin) m += "\n💰 <b>ФІНАНСИ</b>\n" + fin;
-  m += marginInfo.section;
+  if (data.payment_method) fin += "• Форма оплати: <b>" + esc_(data.payment_method) + "</b>\n";
+  fin += marginInfo.section;
 
   var del = "";
   var transport = data.transport === "Інше" ? (data.transport_custom || "") : (data.transport || "");
@@ -2489,36 +2550,9 @@ function buildProductionMsg_(data, opts) {
   if (show.address && data.recipient && (data.recipient.name || data.recipient.phone)) {
     del += "• Отримувач: <b>" + esc_([data.recipient.name, data.recipient.phone].filter(Boolean).join(", ")) + "</b>\n";
   }
-  if (data.delivery_date) del += "• Дата: <b>" + fmtDate_(data.delivery_date) + "</b>\n";
-  if (show.notes && data.notes) {
-    // Рядки про довжину/віброподушки вже показані у кожній позиції окремо — у злитих
-    // примітках вони лише дублюються (а в багатопозиційних могли б і заплутати).
-    // Контакти (Telegram / E-mail / Viber / WhatsApp) форма теж дописує в примітки —
-    // їх прибираємо завжди: підрядник бачить їх лише в «Замовнику», якщо дозволено.
-    // Коментарі позицій уже стоять у їхніх блоках. Стара форма дописувала їх ще й у загальні
-    // примітки («AVL-05: текст») — такі рядки з хвоста прибираємо, щоб підрядник не відніс
-    // їх до всього замовлення. Так само — дубль посилання на кондиціонер із кодом моделі.
-    var itemCommentLines_ = {};
-    items.forEach(function (it) {
-      String((it && (it.comment || it.item_comment || it.model_comment)) || "").split(/\n+/).forEach(function (line) {
-        var key = String(line || "").trim().toLowerCase();
-        if (key) itemCommentLines_[key] = true;
-      });
-    });
-    var noteLines = String(data.notes).split(/\n+/).filter(function (line) {
-      var t = String(line || "").trim();
-      if (!t || /^(Довжина кронштейнів|Віброподушки|Telegram|E-mail|Viber|WhatsApp)\s*:/i.test(t)) return false;
-      if (itemCommentLines_[t.toLowerCase()]) return false;
-      var prefixed = t.match(/^AVL-[\w\/-]+:\s*(.+)$/i);
-      if (prefixed && (itemCommentLines_[prefixed[1].trim().toLowerCase()] || /^посилання на кондиціонер\s/i.test(prefixed[1]))) return false;
-      return true;
-    });
-    if (noteLines.length) {
-      del += "• Додаткова інформація:\n";
-      noteLines.forEach(function (line) { del += "  " + esc_(line) + "\n"; });
-    }
-  }
   if (del) m += "\n🚚 <b>ДОСТАВКА</b>\n" + del;
+  m += whoBlock;
+  if (fin) m += "\n💰 <b>ГРОШІ</b>\n" + fin;
 
   // Джерело заявки підряднику не потрібне — воно лишається в CRM і в повідомленні власнику.
   return m;

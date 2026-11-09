@@ -43,8 +43,8 @@ function testRemovableSidePanelMessage() {
     }],
   });
   const fmt = (v) => Number(v).toLocaleString("uk-UA");
-  assert.ok(msg.includes("0.99 м² × <b>" + fmt(2030) + " ₴/м²</b> × 2 шт. = <b>" + fmt(4019) + " ₴</b>"), "кількість у формулі кошика");
-  assert.ok(msg.includes("Знімна бічна панель: 0.275 м² × <b>" + fmt(2030) + " ₴/м²</b> × 2 шт. = <b>" + fmt(1117) + " ₴</b>"), "окремий рядок знімної панелі");
+  assert.ok(msg.includes("0,99 м² × <b>" + fmt(2030) + " ₴/м²</b> × 2 шт. = <b>" + fmt(4019) + " ₴</b>"), "кількість у формулі кошика");
+  assert.ok(msg.includes("Знімна бічна панель: 0,275 м² × <b>" + fmt(2030) + " ₴/м²</b> × 2 шт. = <b>" + fmt(1117) + " ₴</b>"), "окремий рядок знімної панелі");
   assert.ok(msg.includes("Вартість виробнича: <b>" + fmt(5136) + " ₴</b>"), "4 019 + 1 117 = 5 136");
 
   const plain = handler.formatTelegramMessage({
@@ -81,8 +81,8 @@ function testPartialTotalsAndColorFee() {
     basket({ color: "RAL 3000" }),
   ] });
   [
-    "• Кошик 1: 0.9 м² × 2 030 ₴/м² × 2 шт. = 3 654 ₴",
-    "• Кошик 4: 0.9 м² × 2 030 ₴/м² = 1 827 ₴",
+    "• Кошик 1: 0,9 м² × 2 030 ₴/м² × 2 шт. = 3 654 ₴",
+    "• Кошик 4: 0,9 м² × 2 030 ₴/м² = 1 827 ₴",
     "• Доплата за небазовий колір (на замовлення): 200 ₴",
     "• Кошик 2: індивідуальний прорахунок",
     "• Кронштейни 3: індивідуальний прорахунок",
@@ -214,10 +214,10 @@ function testMessageUsesOrderRates() {
   // Числа в сповіщенні — з нерозривними пробілами («2 030»): для звірки робимо їх звичайними.
   const text = (rates) => handler.formatTelegramMessage(order, rates).replace(/<[^>]+>/g, "").replace(/[\u00a0\u202f]/g, " ");
   const base = text(null);
-  assert.ok(base.includes("0.9 м² × 2 030 ₴/м² = 1 827 ₴"), base);
+  assert.ok(base.includes("0,9 м² × 2 030 ₴/м² = 1 827 ₴"), base);
   assert.ok(base.includes("Доплата за небазовий колір (на замовлення): 200 ₴"), base);
   const changed = text({ solidRate: 2233, colorSurcharge: 250 });
-  assert.ok(changed.includes("0.9 м² × 2 233 ₴/м² = 2 010 ₴"), changed);
+  assert.ok(changed.includes("0,9 м² × 2 233 ₴/м² = 2 010 ₴"), changed);
   assert.ok(changed.includes("Доплата за небазовий колір (на замовлення): 250 ₴"), changed);
 }
 

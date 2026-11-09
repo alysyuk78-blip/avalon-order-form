@@ -52,7 +52,7 @@ function productionBreakdown(it, rates) {
   };
 }
 
-// «0.99 м² × 2 030 ₴/м² × 2 шт. = 4 019 ₴»: кількість у формулі, площа з повною точністю
+// «0,99 м² × 2 030 ₴/м² × 2 шт. = 4 019 ₴»: кількість у формулі, площа з повною точністю
 // (мм → до 6 знаків), щоб показані множники давали показану суму.
 function costLine(label, line, qty, bold) {
   const money = (v) => Number(v || 0).toLocaleString("uk-UA");
@@ -61,7 +61,7 @@ function costLine(label, line, qty, bold) {
     // Сума за одиницю: кронштейни, система кріплення, доплата за матеріал.
     return `${label}: ${qty > 1 ? `${money(Math.round(line.unit * 100) / 100)} ₴${times} = ` : ""}<b>${money(line.cost)} ₴</b>\n`;
   }
-  const a = String(Math.round(line.area * 1_000_000) / 1_000_000);
+  const a = String(Math.round(line.area * 1_000_000) / 1_000_000).replace(".", ",");
   const r = `${money(line.rate)} ₴/м²`;
   return `${label}: ${a} м² × ${bold ? `<b>${r}</b>` : r}${times} = <b>${money(line.cost)} ₴</b>\n`;
 }
@@ -265,7 +265,7 @@ function formatTelegramMessage(order, rates) {
     if (grandCost > 0) msg += `• Вартість виробнича: <b>${num(grandCost)} ₴</b>\n`;
   }
   if (grandCost === 0) msg += `• <i>Потрібен індивідуальний прорахунок менеджера</i>\n`;
-  if (order.payment_method) msg += `• Оплата: <b>${e(order.payment_method)}</b>\n`;
+  if (order.payment_method) msg += `• Форма оплати: <b>${e(order.payment_method)}</b>\n`;
 
   // ── ДОСТАВКА ──
   msg += `\n🚚 <b>ДОСТАВКА</b>\n`;

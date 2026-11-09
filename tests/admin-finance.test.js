@@ -103,13 +103,30 @@ function testContractorMessageShowsMarginToPay() {
   const tov = plain({ commission_pct: 30, payment_method: "На рахунок ТОВ",
     items: [other({ cost_total: 9650, revenue: 13790, profit: 4140, commission: 1242 })] });
   assert.ok(tov.includes("Ціна для клієнта: 13 790 ₴"));
-  assert.ok(tov.includes("Маржа: 13 790 − 9 650 = 4 140 ₴"), "маржа показана разом з арифметикою");
+  assert.ok(tov.includes("Маржа Avalon: 13 790 − 9 650 = 4 140 ₴"), "маржа показана разом з арифметикою");
   assert.ok(tov.includes("Комісія (30% від маржі): − 1 242 ₴"));
   assert.ok(tov.includes("До виплати Avalon: 2 898 ₴"));
   assert.ok(tov.includes("після повної оплати клієнтом"));
+  {
+    // Клієнт уже сплатив усе — «до виплати зараз», а не «після повної оплати».
+    const its = [other({ cost_total: 9650, revenue: 13790, profit: 4140 })];
+    const ctxPaid = loadAppsScript();
+    assert.ok(ctxPaid.marginForContractorBlock_(its, 0, { client: 13790, owner: 0 }).section.includes("клієнт оплатив повністю — до виплати зараз"));
+    assert.ok(ctxPaid.marginForContractorBlock_(its, 0, { client: 5000, owner: 0 }).section.includes("після повної оплати клієнтом"));
+    // Гроші (чи частину) отримав власник — маржа вже в нього, «до виплати зараз» не пишемо.
+    assert.ok(ctxPaid.marginForContractorBlock_(its, 0, { client: 13790, owner: 13790 }).section.includes("після повної оплати клієнтом"));
+    assert.ok(!ctxPaid.marginForContractorBlock_(its, 0, { client: 13790, owner: 3000 }).section.includes("до виплати зараз"));
+    // Частину позицій ще не оцінено — «повністю» не пишемо.
+    assert.ok(!ctxPaid.marginForContractorBlock_(its.concat([other({ cost_total: 0, revenue: 0, profit: 0 })]), 0, { client: 13790, owner: 0 }).section.includes("до виплати зараз"));
+    assert.ok(!ctxPaid.marginForContractorBlock_(its, 0, null).section.includes("до виплати зараз"), "журналу немає — як раніше");
+    assert.equal(ctxPaid.contractorClientPaid_(""), null, "без номера — null, без помилки");
+  }
   assert.equal(tov.split("Вартість виробнича").length - 1, 1, "собівартість не дублюється");
-  assert.ok(tov.indexOf("Оплата: На рахунок ТОВ") < tov.indexOf("МАРЖА AVALON"),
-    "спосіб оплати — у фінансах, а не всередині блоку маржі");
+  assert.ok(tov.includes("Форма оплати: На рахунок ТОВ"), "це форма оплати замовлення, а не доставки");
+  // Блок «ГРОШІ» (рішення власника 09.11.2026): вартість → ціна → форма оплати → маржа → до виплати, і він — останній.
+  const order = ["ГРОШІ", "Вартість виробнича", "Ціна для клієнта", "Форма оплати: На рахунок ТОВ", "Маржа Avalon:", "До виплати Avalon"].map((x) => tov.indexOf(x));
+  assert.ok(order.every((x, k) => x >= 0 && (k === 0 || x > order[k - 1])), "порядок у «Гроші»: " + order + "\n" + tov);
+  assert.ok(!tov.includes("ФІНАНСИ") && !tov.includes("МАРЖА AVALON"), "старі окремі блоки злито в «Гроші»");
 
   // Половина гривні: рядки мають сходитися до копійки.
   const half = plain({ commission_pct: 30,
@@ -124,7 +141,7 @@ function testContractorMessageShowsMarginToPay() {
 
   // Ціну ще не погоджено — блоку маржі немає.
   const noPrice = plain({ items: [other({ cost_total: 0, revenue: 0, profit: 0, commission: 0 })] });
-  assert.ok(!noPrice.includes("МАРЖА AVALON"));
+  assert.ok(!noPrice.includes("Маржа Avalon"));
 
   // Збиткова угода: виплати немає.
   const loss = plain({ commission_pct: 30,
@@ -166,9 +183,9 @@ function testProductionMessageSkipsBasketRateForOtherProducts() {
       size_w: 1000, size_h: 500, size_d: 300, quantity: 2, unit: "шт.",
     }],
   }));
-  assert.ok(/Кошик: 0\.8 м² × <b>2 030 ₴\/м²<\/b> × 2 шт\. = <b>3 248 ₴<\/b>/.test(basket),
+  assert.ok(/Кошик: 0,8 м² × <b>2 030 ₴\/м²<\/b> × 2 шт\. = <b>3 248 ₴<\/b>/.test(basket),
     "кошик має лишитись із розкладкою по м², з кількістю у формулі");
-  assert.ok(/Верхня кришка: 0\.3 м² × <b>1 920 ₴\/м²<\/b> × 2 шт\./.test(basket));
+  assert.ok(/Верхня кришка: 0,3 м² × <b>1 920 ₴\/м²<\/b> × 2 шт\./.test(basket));
   assert.ok(!/Знімна бічна панель/.test(basket), "AVL-01 — без знімної панелі");
 }
 
@@ -309,24 +326,58 @@ function testRemovableSidePanelPricing() {
     items: [{ product_type: "basket", construction_type: "Суцільний · AVL-04", basket_model_name: "Зі знімною боковиною",
       size_w: 800, size_h: 550, size_d: 500, quantity: 2, unit: "шт.", cost_total: 5136 }],
   }, { finance: true });
-  assert.ok(msg.includes("• Кошик: 0.99 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>4 019 ₴</b>"));
-  assert.ok(msg.includes("• Знімна бічна панель: 0.275 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>1 117 ₴</b>"));
+  assert.ok(msg.includes("• Кошик: 0,99 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>4 019 ₴</b>"));
+  assert.ok(msg.includes("• Знімна бічна панель: 0,275 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>1 117 ₴</b>"));
   assert.ok(msg.includes("• Вартість виробнича: <b>5 136 ₴</b>"));
   assert.ok(!msg.includes("Коригування"), "рядки сходяться — без коригування");
 
-  // Менеджер вписав іншу суму — різниця видна окремим рядком.
+  // Ціну підрядника узгоджено окремо (велике замовлення) — без розкладки формули й «Коригування»:
+  // лише «за штуку × кількість = разом» (рішення власника 09.11.2026).
   const edited = ctx.buildProductionMsg_({
     order_number: "X",
     items: [{ product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 2, unit: "шт.", cost_total: 4500 }],
   }, { finance: true });
-  assert.ok(edited.includes("• Коригування менеджера: <b>+481 ₴</b>"), "4 019 + 481 = 4 500");
+  assert.ok(edited.includes("• Вартість виробнича: 2 250 ₴ × 2 шт. = <b>4 500 ₴</b>"), edited);
+  assert.ok(!edited.includes("Коригування") && !edited.includes("м² ×"), "без формули й коригування");
+  // Велика кількість, сума не ділиться без залишку — без множення, щоб рядок сходився.
+  const big = ctx.buildProductionMsg_({ order_number: "X",
+    items: [{ product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 400, unit: "шт.", cost_total: 1000001 }],
+  }, { finance: true });
+  assert.ok(big.includes("• Вартість виробнича: <b>1 000 001 ₴</b> (400 шт.)"), big);
+  // Кілька позицій: узгоджена — одним рядком, формульна — з розкладкою.
+  const mixed = ctx.buildProductionMsg_({
+    order_number: "X",
+    items: [
+      { product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 2, unit: "шт.", cost_total: 4500 },
+      { product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 550, size_d: 500, quantity: 2, unit: "шт.", cost_total: 4019 },
+    ],
+  }, { finance: true });
+  assert.ok(/• [^\n]*: 2 250 ₴ × 2 шт\. = <b>4 500 ₴<\/b>/.test(mixed), mixed);
+  assert.ok(/0,99 м² × 2 030 ₴\/м² × 2 шт\. = <b>4 019 ₴<\/b>/.test(mixed), mixed);
+  assert.ok(!mixed.includes("Коригування"));
+
+  // Порядок блоків повідомлення (рішення власника 09.11.2026): від головного до довідкового.
+  const ordered = ctx.buildProductionMsg_({
+    order_number: "ORD-261026-010", first_name: "Букатюк В.В.", phone: "+380680265430", city: "Київ", payment_method: "На рахунок ФО-П",
+    transport: "Нова пошта", delivery_address: "м. Київ, відділення №200", delivery_date: "2026-11-20",
+    recipient: { name: "Панчук О.В.", phone: "0680265430" }, notes: "❓ Які терміни виконання?",
+    items: [{ product_type: "basket", construction_type: "Розбірна · AVL-02", basket_model_name: "Екран під утеплювач", color: "Білий RAL (9016)", pattern: "K1",
+      size_w: 850, size_h: 600, size_d: 75, quantity: 47, unit: "шт.", cost_total: 116090, revenue: 144525, profit: 28435,
+      specs: "Система кріплення: 2 кронштейни + 2 перемички", item_comment: "Перед виробництвом надішліть модель на погодження" }],
+  }, {}).replace(/<[^>]+>/g, "");
+  const at = ["📅 Дата доставки: 20.11.2026", "⚠️ ВАЖЛИВО", "Перед виробництвом надішліть", "📝 ПРИМІТКИ", "Які терміни", "🏭 ЩО ВИГОТОВИТИ",
+    "• Кількість: 47 шт.", "• Розміри: ширина 850 × висота 600 × глибина 75 мм", "• Колір:", "Система кріплення", "🚚 ДОСТАВКА", "Отримувач: Панчук",
+    "👤 ЗАМОВНИК", "Букатюк", "💰 ГРОШІ", "2 470 ₴ × 47 шт. = 116 090 ₴", "До виплати Avalon"].map((x) => ordered.indexOf(x));
+  assert.ok(at.every((x, k) => x >= 0 && (k === 0 || x > at[k - 1])), "порядок блоків: " + at + "\n" + ordered);
+  assert.equal(ordered.split("20.11.2026").length - 1, 1, "дата доставки — лише в шапці");
+  assert.ok(!ordered.includes("Додаткова інформація") && !ordered.includes("❗ Коментар"), "старі підписи прибрано");
 
   // Площа з повною точністю: показані множники дають показану суму (810×550×500).
   const precise = ctx.buildProductionMsg_({
     order_number: "X",
     items: [{ product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 810, size_h: 550, size_d: 500, quantity: 2, unit: "шт." }],
   }, { finance: true });
-  assert.ok(precise.includes("• Кошик: 0.9955 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>4 042 ₴</b>"), "0,9955 × 2 030 × 2 = 4 041,73 → 4 042");
+  assert.ok(precise.includes("• Кошик: 0,9955 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>4 042 ₴</b>"), "0,9955 × 2 030 × 2 = 4 041,73 → 4 042");
   assert.ok(!precise.includes("округленими"), "розміри вже кратні 10 мм — примітки немає");
 
   // Розмір не кратний 10 мм: площа — за округленим угору, і це видно в повідомленні.
@@ -334,7 +385,7 @@ function testRemovableSidePanelPricing() {
     order_number: "X",
     items: [{ product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 805, size_h: 550, size_d: 500, quantity: 2, unit: "шт." }],
   }, { finance: true });
-  assert.ok(rounded.includes("• Кошик: 0.9955 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>4 042 ₴</b>"));
+  assert.ok(rounded.includes("• Кошик: 0,9955 м² × <b>2 030 ₴/м²</b> × 2 шт. = <b>4 042 ₴</b>"));
   assert.ok(rounded.includes("• Площа — за розмірами, округленими до 10 мм: 550×810×500 мм"));
 
   // Антивандальний: розкладки за площею немає — лише собівартість, яку вписав менеджер.
@@ -361,13 +412,13 @@ function testRemovableSidePanelPricing() {
     ],
   }, { finance: true }).replace(/<[^>]+>/g, "");
   [
-    "• Кошик 1: 0.9 м² × 2 030 ₴/м² × 2 шт. = 3 654 ₴",
-    "  Знімна бічна панель: 0.25 м² × 2 030 ₴/м² × 2 шт. = 1 015 ₴",
-    "  Верхня кришка (перфорована): 0.4 м² × 2 030 ₴/м² × 2 шт. = 1 624 ₴",
-    "  Нижня кришка: 0.4 м² × 1 920 ₴/м² × 2 шт. = 1 536 ₴",
+    "• Кошик 1: 0,9 м² × 2 030 ₴/м² × 2 шт. = 3 654 ₴",
+    "  Знімна бічна панель: 0,25 м² × 2 030 ₴/м² × 2 шт. = 1 015 ₴",
+    "  Верхня кришка (перфорована): 0,4 м² × 2 030 ₴/м² × 2 шт. = 1 624 ₴",
+    "  Нижня кришка: 0,4 м² × 1 920 ₴/м² × 2 шт. = 1 536 ₴",
     "  Кронштейни: 669,77 ₴ × 2 шт. = 1 340 ₴",
     "  Оцинкований метал: 1 400 ₴ × 2 шт. = 2 800 ₴",
-    "• Кошик 2: 0.54 м² × 2 030 ₴/м² = 1 096 ₴",
+    "• Кошик 2: 0,54 м² × 2 030 ₴/м² = 1 096 ₴",
     "  Система кріплення: 1 700 ₴",
     "• Разом виробнича: 14 765 ₴",
   ].forEach((line) => assert.ok(full.includes(line), line + "\n---\n" + full));

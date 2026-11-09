@@ -136,7 +136,7 @@ function testMessageOptions() {
 
   const noFinance = plain({ finance: false });
   assert.ok(!noFinance.includes("Ціна для клієнта"), "ціну клієнта можна сховати");
-  assert.ok(!noFinance.includes("МАРЖА AVALON"), "розрахунок маржі ховається разом із ціною");
+  assert.ok(!noFinance.includes("Маржа Avalon"), "розрахунок маржі ховається разом із ціною");
   assert.ok(noFinance.includes("Вартість виробнича"));
 
   const noDelivery = plain({ address: false, notes: false });
@@ -643,7 +643,7 @@ function testProcessingPreviewSections() {
   }).text;
   assert.ok(proc.startsWith("🧮 <b>НА ОПРАЦЮВАННЯ</b>"), "перегляд на опрацювання — не «У виробництво»");
   assert.ok(proc.includes("Порахувати виробничу вартість") && proc.includes("до 18.09.2026"));
-  assert.ok(!proc.includes("ФІНАНСИ"), "порожній розділ фінансів не показуємо");
+  assert.ok(!proc.includes("ГРОШІ"), "порожній розділ грошей не показуємо");
   assert.ok(!proc.includes("ДОСТАВКА"), "порожній розділ доставки не показуємо");
 
   // Кілька завдань — окремими рядками, щоб підрядник нічого не пропустив.
@@ -678,7 +678,7 @@ function testProcessingPreviewSections() {
   const ctx2 = processingContext(full, props, makeCalendar(), []);
   const prod = ctx2.adminContractorPreview_({ order_number: ORD, options: { finance: true } }).text;
   assert.ok(prod.startsWith("🏭 <b>У ВИРОБНИЦТВО</b>"));
-  assert.ok(prod.includes("💰 <b>ФІНАНСИ</b>") && prod.includes("9 650"), "собівартість — у фінансах");
+  assert.ok(prod.includes("💰 <b>ГРОШІ</b>") && prod.includes("9 650"), "собівартість — у «Гроші»");
   assert.ok(prod.includes("🚚 <b>ДОСТАВКА</b>") && prod.includes("Нова пошта") && prod.includes("25.09.2026"));
 }
 
@@ -820,7 +820,7 @@ function testServiceKind() {
   const pctx = processingContext(makeSheet([row]), makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" }), makeCalendar(), []);
   const text = pctx.adminContractorPreview_({ order_number: ORD, options: { finance: true } }).text;
   assert.ok(text.includes("🛠 <b>ПОСЛУГИ</b>"), "лише послуги — заголовок «ПОСЛУГИ»");
-  assert.ok(!text.includes("🏭 <b>ВИРОБНИЦТВО</b>"));
+  assert.ok(!text.includes("🏭 <b>ЩО ВИГОТОВИТИ</b>"));
   assert.ok(text.includes("• Послуга: <b>Порошкове фарбування, Гнуття металу</b>"));
   assert.ok(text.includes("• Назва: <b>Фарбування кришки</b>"));
   assert.ok(text.includes("• Ширина кришки 450 мм") && text.includes("• Колір: <b>золото/чорний</b>"));
@@ -1018,13 +1018,16 @@ function testItemComments() {
   ]);
   const ctx = processingContext(sheet, props, makeCalendar(), []);
   const text = ctx.adminContractorPreview_({ order_number: ORD, options: { notes: true } }).text;
-  const block = (n) => text.split("<b>Кошик " + n + "</b>")[1].split(n < 3 ? "<b>Кошик " + (n + 1) + "</b>" : "ФІНАНСИ")[0];
-  assert.ok(block(1).includes("❗ Коментар: <b>Кріплення до стіни: по 3 вуха на сторону</b>"), "коментар позиції 1 — у її блоці");
-  assert.ok(block(2).includes("❗ Коментар: <b>Без вух, на анкери</b>"), "старий «Коментар до моделі» теж у блоці своєї позиції");
-  assert.ok(!block(3).includes("Коментар"), "позиція без коментаря — без рядка");
-  const tail = text.split("ДОСТАВКА")[1] || "";
-  assert.ok(tail.includes(common), "спільна примітка лишається наприкінці");
-  assert.ok(!tail.includes("анкери") && !tail.includes("Коментар до моделі"), "коментар позиції не дублюється наприкінці для всіх");
+  // Коментарі позицій — угорі, у «ВАЖЛИВО», з назвою своєї позиції (рішення власника 09.11.2026).
+  const important = (text.split("⚠️ <b>ВАЖЛИВО</b>")[1] || "").split("\n\n")[0];
+  assert.ok(important.includes("• Кошик 1: <b>Кріплення до стіни: по 3 вуха на сторону</b>"), "коментар позиції 1 — з її назвою: " + important);
+  assert.ok(important.includes("• Кошик 2: <b>Без вух, на анкери</b>"), "старий «Коментар до моделі» — з назвою своєї позиції");
+  assert.ok(!important.includes("Кошик 3"), "позиція без коментаря — без рядка");
+  assert.ok(text.indexOf("ВАЖЛИВО") < text.indexOf("ЩО ВИГОТОВИТИ"), "важливе — перед виробом");
+  const notes = (text.split("📝 <b>ПРИМІТКИ</b>")[1] || "").split("\n\n")[0];
+  assert.ok(notes.includes(common), "спільна примітка — у «Примітках»");
+  assert.ok(!notes.includes("анкери") && !notes.includes("Коментар до моделі"), "коментар позиції не дублюється в примітках для всіх");
+  assert.ok(!(text.split("ЩО ВИГОТОВИТИ")[1] || "").includes("анкери"), "і не дублюється в блоці виробу");
 
   // CRM бачить коментар позиції і може його змінити/очистити.
   assert.equal(ctx.mapOrderRow_(3, sheet.data[2]).item_comment, "Без вух, на анкери");
@@ -1320,7 +1323,7 @@ function testColorSurchargeInSheet() {
   ] }, { finance: true }).replace(/<[^>]+>/g, "");
   assert.ok(!msg.includes("Послуга"), msg);
   assert.ok(!msg.includes("Кошик 1"), "єдиний кошик — без номера");
-  assert.ok(msg.includes("• Кошик: 0.9 м² × 2 030 ₴/м² = 1 827 ₴"));
+  assert.ok(msg.includes("• Кошик: 0,9 м² × 2 030 ₴/м² = 1 827 ₴"));
   assert.ok(msg.includes("• Доплата за колір (небазовий, на замовлення): 200 ₴"));
   assert.ok(msg.includes("• Разом виробнича: 2 027 ₴"));
 }
@@ -1557,13 +1560,13 @@ function testAuditFixes() {
       { product_type: "service", basket_model_name: "Монтаж", basket_type: "Монтаж", quantity: 1, unit: "шт.", cost_total: 1500, revenue: 1500, profit: 0 },
     ] }, { finance: true, notes: true }).replace(/<[^>]+>/g, "");
   [
-    "• Кошик 1: 0.9 м² × 2 030 ₴/м² = 1 827 ₴",
+    "• Кошик 1: 0,9 м² × 2 030 ₴/м² = 1 827 ₴",
     "• Послуга 3 · Монтаж: 1 500 ₴",
     "• Кошик 2: вартість уточнюється",
     "• Разом виробнича (без позицій, що уточнюються): 3 327 ₴",
     "• Ціна для клієнта (без позицій, ціну яких ще не визначено): 3 966 ₴",
   ].forEach((line) => assert.ok(msg.includes(line), line + "\n---\n" + msg));
-  const tail = msg.slice(msg.indexOf("Додаткова інформація"));
+  const tail = (msg.split("📝 ПРИМІТКИ")[1] || "").split("\n\n")[0];
   assert.ok(tail.includes("Подзвонити після 18"));
   assert.ok(!tail.includes("По 3 вуха") && !tail.includes("посилання на кондиціонер") && !tail.includes("@irka"), tail);
   // Усе пораховано — жодних «уточнюється» і приміток про неповноту.
@@ -1578,7 +1581,7 @@ function testAuditFixes() {
     { product_type: "basket", basket_type: "Антивандальний", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 500, size_d: 500, quantity: 1, unit: "шт." },
     { product_type: "bracket", basket_model_name: "AVL-K-01", quantity: 1, unit: "комп." },
   ] }, { finance: true });
-  assert.ok(!fresh.includes("ФІНАНСИ"), "порожні «Фінанси» не друкуємо");
+  assert.ok(!fresh.includes("ГРОШІ"), "порожні «Гроші» не друкуємо");
 
   // 4. Правка прямо в таблиці: вставлений діапазон, що зачепив розміри, перераховує рядки —
   //    навіть коли починається з колонки «Тип».
@@ -1717,7 +1720,7 @@ function testAuditFixes() {
   const lamMsg = pm.buildProductionMsg_({ order_number: ORD, items: [
     { product_type: "basket", construction_type: "Суцільний · AVL-06 + кришка", basket_model: "AVL-06", pattern: "Інший", size_w: 800, size_h: 600, size_d: 500, quantity: 2, unit: "шт.", cost_total: 6233, revenue: 8414, profit: 2181 },
   ] }, { finance: true }).replace(/<[^>]+>/g, "").replace(/\u00a0/g, " ");
-  ["1.08 м² × 2 030 ₴/м² × 2 шт. = 4 385 ₴", "Візерунок «Інший», надбавка: 0.6 м² × 100 ₴/м² × 2 шт. = 120 ₴", "Гнуття ламелей (8 шт × 12 ₴): 96 ₴ × 2 шт. = 192 ₴"]
+  ["1,08 м² × 2 030 ₴/м² × 2 шт. = 4 385 ₴", "Візерунок «Інший», надбавка: 0,6 м² × 100 ₴/м² × 2 шт. = 120 ₴", "Гнуття ламелей (8 шт × 12 ₴): 96 ₴ × 2 шт. = 192 ₴"]
     .forEach((line) => assert.ok(lamMsg.includes(line), line + "\n---\n" + lamMsg));
   assert.ok(!lamMsg.includes("БЕЗ кришки"), "кришка є (записана в конструкції)");
   // Кришку з AVL-06 прибрали — підрядник бачить це прямо (модель зветься «…з кришкою»).
@@ -1915,8 +1918,8 @@ function testContractorRates() {
   const line = (num, cost) => t.ctx.buildProductionMsg_({ order_number: num, created_at: "07.10.2026 10:00", items: [
     { product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 500, size_d: 500, quantity: 1, unit: "шт.", cost_total: cost },
   ] }, { finance: true }).replace(/<[^>]+>/g, "");
-  assert.ok(line(OLD, 1827).includes("0.9 м² × 2 030 ₴/м²"), line(OLD, 1827));
-  assert.ok(line(LEAD, 2010).includes("0.9 м² × 2 233 ₴/м²"), line(LEAD, 2010));
+  assert.ok(line(OLD, 1827).includes("0,9 м² × 2 030 ₴/м²"), line(OLD, 1827));
+  assert.ok(line(LEAD, 2010).includes("0,9 м² × 2 233 ₴/м²"), line(LEAD, 2010));
 
   // 7. «Перерахувати за чинними ставками»: формульні позиції — за новими, знижка % лишається,
   //    ціна, вписана менеджером, не змінюється; «чиста» доплата за колір отримує нову суму.
