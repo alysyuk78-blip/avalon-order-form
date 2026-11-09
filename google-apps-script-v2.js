@@ -2158,7 +2158,11 @@ function buildOrderFromRows_(sh, orderNumber) {
       };
     }
     // AY: отримувач посилки, якщо це не замовник (для ТТН) — з першого рядка, де він записаний.
-    if (!order.recipient && ncol >= PARTIES_COL) order.recipient = parseJsonCell_(r[PARTIES_COL - 1]).recipient || null;
+    if (ncol >= PARTIES_COL) {
+      var partiesRow = parseJsonCell_(r[PARTIES_COL - 1]);
+      if (!order.recipient) order.recipient = partiesRow.recipient || null;
+      if (!order.delivery_pay && partiesRow.delivery_pay) order.delivery_pay = partiesRow.delivery_pay;
+    }
     String(r[31] || "").split(/\n+/).forEach(function (line) {
       line = String(line || "").trim();
       // «Коментар до моделі: …» стосується однієї позиції — він іде в її блок (comment),
@@ -2630,6 +2634,7 @@ function buildProductionMsg_(data, opts) {
   if (transport) del += "• Спосіб: <b>" + esc_(transport) + "</b>\n";
   if (show.address && data.delivery_address) del += "• Адреса: " + esc_(data.delivery_address) + "\n";
   // Отримувач — інша людина, ніж замовник: підряднику для ТТН (разом з адресою — ті самі пташки).
+  if (DELIVERY_PAY_LABELS[data.delivery_pay]) del += "• Оплата доставки: <b>" + DELIVERY_PAY_LABELS[data.delivery_pay] + "</b>\n";
   if (show.address && data.recipient && (data.recipient.name || data.recipient.phone)) {
     del += "• Отримувач: <b>" + esc_([data.recipient.name, data.recipient.phone].filter(Boolean).join(", ")) + "</b>\n";
   }
@@ -5921,8 +5926,11 @@ function cleanParties_(src) {
       iban: person ? "" : txt(py.iban, 40), bank: person ? "" : txt(py.bank), address: person ? "" : txt(py.address, 300),
       phone: txt(py.phone, 40), email: txt(py.email, 120) };
   }
+  // Хто платить за доставку (Нова пошта питає при оформленні накладної): отримувач чи відправник.
+  if (DELIVERY_PAY_LABELS[p.delivery_pay]) out.delivery_pay = p.delivery_pay;
   return out;
 }
+var DELIVERY_PAY_LABELS = { recipient: "отримувач", sender: "відправник (ми)" };
 
 function mapOrderRow_(rowIndex, v) {
   var notes = String(v[31] || "");
@@ -6784,8 +6792,13 @@ function adminUpdateOrder_(data) {
     notifyOwnerPaymentChange_(sh, row, 34, mp);
   }
   // Отримувач і платник — спільні для замовлення: у всі його рядки.
-  if (patch.parties != null) {
-    var partiesCell = cleanParties_(patch.parties);
+  if (patch.parties != null || patch.delivery_pay != null) {
+    // Обидві правки живуть в одній клітинці AY: кожна змінює лише своє, решту беремо з таблиці.
+    var partiesNow = parseJsonCellStrict_(orderSharedCell_(sh, targetRows, PARTIES_COL), "Отримувач і платник");
+    var partiesSrc = patch.parties != null ? Object.assign({}, patch.parties) : { recipient: partiesNow.recipient, payer: partiesNow.payer };
+    if (patch.delivery_pay != null) partiesSrc.delivery_pay = String(patch.delivery_pay);
+    else if (!("delivery_pay" in partiesSrc)) partiesSrc.delivery_pay = partiesNow.delivery_pay;
+    var partiesCell = cleanParties_(partiesSrc);
     var partiesText = Object.keys(partiesCell).length ? JSON.stringify(partiesCell) : "";
     targetRows.forEach(function (r) { sh.getRange(r, PARTIES_COL).setValue(partiesText); });
   }
