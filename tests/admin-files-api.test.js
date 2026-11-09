@@ -93,7 +93,7 @@ async function run() {
     body: { expect: { basket_model: "Зі знімною боковиною", quantity: 2, hack: "x", construction: { evil: 1 } } } });
   assert.deepEqual(calls.pop().payload, { order_number: ORD, row: 3, expect: { basket_model: "Зі знімною боковиною", quantity: 2 } });
   o = await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { color: "Чорний" }, expect: { product_kind: "Кошик" } } });
-  assert.deepEqual(calls.pop(), { action: "update_order", payload: { order_number: ORD, row: 4, patch: { color: "Чорний" }, expect: { product_kind: "Кошик" } } });
+  assert.deepEqual(calls.pop(), { action: "update_order", payload: { order_number: ORD, row: 4, patch: { color: "Чорний" }, actor: "owner", expect: { product_kind: "Кошик" } } });
 
   // Додати позицію з калькулятора: лише відомі поля, числа невідʼємні, request_id проти дубля.
   o = await call(order, { method: "POST", body: {
@@ -290,7 +290,7 @@ async function run() {
   assert.equal(r.statusCode, 405);
   // Якими ставками клієнт порахував суми — доходить до Apps Script лише датою або "" (до першої зміни).
   await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { revenue: 2713 }, priced_with_rates: "2026-11-01" } });
-  assert.deepEqual(calls.pop().payload, { order_number: ORD, row: 4, patch: { revenue: 2713 }, priced_with_rates: "2026-11-01" });
+  assert.deepEqual(calls.pop().payload, { order_number: ORD, row: 4, patch: { revenue: 2713 }, actor: "owner", priced_with_rates: "2026-11-01" });
   await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { revenue: 2466 }, priced_with_rates: "" } });
   assert.equal(calls.pop().payload.priced_with_rates, "");
   await call(order, { method: "PATCH", body: { order_number: ORD, row: 4, patch: { revenue: 2466 }, priced_with_rates: "вчора" } });
