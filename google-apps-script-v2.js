@@ -2264,6 +2264,31 @@ function contractorClientPaid_(num) {
   } catch (e) { return null; }
 }
 
+/**
+ * Клієнт у формі пише отримувача вільним текстом: «Отримувач:\nПанчук Олег Володимирович\n0680265430».
+ * Витягуємо імʼя й телефон (він іде в «Доставку»), решту приміток повертаємо без цього блоку.
+ */
+function extractRecipientFromNotes_(notes) {
+  var lines = String(notes || "").split(/\n/);
+  for (var i = 0; i < lines.length; i++) {
+    var m = String(lines[i]).trim().match(/^(?:Отримувач|Одержувач)\s*:?\s*(.*)$/i);
+    if (!m || (m[1] && !/^[A-Za-zА-Яа-яІіЇїЄєҐґ+\d(]/.test(m[1]))) continue;
+    var parts = m[1] ? [m[1]] : [], end = i;
+    for (var j = i + 1; j < lines.length && parts.length < 3; j++) {
+      var t = String(lines[j]).trim();
+      if (!t || /^[^\d]{1,40}:\s*\S/.test(t) || /^[❓❗⚠]/.test(t)) break;
+      if (!/^[+\d\s()-]{9,20}$/.test(t) && !/^[A-Za-zА-Яа-яІіЇїЄєҐґʼ'’.\- ]{2,80}$/.test(t)) break;
+      parts.push(t); end = j;
+    }
+    var phone = "", name = [];
+    parts.forEach(function (x) { if (/^[+\d\s()-]{9,20}$/.test(x)) phone = phone || x.trim(); else name.push(x); });
+    if (!name.length && !phone) continue;
+    var rest = lines.slice(0, i).concat(lines.slice(end + 1)).join("\n");
+    return { name: name.join(" ").trim(), phone: phone, rest: rest };
+  }
+  return null;
+}
+
 /** Повідомлення-специфікація для підрядника (4 секції) — дзеркало формату з api/order.js. */
 function buildProductionMsg_(data, opts) {
   // Які дані бачить підрядник — вирішує менеджер пташками в CRM (типово — все).
@@ -2283,11 +2308,27 @@ function buildProductionMsg_(data, opts) {
     return esc_(String(it.unit || (it.product_type === "bracket" ? "комп." : "шт.")).trim() || "шт.");
   }
   // «Кількість» і «Розміри: ширина × висота × глибина мм» — однаково для всіх виробів.
+  // Характеристики кошика: довжина кронштейнів (показуємо під розмірами), застереження ⚠️/❗ (йдуть у «Важливо»),
+  // решта — списком «Характеристики».
+  var WARN_START = /^[⚠❗❕‼]\uFE0F?\s*/;
+  function splitSpecs(it) {
+    var out = { length: "", warns: [], rest: [] };
+    String((it && it.specs) || "").split(/\n+/).forEach(function (raw) {
+      var line = String(raw || "").trim();
+      if (!line) return;
+      var len = line.match(/^Довжина кронштейнів\s*:\s*(.+)$/i);
+      if (len && !out.length) out.length = len[1].trim();
+      else if (WARN_START.test(line)) out.warns.push(line.replace(WARN_START, "").trim());
+      else out.rest.push(line);
+    });
+    return out;
+  }
+  function isScreenModel(it) { var mi = modelInfo_(it); return !!(mi && mi.id === "AVL-02"); }
   function qtyDimsLines(it, basket) {
     var out = "• Кількість: <b>" + (Number(it.quantity) || 1) + " " + itemUnit(it) + "</b>\n";
     var w = Number(it.size_w) || 0, h = Number(it.size_h) || 0, d = Number(it.size_d) || 0;
     if (w > 0) {
-      out += "• Розміри: ширина <b>" + w + "</b>" + (h > 0 ? " × висота <b>" + h + "</b>" : "") + (d > 0 ? " × глибина <b>" + d + "</b>" : "") + " мм\n";
+      out += (basket && isScreenModel(it) ? "• Екран (розміри): ширина <b>" : "• Розміри: ширина <b>") + w + "</b>" + (h > 0 ? " × висота <b>" + h + "</b>" : "") + (d > 0 ? " × глибина <b>" + d + "</b>" : "") + " мм\n";
     } else if (basket) {
       out += "• Розміри: <i>розрахує менеджер</i>\n";
     }
@@ -2337,10 +2378,16 @@ function buildProductionMsg_(data, opts) {
   items.forEach(function (it, i) {
     if (isColorSurchargeItem_(it)) return;
     var text = String((it && (it.comment || it.item_comment || it.model_comment)) || "").trim();
-    var lines = text.split(/\n+/).map(function (x) { return String(x || "").trim(); }).filter(function (x) { return x; });
-    if (!lines.length) return;
-    important += "• " + (multiBlocks ? itemLabel_(it, i) + ": " : "") + "<b>" + esc_(lines[0]) + "</b>\n";
-    for (var k = 1; k < lines.length; k++) important += "   <b>" + esc_(lines[k]) + "</b>\n";
+    var lines = text.split(/\n+/).map(function (x) { return String(x || "").replace(WARN_START, "").trim(); }).filter(function (x) { return x; });
+    var isBasket = !it.product_type || it.product_type === "basket";
+    var warns = isBasket ? splitSpecs(it).warns : [];
+    if (!lines.length && !warns.length) return;
+    var label = multiBlocks ? itemLabel_(it, i) + ": " : "";
+    if (lines.length) {
+      important += "• " + label + "<b>" + esc_(lines[0]) + "</b>\n";
+      for (var k = 1; k < lines.length; k++) important += "   <b>" + esc_(lines[k]) + "</b>\n";
+    }
+    warns.forEach(function (w, n) { important += "• " + (n || lines.length ? "" : label) + "<b>" + esc_(w) + "</b>\n"; });
   });
   if (important) m += "\n⚠️ <b>ВАЖЛИВО</b>\n" + important;
 
@@ -2360,7 +2407,12 @@ function buildProductionMsg_(data, opts) {
         if (key) itemCommentLines_[key] = true;
       });
     });
-    var noteLines = String(data.notes).split(/\n+/).filter(function (line) {
+    var notesText = String(data.notes);
+    if (show.address && !(data.recipient && (data.recipient.name || data.recipient.phone))) {
+      var rec = extractRecipientFromNotes_(notesText);
+      if (rec) { data = Object.assign({}, data, { recipient: { name: rec.name, phone: rec.phone } }); notesText = rec.rest; }
+    }
+    var noteLines = notesText.split(/\n+/).filter(function (line) {
       var t = String(line || "").trim();
       if (!t || /^(Довжина кронштейнів|Віброподушки|Telegram|E-mail|Viber|WhatsApp)\s*:/i.test(t)) return false;
       if (itemCommentLines_[t.toLowerCase()]) return false;
@@ -2437,17 +2489,22 @@ function buildProductionMsg_(data, opts) {
     if (String(constrLine || "").trim()) m += "• Конструкція: <b>" + esc_(constrLine) + "</b>\n";
     // Кількість і розміри — одразу під моделлю: це головне, що треба знати про виріб.
     m += qtyDimsLines(it, true);
+    var sp = splitSpecs(it);
+    if (sp.length) m += "• Довжина кронштейнів: <b>" + esc_(sp.length) + "</b>\n";
     if (it.has_cover) m += "• Верхня кришка: <b>Так</b>\n";
     // У цих моделей кришка типово є (AVL-06 так і зветься «…з кришкою»). Якщо клієнт її
     // прибрав — підрядник має бачити це прямо, а не здогадуватись із назви моделі.
     else if (coverTypicalFor_(it) && String(it.construction_type || "").toLowerCase().indexOf("кришка") < 0) m += "• Верхня кришка: <b>БЕЗ кришки</b>\n";
-    if (color) m += "• Колір: <b>" + color + "</b>\n";
-    if (pattern) m += "• Візерунок: <b>" + pattern + "</b>\n";
+    var look = [];
+    if (color) look.push("Колір: <b>" + color + "</b>");
+    if (pattern) look.push("Візерунок: <b>" + pattern + "</b>");
+    if (look.length) m += "• " + look.join(" · ") + "\n";
     if (it.ac_brand || it.ac_model) m += "• Кондиціонер: <b>" + esc_([it.ac_brand, it.ac_model].filter(function (x) { return x; }).join(" ")) + "</b>\n";
     // Характеристики кошика (матеріал, тип кришок, блок кондиціонера…) — з калькулятора або картки.
-    if (it.specs) String(it.specs).split(/\n+/).forEach(function (line) {
-      if (String(line || "").trim()) m += "• " + esc_(line.trim()) + "\n";
-    });
+    if (sp.rest.length) {
+      m += "🔧 <i>Характеристики:</i>\n";
+      sp.rest.forEach(function (line) { m += "• " + esc_(line) + "\n"; });
+    }
   });
 
   // Ціна клієнта йде у «Фінанси», а маржа до виплати — окремим блоком після них.
@@ -6305,6 +6362,14 @@ function adminCreateOrder_(data) {
       applyFinanceToRow_(sheetForFin, r, fin);
     }
   });
+
+  // Отримувач і платник, якщо це не замовник (форма «Нове замовлення»): у всі рядки замовлення —
+  // до доплати за колір, щоб її рядок теж їх скопіював.
+  var newParties = cleanParties_(src.parties);
+  if (Object.keys(newParties).length && sheetForFin.getMaxColumns() >= PARTIES_COL) {
+    var newPartiesText = JSON.stringify(newParties);
+    (written.rows || [written.row]).forEach(function (r) { sheetForFin.getRange(r, PARTIES_COL).setValue(newPartiesText); });
+  }
 
   // Небазовий колір → одна доплата на замовлення окремою позицією. Менеджер у калькуляторі
   // міг від неї відмовитись — тоді запамʼятовуємо відмову, і доплата не додається.

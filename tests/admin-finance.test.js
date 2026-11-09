@@ -366,11 +366,37 @@ function testRemovableSidePanelPricing() {
       specs: "Система кріплення: 2 кронштейни + 2 перемички", item_comment: "Перед виробництвом надішліть модель на погодження" }],
   }, {}).replace(/<[^>]+>/g, "");
   const at = ["📅 Дата доставки: 20.11.2026", "⚠️ ВАЖЛИВО", "Перед виробництвом надішліть", "📝 ПРИМІТКИ", "Які терміни", "🏭 ЩО ВИГОТОВИТИ",
-    "• Кількість: 47 шт.", "• Розміри: ширина 850 × висота 600 × глибина 75 мм", "• Колір:", "Система кріплення", "🚚 ДОСТАВКА", "Отримувач: Панчук",
+    "• Кількість: 47 шт.", "• Екран (розміри): ширина 850 × висота 600 × глибина 75 мм", "• Колір:", "Система кріплення", "🚚 ДОСТАВКА", "Отримувач: Панчук",
     "👤 ЗАМОВНИК", "Букатюк", "💰 ГРОШІ", "2 470 ₴ × 47 шт. = 116 090 ₴", "До виплати Avalon"].map((x) => ordered.indexOf(x));
   assert.ok(at.every((x, k) => x >= 0 && (k === 0 || x > at[k - 1])), "порядок блоків: " + at + "\n" + ordered);
   assert.equal(ordered.split("20.11.2026").length - 1, 1, "дата доставки — лише в шапці");
   assert.ok(!ordered.includes("Додаткова інформація") && !ordered.includes("❗ Коментар"), "старі підписи прибрано");
+
+  // AVL-02 і нове замовлення з форми (рішення власника 09.11.2026): отримувач із приміток — у «Доставку»,
+  // довжина кронштейнів — під розмірами екрана, застереження ⚠️ — у «Важливо» без подвійного знака.
+  const avl02 = ctx.buildProductionMsg_({
+    order_number: "ORD-261026-010", first_name: "Букатюк В.В.", phone: "+380680265430", transport: "Нова пошта", delivery_address: "м. Київ, №200",
+    notes: "❓ Які терміни?\nОтримувач:\nПанчук Олег Володимирович\n0680265430\nТелефон для зв'язку: 0501112233",
+    items: [{ product_type: "basket", construction_type: "Розбірна · AVL-02", basket_model_name: "Екран під утеплювач", color: "Білий RAL (9016)", pattern: "K1",
+      size_w: 850, size_h: 600, size_d: 75, quantity: 47, unit: "шт.", item_comment: "⚠️ Надішліть модель на погодження",
+      specs: "Система кріплення: 2 кронштейни\nДовжина кронштейнів: 630 мм\nТовщина металу екрану: 0,8 мм\n⚠️ Утеплювач 150 мм. Врахувати отвори." }],
+  }, {}).replace(/<[^>]+>/g, "");
+  const imp = avl02.split("⚠️ ВАЖЛИВО")[1].split("\n\n")[0];
+  assert.ok(imp.includes("• Надішліть модель на погодження") && imp.includes("• Утеплювач 150 мм. Врахувати отвори."), imp);
+  assert.ok(!/•\s*⚠️/.test(avl02), "подвійного ⚠️ немає");
+  assert.ok(avl02.includes("• Екран (розміри): ширина 850 × висота 600 × глибина 75 мм\n• Довжина кронштейнів: 630 мм\n• Колір: Білий RAL (9016) · Візерунок: K1"), avl02);
+  assert.ok(avl02.includes("🔧 Характеристики:\n• Система кріплення: 2 кронштейни\n• Товщина металу екрану: 0,8 мм"), avl02);
+  const deliv = avl02.split("🚚 ДОСТАВКА")[1].split("\n\n")[0];
+  assert.ok(deliv.includes("• Отримувач: Панчук Олег Володимирович, 0680265430"), deliv);
+  const notesOnly = avl02.split("📝 ПРИМІТКИ")[1].split("\n\n")[0];
+  assert.ok(notesOnly.includes("Які терміни") && notesOnly.includes("Телефон для зв'язку") && !notesOnly.includes("Панчук") && !notesOnly.includes("Отримувач"), notesOnly);
+  // Адреса прихована пташкою — отримувача з приміток не чіпаємо; готовий отримувач із картки має пріоритет.
+  const hidden = ctx.buildProductionMsg_({ order_number: "X", notes: "Отримувач:\nПанчук О.В.\n0680265430", items: [{ product_type: "other", basket_model_name: "Ковш", quantity: 1 }] }, { address: false }).replace(/<[^>]+>/g, "");
+  assert.ok(hidden.includes("Панчук") && !hidden.includes("Отримувач: Панчук"), hidden);
+  const fromCard = ctx.buildProductionMsg_({ order_number: "X", recipient: { name: "Іван", phone: "0501112233" }, notes: "Отримувач:\nПанчук О.В.", transport: "Нова пошта", items: [{ product_type: "other", basket_model_name: "Ковш", quantity: 1 }] }, {}).replace(/<[^>]+>/g, "");
+  assert.ok(fromCard.includes("• Отримувач: Іван, 0501112233"), fromCard);
+  // Звичайний рядок про отримувача без імені/телефону не ламається.
+  assert.equal(ctx.extractRecipientFromNotes_("Отримувач — мій брат"), null);
 
   // Площа з повною точністю: показані множники дають показану суму (810×550×500).
   const precise = ctx.buildProductionMsg_({
