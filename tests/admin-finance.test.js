@@ -425,6 +425,15 @@ function testRemovableSidePanelPricing() {
   assert.equal(dupImp.split("Фарбувати двічі").length - 1, 1, dupImp);
   assert.ok(!/•\s*\n/.test(dupImp), "порожніх пунктів немає: " + dupImp);
 
+  // Адреса відділення Нової пошти — з населеним пунктом попереду (рішення власника 10.11.2026).
+  assert.equal(ctx.addressWithCity_("Відділення №200 (до 200 кг): просп. Броварський, 31В", "Київ"), "Київ, Відділення №200 (до 200 кг): просп. Броварський, 31В");
+  assert.equal(ctx.addressWithCity_("Київ, Відділення №200", "Київ"), "Київ, Відділення №200", "місто вже є — не дублюємо");
+  assert.equal(ctx.addressWithCity_("м. Львів, Відділення №5", "Київ"), "м. Львів, Відділення №5", "інше місто вже вказано");
+  assert.equal(ctx.addressWithCity_("вул. Хрещатик, 1", ""), "вул. Хрещатик, 1");
+  const withCity = ctx.buildProductionMsg_({ order_number: "X", city: "Київ", transport: "Нова пошта", delivery_address: "Відділення №200: просп. Броварський, 31В",
+    items: [{ product_type: "other", basket_model_name: "Ковш", quantity: 1 }] }, {}).replace(/<[^>]+>/g, "");
+  assert.ok(withCity.includes("• Адреса: Київ, Відділення №200: просп. Броварський, 31В"), withCity);
+
   // Площа з повною точністю: показані множники дають показану суму (810×550×500).
   const precise = ctx.buildProductionMsg_({
     order_number: "X",

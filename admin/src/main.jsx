@@ -381,7 +381,9 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         const rank = (w) => (first && w.number === first ? 0 : (first && w.number.startsWith(first) ? 1 : 2));
         found = found.slice().sort((x, y) => rank(x) - rank(y) || (Number(x.number) || 0) - (Number(y.number) || 0));
         setCounts({ shown: Math.min(found.length, SHOW_MAX), total: found.length });
-        return found.slice(0, SHOW_MAX).map(w => ({ ...w, value: w.description }));
+        // У адресу — з населеним пунктом попереду («Київ, Відділення №200…»): у довіднику опис без міста.
+        const cityName = String(city || "").trim().replace(/^(м\.|с\.|смт\.?|селище)\s*/i, "");
+        return found.slice(0, SHOW_MAX).map(w => ({ ...w, value: (cityName ? cityName + ", " : "") + w.description }));
       };
       return (
         <>
