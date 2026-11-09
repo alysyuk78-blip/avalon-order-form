@@ -1132,6 +1132,14 @@
     .payments-section { margin-bottom: 0; }
     .payments-section > .btn { margin-top: 2px; }
     .order-items-list { display: grid; gap: 10px; }
+    .order-item-card.clickable { cursor: pointer; position: relative; transition: box-shadow .15s, background-color .15s; }
+    .order-item-card.clickable:hover { background: rgba(143,115,64,.06); }
+    .order-item-card.clickable:focus-visible { outline: 2px solid var(--accent, #8f7340); outline-offset: 2px; }
+    .order-item-card.active { box-shadow: 0 0 0 2px rgba(143,115,64,.55); background: rgba(143,115,64,.10); }
+    .order-item-actions { float: right; display: inline-flex; align-items: center; gap: 6px; }
+    .order-item-now { font-size: 11px; font-weight: 700; color: #7a5f2c; }
+    .order-item-card .icon-button { width: 34px; height: 34px; background: #fff; }
+    .section-hint { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); }
     .order-item-card {
       padding: 14px; border: 1px solid #e4e7e9; border-radius: var(--control-radius);
       background: #f7f8f9;

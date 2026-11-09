@@ -4696,11 +4696,20 @@ import invoiceLib from '../../lib/avalon-invoice.js';
 
             <OrderChatSection token={token} orderNumber={orderNumber} />
 
-            <div className="section-title">Позиції в замовленні ({items.length})</div>
+            <div className="section-title">Позиції в замовленні ({items.length}){items.length > 1 ? <small className="section-hint"> · натисніть позицію, щоб редагувати</small> : null}</div>
             <div className="order-items-list">
-              {items.map(it => (
-                <div key={it.row} className="order-item-card">
+              {items.map((it, i) => (
+                <div key={it.row} className={"order-item-card" + (items.length > 1 ? " clickable" : "") + (items.length > 1 && i === itemIdx ? " active" : "")}
+                  {...(items.length > 1 ? { role: "button", tabIndex: 0, "aria-pressed": i === itemIdx, title: "Натисніть, щоб редагувати цю позицію",
+                    onClick: () => askEditItem(i), onKeyDown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); askEditItem(i); } } } : {})}>
+                  {items.length > 1 && (
+                    <div className="order-item-actions" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+                      {i === itemIdx && <span className="order-item-now">редагуєте</span>}
+                      <IconButton icon="trash" label={"Видалити «" + itemTitle(it, i) + "»"} disabled={busy || stale} onClick={() => removeItem(it, i)} />
+                    </div>
+                  )}
                   <div className="order-item-title">{it.basket_model ? it.basket_model + " · " : ""}{it.basket_type || "Кошик"} · {it.construction}</div>
+                  {cleanNote(it.item_comment) && <div className="item-row-comment" title={cleanNote(it.item_comment)}>❗ {cleanNote(it.item_comment)}</div>}
                   <div className="order-item-meta">
                     {it.size_w || "—"}×{it.size_h || "—"}×{it.size_d || "—"} мм · {it.quantity} {it.unit || (it.product_kind === "Кронштейни" ? "комп." : "шт.")} · {it.color} · {it.pattern}
                   </div>
@@ -4713,23 +4722,6 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             </div>
 
             {blockTitle("product", "Товар", <>Товар{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</>)}
-            {items.length > 1 && (
-              <div className="item-list">
-                {items.map((it, i) => (
-                  <div key={it.row || i} className={"item-row" + (i === itemIdx ? " active" : "")}>
-                    <div className="item-row-main">
-                      <strong>{itemTitle(it, i)}</strong>
-                      <span>{(Number(it.quantity) || 1) + " " + (it.unit || "шт.") + " · " + money(it.revenue)}</span>
-                      {cleanNote(it.item_comment) && <span className="item-row-comment" title={cleanNote(it.item_comment)}>❗ {cleanNote(it.item_comment)}</span>}
-                    </div>
-                    <IconButton icon="edit" label={"Скорегувати «" + itemTitle(it, i) + "»"}
-                      disabled={busy || stale} onClick={() => askEditItem(i)} />
-                    <IconButton icon="trash" label={"Видалити «" + itemTitle(it, i) + "»"}
-                      disabled={busy || stale} onClick={() => removeItem(it, i)} />
-                  </div>
-                ))}
-              </div>
-            )}
             {/* Стандартна формула (₴/м²) — лише для кошиків; вироби не з каталогу й послуги не перераховуються. */}
             {(!form.product_kind || form.product_kind === "Кошик") && (
               <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
@@ -4855,16 +4847,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             {blockTitle("finance", "Фінанси", <>Фінанси{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</>)}
             {items.length > 1 && (
               <>
-                <div className="field">
-                  <label>Позиція для редагування</label>
-                  <select value={itemIdx} onChange={e => selectItem(Number(e.target.value))}>
-                    {items.map((it, i) => (
-                      <option key={it.row} value={i}>
-                        {(it.basket_model || it.basket_type || "Кошик") + " · " + money(it.revenue)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <p style={{ margin: "0 0 6px", color: "var(--ink)", fontSize: 13.5 }}>Позиція: <b>{itemTitle(items[itemIdx] || {}, itemIdx)}</b> — інша обирається в «Позиції в замовленні» вище.</p>
                 <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
                   Разом по замовленню: {money(order.revenue)} · маржа {money(order.profit)}
                   {Number(order.commission) ? <> · чистими {money2((Number(order.profit) || 0) - Number(order.commission))}</> : null}.
