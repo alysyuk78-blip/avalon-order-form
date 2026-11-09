@@ -780,6 +780,21 @@ function testServiceKind() {
   uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { block_note: { block: "finance", text: "" } } });
   assert.ok(!("finance" in JSON.parse(ps.data[1][51])), "порожній текст — коментар прибрано");
   assert.throws(() => uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { block_note: { block: "evil", text: "x" } } }), /Невідомий блок/);
+  // Оплата доставки — у тій самій клітинці: окрема правка не стирає отримувача й платника, і навпаки.
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { delivery_pay: "recipient" } });
+  let dp = JSON.parse(ps.data[1][50]);
+  assert.equal(dp.delivery_pay, "recipient"); assert.equal(dp.recipient.name, "Іван Петренко"); assert.equal(dp.payer.code, "12345678");
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { parties: { recipient: { name: "Олег", phone: "" }, payer: null } } });
+  dp = JSON.parse(ps.data[2][50]);
+  assert.equal(dp.delivery_pay, "recipient", "правка отримувача не стирає оплату доставки"); assert.equal(dp.recipient.name, "Олег"); assert.ok(!dp.payer);
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { delivery_pay: "hack" } });
+  assert.ok(!("delivery_pay" in JSON.parse(ps.data[1][50])), "невідоме значення — прибрано");
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { delivery_pay: "sender" } });
+  uctx.nowKyiv_ = () => "10.11.2026 10:00";
+  const dpMsg = uctx.buildProductionMsg_(uctx.buildOrderFromRows_(ps, "ORD-150926-031"), {});
+  assert.ok(dpMsg.includes("• Оплата доставки: <b>відправник (ми)</b>"), dpMsg.slice(-400));
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { delivery_pay: "" } });
+  assert.ok(!("delivery_pay" in JSON.parse(ps.data[1][50])), "порожнє — прибрано");
   uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { parties: { recipient: null, payer: null } } });
   assert.equal(ps.data[1][50], "", "знято пташки — знову замовник");
   assert.deepEqual(uctx.mapOrderRow_(2, ps.data[1]).parties, {});
@@ -1490,6 +1505,12 @@ function testAuditFixes() {
   assert.equal(savedParties.recipient.name, "Панчук Олег");
   assert.equal(savedParties.payer.kind, "company");
   assert.equal(savedParties.payer.code, "12345678");
+  // Оплата доставки з форми «Нове замовлення» — там само.
+  cc = colorCase(0);
+  const withDp = colored("req-dp");
+  withDp.order.parties = { recipient: null, payer: null, delivery_pay: "recipient" };
+  cc.ctx.adminCreateOrder_(withDp);
+  assert.deepEqual(JSON.parse(cc.raw.data.slice(1).find((r) => r[0] === ORD)[50]), { delivery_pay: "recipient" });
   // Без отримувача й платника — клітинка порожня.
   cc = colorCase(0);
   const noParties = colored("req-no-parties");

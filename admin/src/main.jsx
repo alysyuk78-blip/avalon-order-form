@@ -98,6 +98,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
     const UNIT_SUGGESTIONS = ["шт.", "комп."];
     // ── Вибір зі списку в картці (назви — як у формі замовлення public/index.html) ──
     const FORM_BASKET_TYPES = ["Декоративний", "Антивандальний (більша товщина металу+ каркас)"];
+    // Хто платить за доставку (Нова пошта питає при оформленні накладної).
+    const DELIVERY_PAY_OPTIONS = [["", "— не вказано —"], ["recipient", "Отримувач"], ["sender", "Відправник (ми)"]];
     const FORM_PAYMENT_METHODS = ["На карту", "На рахунок ФО-П", "На рахунок ТОВ", "Уточнити з менеджером"];
     const FORM_COLORS = ["Білий (RAL 9016)", "Сірий (RAL 7016)", "Чорний (RAL 9005)"];
     const FORM_PATTERNS = ["K1", "K2", "K3", "K4", "K5", "K6", "K7", "K8", "K9", "K10"];
@@ -3936,6 +3938,10 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const keepFormOnce = useRef(false);
       // Отримувач і платник, які зараз правлять (null — як збережено).
       const [partiesDraft, setPartiesDraft] = useState(null);
+      // Оплата доставки — у тій самій клітинці, що отримувач і платник; зберігається кнопкою «Зберегти деталі».
+      const savedDeliveryPay = (data && data.order && data.order.parties && data.order.parties.delivery_pay) || "";
+      const [deliveryPay, setDeliveryPay] = useState(savedDeliveryPay);
+      useEffect(() => { setDeliveryPay(savedDeliveryPay); }, [orderNumber, savedDeliveryPay]);
       useEffect(() => { setNoteEdit(null); setPartiesDraft(null); }, [orderNumber]);
       const uploadQueueRef = useRef(Promise.resolve());
       const sendSectionRef = useRef(null);
@@ -5024,8 +5030,12 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             <div className="grid2">
               <div className="field"><label>Дата доставки</label>
                 <input type="date" value={(form.delivery_date || "").slice(0, 10)} onChange={e => setForm({ ...form, delivery_date: e.target.value })} /></div>
-              <ChoiceField id="order-payment-method" label="Форма оплати (як платить клієнт)" value={form.payment_method} options={FORM_PAYMENT_METHODS}
+              <ChoiceField id="order-payment-method" label="Форма оплати" value={form.payment_method} options={FORM_PAYMENT_METHODS}
                 onChange={v => setForm(f => ({ ...f, payment_method: v }))} />
+              <div className="field"><label htmlFor="order-delivery-pay">Оплата доставки</label>
+                <select id="order-delivery-pay" value={deliveryPay} onChange={e => setDeliveryPay(e.target.value)}>
+                  {DELIVERY_PAY_OPTIONS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+                </select></div>
               <div className="field"><label>Спосіб доставки</label>
                 <input value={form.transport} onChange={e => setForm({ ...form, transport: e.target.value })} placeholder="Нова пошта / Самовивіз" /></div>
               <div className="field"><label htmlFor="order-address">Адреса / відділення</label>
@@ -5045,6 +5055,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               transport: form.transport,
               address: form.address,
               notes: form.notes,
+              ...(deliveryPay !== savedDeliveryPay ? { delivery_pay: deliveryPay } : {}),
             })}>Зберегти деталі</button>
 
             <OrderFilesSection
@@ -5308,7 +5319,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           discount_uah: priceUnitOverride ? "" : (discountTotal || ""),
           price_total: revenueTotal || "",
           commission_pct: form.commission_pct === "" ? null : Number(form.commission_pct),
-          parties: { recipient: newParties.recipient || null, payer: newParties.payer || null },
+          parties: { recipient: newParties.recipient || null, payer: newParties.payer || null, delivery_pay: newParties.delivery_pay || "" },
         };
         const fingerprint = JSON.stringify(order);
         if (pendingCreateRef.current.fingerprint !== fingerprint) {
@@ -5612,7 +5623,11 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               </div>
               <div className="field"><label>Дата доставки</label>
                 <input type="date" value={form.delivery_date} onChange={e => set("delivery_date", e.target.value)} /></div>
-              <div className="field"><label>Оплата</label>
+              <div className="field"><label htmlFor="new-delivery-pay">Оплата доставки</label>
+                <select id="new-delivery-pay" value={newParties.delivery_pay || ""} onChange={e => { const v = e.target.value; setNewParties(p => ({ ...p, delivery_pay: v })); }}>
+                  {DELIVERY_PAY_OPTIONS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+                </select></div>
+              <div className="field"><label>Форма оплати</label>
                 <select value={form.payment_method} onChange={e => set("payment_method", e.target.value)}>
                   <option value="">— не вказано —</option>
                   <option value="На карту">На карту</option>
@@ -6779,7 +6794,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           ["Постійний клієнт", "Замовляв раніше — угорі форми «Постійний клієнт — знайти в довіднику»: почніть вводити телефон або імʼя й натисніть на клієнта. Підставляться імʼя, телефон, місто, контакти, спосіб доставки, адреса чи відділення й оплата з його останнього замовлення, джерело — «Повторний клієнт». Або просто впишіть телефон: якщо клієнт уже є, під полем зʼявиться «Це … — підставити дані клієнта». Перевірте й за потреби виправте."],
           ["Товар", "Оберіть, що замовляють: кошик, кронштейни, інший виріб чи послугу. Для кошика — модель, колір, візерунок, ширину, висоту й глибину в міліметрах, кількість. Особливості виготовлення пишіть у «Коментар до позиції» — підрядник побачить його на початку повідомлення, у блоці «⚠️ Важливо»."],
           ["Гроші", "Для кошика поля грошей можна лишити порожніми: ціна порахується за розмірами, а блок «За формулою калькулятора» одразу покаже суму. Для кронштейнів, інших виробів і послуг ціну вписуєте самі — за одиницю."],
-          ["Доставка та оплата", "Дата, спосіб доставки, адреса чи відділення, спосіб оплати. Місто й відділення Нової пошти — як у формі: почніть вводити назву міста й оберіть зі списку, далі номер чи адресу відділення. Поштомати сховані — їх показує перемикач «показувати поштомати». Самовивіз чи адресна доставка — адресу пишіть вручну."],
+          ["Доставка та оплата", "Дата, спосіб доставки, адреса чи відділення, форма оплати (як клієнт платить за замовлення) і «Оплата доставки» (хто платить Новій пошті: отримувач чи ми) — її бачить підрядник у «Доставці». Місто й відділення Нової пошти — як у формі: почніть вводити назву міста й оберіть зі списку, далі номер чи адресу відділення. Поштомати сховані — їх показує перемикач «показувати поштомати». Самовивіз чи адресна доставка — адресу пишіть вручну."],
           ["Отримувач і платник", "Якщо посилку отримує інша людина — поставте пташку «Отримувач посилки — інша людина» і впишіть ПІБ і телефон: підрядник побачить їх у «Доставці». Платить інша людина, ФОП чи компанія — пташка «Платник — інший»: оберіть вид і впишіть реквізити, рахунок виставиться на нього. Для AVL-02 (екран під утеплювач) ширина, висота й глибина — це розміри екрана, а довжину кронштейнів впишіть в окреме поле."],
           ["Створіть замовлення", "Кнопка «Створити замовлення». Воно зʼявиться зі статусом «Нове» — далі дійте за розділом «Прийняти замовлення», починаючи з перевірки ціни."],
           ["Кілька моделей в одному замовленні", "Другу й наступні моделі додавайте через калькулятор: «Перенести в CRM» → «Наявне замовлення» → оберіть замовлення → «Додати новою позицією» → «Додати позицію в CRM»."],
