@@ -1320,7 +1320,7 @@ function testColorSurchargeInSheet() {
   ] }, { finance: true }).replace(/<[^>]+>/g, "");
   assert.ok(!msg.includes("Послуга"), msg);
   assert.ok(!msg.includes("Кошик 1"), "єдиний кошик — без номера");
-  assert.ok(msg.includes("• Кошик: 0.9 м² × 2 030 ₴/м² = 1 827 ₴"));
+  assert.ok(msg.includes("• Кошик: 0,9 м² × 2 030 ₴/м² = 1 827 ₴"));
   assert.ok(msg.includes("• Доплата за колір (небазовий, на замовлення): 200 ₴"));
   assert.ok(msg.includes("• Разом виробнича: 2 027 ₴"));
 }
@@ -1557,7 +1557,7 @@ function testAuditFixes() {
       { product_type: "service", basket_model_name: "Монтаж", basket_type: "Монтаж", quantity: 1, unit: "шт.", cost_total: 1500, revenue: 1500, profit: 0 },
     ] }, { finance: true, notes: true }).replace(/<[^>]+>/g, "");
   [
-    "• Кошик 1: 0.9 м² × 2 030 ₴/м² = 1 827 ₴",
+    "• Кошик 1: 0,9 м² × 2 030 ₴/м² = 1 827 ₴",
     "• Послуга 3 · Монтаж: 1 500 ₴",
     "• Кошик 2: вартість уточнюється",
     "• Разом виробнича (без позицій, що уточнюються): 3 327 ₴",
@@ -1717,7 +1717,7 @@ function testAuditFixes() {
   const lamMsg = pm.buildProductionMsg_({ order_number: ORD, items: [
     { product_type: "basket", construction_type: "Суцільний · AVL-06 + кришка", basket_model: "AVL-06", pattern: "Інший", size_w: 800, size_h: 600, size_d: 500, quantity: 2, unit: "шт.", cost_total: 6233, revenue: 8414, profit: 2181 },
   ] }, { finance: true }).replace(/<[^>]+>/g, "").replace(/\u00a0/g, " ");
-  ["1.08 м² × 2 030 ₴/м² × 2 шт. = 4 385 ₴", "Візерунок «Інший», надбавка: 0.6 м² × 100 ₴/м² × 2 шт. = 120 ₴", "Гнуття ламелей (8 шт × 12 ₴): 96 ₴ × 2 шт. = 192 ₴"]
+  ["1,08 м² × 2 030 ₴/м² × 2 шт. = 4 385 ₴", "Візерунок «Інший», надбавка: 0,6 м² × 100 ₴/м² × 2 шт. = 120 ₴", "Гнуття ламелей (8 шт × 12 ₴): 96 ₴ × 2 шт. = 192 ₴"]
     .forEach((line) => assert.ok(lamMsg.includes(line), line + "\n---\n" + lamMsg));
   assert.ok(!lamMsg.includes("БЕЗ кришки"), "кришка є (записана в конструкції)");
   // Кришку з AVL-06 прибрали — підрядник бачить це прямо (модель зветься «…з кришкою»).
@@ -1915,8 +1915,8 @@ function testContractorRates() {
   const line = (num, cost) => t.ctx.buildProductionMsg_({ order_number: num, created_at: "07.10.2026 10:00", items: [
     { product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 500, size_d: 500, quantity: 1, unit: "шт.", cost_total: cost },
   ] }, { finance: true }).replace(/<[^>]+>/g, "");
-  assert.ok(line(OLD, 1827).includes("0.9 м² × 2 030 ₴/м²"), line(OLD, 1827));
-  assert.ok(line(LEAD, 2010).includes("0.9 м² × 2 233 ₴/м²"), line(LEAD, 2010));
+  assert.ok(line(OLD, 1827).includes("0,9 м² × 2 030 ₴/м²"), line(OLD, 1827));
+  assert.ok(line(LEAD, 2010).includes("0,9 м² × 2 233 ₴/м²"), line(LEAD, 2010));
 
   // 7. «Перерахувати за чинними ставками»: формульні позиції — за новими, знижка % лишається,
   //    ціна, вписана менеджером, не змінюється; «чиста» доплата за колір отримує нову суму.

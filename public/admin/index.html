@@ -538,8 +538,14 @@
     .block-note-edit { margin: 0 0 10px; }
     .block-note-edit textarea { width: 100%; font: inherit; }
     .block-note-bar { margin: -4px 0 12px; }
+    .head-with-note { display: inline-flex; align-items: center; gap: 6px; }
     .parties-toggle { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13.5px; }
-    .pay-actions { display: inline-flex; gap: 2px; }
+    .pay-actions { display: inline-flex; gap: 2px; white-space: nowrap; }
+    td.nowrap { white-space: nowrap; }
+    /* Платежі в картці — уміщаються в ширину картки (без загальних 560 px), кнопки не обрізаються. */
+    .table-scroll table.pay-table { min-width: 0; width: 100%; }
+    table.pay-table td, table.pay-table th { padding-left: 6px; padding-right: 6px; }
+    table.pay-table td:last-child { width: 1%; white-space: nowrap; }
     .pay-edit-row td { background: var(--bg-soft, #f4f6f5); padding: 10px 12px; }
     .np-suggest { position: relative; }
     .np-suggest input { width: 100%; }
@@ -550,6 +556,8 @@
     .np-suggest-list button small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
     .np-suggest-note { padding: 8px 10px; font-size: 12.5px; color: var(--muted); }
     .np-postomat-toggle { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12.5px; color: var(--muted); font-weight: 400; }
+    .field .np-postomat-toggle, .drawer .field .np-postomat-toggle { display: inline-flex; width: auto; text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 400; cursor: pointer; }
+    .field .np-postomat-toggle input { width: 16px; height: 16px; min-height: 0; padding: 0; margin: 0; flex: none; }
     .invoice-ready { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: var(--bg-soft, #f4f6f5); font-size: 12.5px; }
     .invoice-line-view { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; border: 1px solid var(--line, #e3e6e3); border-radius: 6px; background: var(--bg-soft, #fafbfa); font-size: 13px; }
     .invoice-line-view span { flex: 1; white-space: pre-wrap; }

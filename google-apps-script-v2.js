@@ -2218,7 +2218,7 @@ function buildOrderFromRows_(sh, orderNumber) {
  * підрядник), а дропшиперську — ні (її Avalon платить партнеру сама). Без виручки
  * в таблиці (ціну ще не погоджено) блок не показуємо — нулі лише заплутали б.
  */
-function marginForContractorBlock_(items, commissionPct) {
+function marginForContractorBlock_(items, commissionPct, clientPaid) {
   var revenue = 0, profit = 0, commission = 0, known = false, unpriced = 0;
   (items || []).forEach(function (it) {
     var rev = Number(it.revenue) || 0;
@@ -2248,8 +2248,17 @@ function marginForContractorBlock_(items, commissionPct) {
     s += "• Комісія (" + String(rate).replace(".", ",") + "% від маржі): − " + money2_(commission) + " ₴\n";
   }
   s += "• <b>До виплати Avalon: " + money2_(marginDue_(profit, commission, commissionPct)) + " ₴</b>\n";
-  s += "  <i>після повної оплати клієнтом</i>\n";
+  // Клієнт уже сплатив усе (за журналом платежів) — маржа до виплати зараз, а не «колись».
+  s += (Number(clientPaid) || 0) >= revenue - 0.5 ? "  <i>клієнт оплатив повністю — до виплати зараз</i>\n" : "  <i>після повної оплати клієнтом</i>\n";
   return { priceLine: priceLine, section: s };
+}
+
+/** Скільки клієнт уже сплатив за замовленням (журнал платежів); немає журналу — 0. */
+function contractorClientPaid_(num) {
+  try {
+    var pays = num ? readPayments_(String(num)) : [];
+    return pays.length ? (Number(paymentTotals_(pays).client_paid) || 0) : 0;
+  } catch (e) { return 0; }
 }
 
 /** Повідомлення-специфікація для підрядника (4 секції) — дзеркало формату з api/order.js. */
@@ -2407,7 +2416,7 @@ function buildProductionMsg_(data, opts) {
 
   // Ціна клієнта йде у «Фінанси», а маржа до виплати — окремим блоком після них.
   var marginInfo = show.finance
-    ? marginForContractorBlock_(items, data.commission_pct)
+    ? marginForContractorBlock_(items, data.commission_pct, contractorClientPaid_(data.order_number))
     : { priceLine: "", section: "" };
   // Розділ із заголовком — лише коли в ньому є хоч один рядок. Для «порахувати
   // виробничу вартість» ні цін, ні доставки ще немає, і порожні «ФІНАНСИ» / «ДОСТАВКА»
@@ -2425,7 +2434,7 @@ function buildProductionMsg_(data, opts) {
       return label + ": " + (qty > 1 ? money2_(Math.round(line.unit * 100) / 100) + " ₴" + times + " = " : "")
         + "<b>" + money_(line.cost) + " ₴</b>\n";
     }
-    var a = String(Math.round(line.area * 1000000) / 1000000);
+    var a = String(Math.round(line.area * 1000000) / 1000000).replace(".", ",");
     return label + ": " + a + " м² × " + (perM2Bold ? "<b>" + money_(line.rate) + " ₴/м²</b>" : money_(line.rate) + " ₴/м²")
       + times + " = <b>" + money_(line.cost) + " ₴</b>\n";
   }
@@ -2440,6 +2449,16 @@ function buildProductionMsg_(data, opts) {
   }
   // Сума, вписана менеджером, може відрізнятися від розрахунку за площею — показуємо різницю,
   // щоб рядки завжди сходились із «Вартістю виробничою».
+  // Різниця з формулою більша за округлення — ціну підрядника узгоджено окремо (велике замовлення).
+  function isAgreedCost(diff, b) {
+    return Math.abs(diff) >= 1 && Math.abs(diff) > Math.max(1, b.qty, b.lines.length);
+  }
+  // «2 470 ₴ × 47 шт. = 116 090 ₴» — без розкладки формули.
+  function agreedCostText(c, it) {
+    var qty = Number(it.quantity) || 1;
+    if (qty <= 1) return "<b>" + money_(c) + " ₴</b>";
+    return money2_(Math.round(c / qty * 100) / 100) + " ₴ × " + qty + " " + itemUnit(it) + " = <b>" + money_(c) + " ₴</b>";
+  }
   function adjustmentLine(prefix, diff, b) {
     if (Math.abs(diff) < 1) return "";
     // Різниця в межах копійок на рядок/штуку — це округлення, а не рішення менеджера.
@@ -2451,7 +2470,9 @@ function buildProductionMsg_(data, opts) {
     items.forEach(function (it, i) {
       var b = breakdown(it), c = Number(it.cost_total) || b.total; grand += c;
       var label = itemLabel_(it, i);
-      if (b.sum > 0) {
+      if (b.sum > 0 && isAgreedCost(c - b.sum, b)) {
+        fin += "• " + label + ": " + agreedCostText(c, it) + "\n";
+      } else if (b.sum > 0) {
         fin += costLines(b, it, "• " + label, "  ", false);
         fin += adjustmentLine("  ", c - b.sum, b);
       } else if (c > 0) {
@@ -2470,14 +2491,16 @@ function buildProductionMsg_(data, opts) {
     if (grand > 0) fin += "• <b>Разом виробнича" + (pendingCount ? " (без позицій, що уточнюються)" : "") + ": " + money_(grand) + " ₴</b>\n";
   } else {
     var it = items[0], b = breakdown(it), c = Number(it.cost_total) || b.total;
-    if (b.sum > 0) {
+    var agreed = b.sum > 0 && isAgreedCost(c - b.sum, b);
+    if (b.sum > 0 && !agreed) {
       fin += costLines(b, it, "• Кошик", "• ", true);
       fin += adjustmentLine("• ", c - b.sum, b);
     }
-    if (c > 0) fin += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
+    if (agreed) fin += "• Вартість виробнича: " + agreedCostText(c, it) + "\n";
+    else if (c > 0) fin += "• Вартість виробнича: <b>" + money_(c) + " ₴</b>\n";
   }
   fin += marginInfo.priceLine;
-  if (data.payment_method) fin += "• Оплата: <b>" + esc_(data.payment_method) + "</b>\n";
+  if (data.payment_method) fin += "• Форма оплати: <b>" + esc_(data.payment_method) + "</b>\n";
   if (fin) m += "\n💰 <b>ФІНАНСИ</b>\n" + fin;
   m += marginInfo.section;
 
