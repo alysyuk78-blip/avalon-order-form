@@ -2632,6 +2632,35 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         finally { setBusy(false); }
       }
 
+      // Правка платежу олівцем: { row, type, amount, method, date, recipient, note, orig }.
+      const [edit, setEdit] = useState(null);
+      useEffect(() => { setEdit(null); }, [orderNumber]);
+      function startEdit(p) {
+        setError("");
+        setEdit({ row: p.row, type: p.type, amount: String(p.amount || ""), method: p.method || "", date: (p.date || "").slice(0, 10),
+          recipient: p.recipient === PAYMENT_ME ? PAYMENT_ME : "", note: p.note || "", orig: p });
+      }
+      async function saveEdit() {
+        setError("");
+        if (!(Number(edit.amount) > 0)) return setError("Вкажіть суму більшу за нуль");
+        const o = edit.orig;
+        const same = Number(edit.amount) === Number(o.amount) && edit.type === o.type && edit.method === (o.method || "")
+          && edit.date === (o.date || "").slice(0, 10) && edit.note === (o.note || "")
+          && (paymentHasRecipient(edit.type) ? edit.recipient : "") === (o.recipient === PAYMENT_ME ? PAYMENT_ME : "");
+        if (same) { setEdit(null); return; }
+        setBusy(true);
+        try {
+          const result = await api("/api/admin/payments", { method: "PATCH", token, body: {
+            row: o.row, order_number: orderNumber,
+            payment_request_id: o.request_id || "", payment_type: o.type || "", payment_amount: o.amount,
+            payment: { type: edit.type, amount: Number(edit.amount), method: edit.method, date: edit.date, note: edit.note,
+              recipient: paymentHasRecipient(edit.type) ? edit.recipient : "" } } });
+          setEdit(null);
+          onChanged && onChanged(result);
+        } catch (e) { setError(e.message || "Не вдалося змінити платіж"); }
+        finally { setBusy(false); }
+      }
+
       async function remove(payment) {
         if (!window.confirm("Видалити цей платіж?")) return;
         setBusy(true); setError("");
@@ -2730,16 +2759,53 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                 <thead><tr><th>Дата</th><th>Тип</th><th>Сума</th><th>Спосіб</th><th>Примітка</th><th /></tr></thead>
                 <tbody>
                   {list.map(p => (
-                    <tr key={p.row}>
+                    <React.Fragment key={p.row}>
+                    <tr>
                       <td>{(p.date || "").slice(0, 10)}</td>
                       <td>{p.type}{p.recipient === PAYMENT_ME && <span className="pay-mine" title={p.type === "Повернення клієнту" ? "Повернули ви" : "Гроші отримали ви, а не підрядник"}>{p.type === "Повернення клієнту" ? "повернув я" : "отримав я"}</span>}</td>
                       <td><b>{money(p.amount)}</b></td>
                       <td>{p.method || "—"}</td>
                       <td>{p.note || "—"}</td>
-                      <td>{isSettlementPayment(p)
-                        ? <span className="pay-settle" title="Запис розрахунку з підрядником — скасовується цілим розрахунком у «Касі»">розрахунок</span>
-                        : <IconButton icon="trash" label="Видалити платіж" disabled={busy} onClick={() => remove(p)} />}</td>
+                      <td>{isSettlementPayment(p) || String(p.request_id || "").startsWith("take:")
+                        ? <span className="pay-settle" title="Запис розрахунку з підрядником — змінюється лише в «Касі»">розрахунок</span>
+                        : <span className="pay-actions">
+                            {(isOwner || p.type !== PAYMENT_SHARE) && <IconButton icon="edit" label="Змінити платіж" disabled={busy} onClick={() => startEdit(p)} />}
+                            <IconButton icon="trash" label="Видалити платіж" disabled={busy} onClick={() => remove(p)} />
+                          </span>}</td>
                     </tr>
+                    {edit && edit.row === p.row && (
+                      <tr className="pay-edit-row"><td colSpan={6}>
+                        <div className="grid2">
+                          <div className="field"><label htmlFor="pay-edit-type">Тип платежу</label>
+                            <select id="pay-edit-type" value={edit.type} onChange={e => { const v = e.target.value; setEdit(x => ({ ...x, type: v })); }}>
+                              {(typeOptions.includes(edit.type) ? typeOptions : typeOptions.concat([edit.type])).map(t => <option key={t} value={t}>{t}</option>)}
+                            </select></div>
+                          {paymentHasRecipient(edit.type) && (
+                            <div className="field"><label htmlFor="pay-edit-recipient">{edit.type === "Повернення клієнту" ? "Хто повернув гроші" : "Хто отримав гроші"}</label>
+                              <select id="pay-edit-recipient" value={edit.recipient} onChange={e => { const v = e.target.value; setEdit(x => ({ ...x, recipient: v })); }}>
+                                <option value="">Підрядник</option>
+                                <option value={PAYMENT_ME}>Я (готівка в касу, моя картка чи ФОП)</option>
+                              </select></div>
+                          )}
+                          <div className="field"><label htmlFor="pay-edit-amount">Сума, ₴</label>
+                            <input id="pay-edit-amount" type="number" inputMode="decimal" min="0" value={edit.amount} onChange={e => { const v = e.target.value; setEdit(x => ({ ...x, amount: v })); }} /></div>
+                          <div className="field"><label htmlFor="pay-edit-method">Спосіб</label>
+                            <select id="pay-edit-method" value={edit.method} onChange={e => { const v = e.target.value; setEdit(x => ({ ...x, method: v })); }}>
+                              {(PAYMENT_METHODS.includes(edit.method) || !edit.method ? PAYMENT_METHODS : PAYMENT_METHODS.concat([edit.method])).map(m => <option key={m} value={m}>{m}</option>)}
+                            </select></div>
+                          <div className="field"><label htmlFor="pay-edit-date">Дата</label>
+                            <input id="pay-edit-date" type="date" value={edit.date} onChange={e => { const v = e.target.value; setEdit(x => ({ ...x, date: v })); }} /></div>
+                          <div className="field"><label htmlFor="pay-edit-note">Примітка</label>
+                            <input id="pay-edit-note" value={edit.note} maxLength={500} onChange={e => { const v = e.target.value; setEdit(x => ({ ...x, note: v })); }} /></div>
+                        </div>
+                        <p className="margin-calc-note">Борг клієнта, маржа, каса й акти перерахуються самі. Якщо після цього платежу вже проведено розрахунок із підрядником, змінити можна лише дату й примітку.</p>
+                        <div className="quick-actions">
+                          <button type="button" className="btn small" disabled={busy} onClick={saveEdit}>{busy ? "Зберігаю…" : "Зберегти"}</button>
+                          <button type="button" className="btn secondary small" disabled={busy} onClick={() => setEdit(null)}>Скасувати</button>
+                        </div>
+                      </td></tr>
+                    )}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
@@ -6634,7 +6700,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           ["Рахунок на оплату", "Картка → «Рахунки на оплату» → «Виставити рахунок»: оберіть, кому платити (ФОП чи ТОВ), перевірте покупця й суму (за замовчуванням — залишок). Назву позиції можна виправити олівцем ✏️. «Створити рахунок (PDF)» — номер СФ-… присвоюється сам, PDF-файл зберігається на компʼютер. Кнопки «PDF» і «Word» у списку рахунків дають файл ще раз; «📤 Надіслати файл» відкриває «Поділитися» з самим файлом (Telegram, Viber, пошта) — клієнт отримує файл, а не посилання на CRM. «✏️ Найменування» змінює назви в уже створеному рахунку (номер і суми ті самі)."],
           ["Маржа від підрядника", "Коли підрядник перерахував вашу частину — внесіть платіж типом «Маржа від підрядника». Кабінет рахує, скільки ще має надійти."],
           ["Повернення", "Гроші, повернуті клієнтові, вносьте типом «Повернення клієнту»."],
-          ["Переплата", "Якщо внесено більше, ніж належить, картка покаже помаранчеву позначку «Переплата клієнта» або «Підрядник переплатив маржу», а замовлення зʼявиться в «Нагадуваннях». Найчастіше це платіж не того типу: видаліть його в списку платежів і внесіть знову з правильним типом."],
+          ["Виправити платіж", "✏️ біля платежу в списку — змініть суму, тип, спосіб, дату, «хто отримав» чи примітку й натисніть «Зберегти». Борг клієнта, маржа, каса й акти перерахуються самі. Записи розрахунку з підрядником («розрахунок») змінюються лише в «Касі». Якщо після платежу за замовленням уже проведено розрахунок із підрядником чи «Забрати маржу», змінити можна лише дату й примітку — суму спершу скасуйте той розрахунок. «Частку підряднику» змінює лише власник."],
+          ["Переплата", "Якщо внесено більше, ніж належить, картка покаже помаранчеву позначку «Переплата клієнта» або «Підрядник переплатив маржу», а замовлення зʼявиться в «Нагадуваннях». Найчастіше це платіж не того типу: натисніть ✏️ біля нього в списку платежів і виправте тип."],
           ["Скасування", "«Швидкі дії» → «Скасувати» → вкажіть причину. Причина потрібна завжди — за нею видно, чому втрачаються замовлення."],
           ["Завершення", "Кошик доставлено, клієнт розрахувався, маржу отримано — поставте статус «Завершено»."],
         ],

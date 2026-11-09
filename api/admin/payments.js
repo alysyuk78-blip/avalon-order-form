@@ -59,6 +59,31 @@ module.exports = async function handler(req, res) {
       return res.status(201).json(forRole(req, data));
     }
 
+    // Правка платежу (олівець у картці). Тип «Частка підряднику» — лише власник (скрипт перевіряє й старий тип рядка).
+    if (req.method === "PATCH") {
+      const body = req.body || {};
+      const payment = body.payment || {};
+      const row = Number(body.row || 0);
+      if (!(row >= 2)) return res.status(400).json({ error: "row required" });
+      if (!String(body.order_number || "").trim()) return res.status(400).json({ error: "order_number required" });
+      if (!(Number(payment.amount) > 0)) return res.status(400).json({ error: "Сума платежу мусить бути більшою за нуль" });
+      if (OWNER_ONLY_TYPES.includes(String(payment.type || "").trim()) && !requireOwner(req, res)) return;
+      const data = await callAdminSheets("update_payment", {
+        row,
+        order_number: String(body.order_number).trim(),
+        payment_request_id: String(body.payment_request_id || ""),
+        payment_type: String(body.payment_type || ""),
+        payment_amount: body.payment_amount,
+        payment: {
+          type: payment.type, amount: payment.amount, method: payment.method, note: payment.note,
+          date: payment.date, recipient: payment.recipient === "Я" ? "Я" : "",
+        },
+        is_owner: roleOf(req) !== "manager",
+      });
+      console.log(JSON.stringify({ level: "info", msg: "done", route: "/api/admin/payments", method: req.method, ms: Date.now() - startedAt, requestId }));
+      return res.status(200).json(forRole(req, data));
+    }
+
     if (req.method === "DELETE") {
       const row = Number((req.query && req.query.row) || (req.body && req.body.row) || 0);
       const orderNumber = (req.query && req.query.order_number) || (req.body && req.body.order_number) || "";

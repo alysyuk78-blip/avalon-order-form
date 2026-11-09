@@ -35,7 +35,7 @@ var CAL_KEY = "AVALON";
 
 // Дії кабінету, що ПИШУТЬ у таблицю — лише вони потребують блокування скрипта.
 var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "delete_order_item", "add_order_item", "upsert_partner",
-  "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment",
+  "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment", "update_payment",
   "settlement_pdf", "settlement_send", "migrate_legacy_payments",
   "rates_save", "rates_delete", "order_reprice",
   "cash_add", "cash_delete", "cash_settle", "cash_settle_undo", "cash_take", "invoice_create", "invoice_update_lines"];
@@ -3833,6 +3833,67 @@ function adminDeletePayment_(data) {
   return { status: "ok", summary: summary, payments: num ? readPayments_(num) : [] };
 }
 
+/**
+ * Правка платежу (олівець у картці): дата, тип, сума, спосіб, хто отримав, примітка.
+ * Записи розрахунку з підрядником («Каса») тут не правляться — лише скасуванням розрахунку.
+ * Після розрахунку з підрядником за цим замовленням гроші платежу, внесеного ДО нього, не міняємо
+ * (розрахунок рахувався з них) — лише дату й примітку; інакше спершу скасувати розрахунок.
+ * Каса, борг клієнта, маржа й акти рахуються з платежів, тож після правки перераховуються самі.
+ */
+function adminUpdatePayment_(data) {
+  var row = Number((data && data.row) || 0);
+  if (!(row >= 2)) throw new Error("Вкажіть рядок платежу");
+  var expectedOrder = String((data && data.order_number) || "").trim();
+  if (!expectedOrder) throw new Error("Вкажіть номер замовлення платежу");
+  var sh = paymentsSheet_();
+  if (row > sh.getLastRow()) throw new Error("Платіж уже видалено або список змінився");
+  var cur = sh.getRange(row, 1, 1, PAYMENT_RECIPIENT_COL).getValues()[0]; // A:H
+  var num = String(cur[1] || "").trim();
+  var changed = "Список платежів змінився. Оновіть картку й повторіть правку";
+  if (num !== expectedOrder) throw new Error(changed);
+  var curRequestId = String(cur[6] || "").trim();
+  if (curRequestId.indexOf(SETTLE_PREFIX) === 0) throw new Error("Цей запис зроблено розрахунком із підрядником — його змінює лише скасування розрахунку в «Касі»");
+  if (curRequestId.indexOf(TAKE_PREFIX) === 0) throw new Error("Цей запис зроблено кнопкою «Забрати маржу» — змінюйте його в розділі «Каса»");
+  // Той самий рядок, що бачив кабінет: за ID запиту, а в старих платежів без ID — за типом і сумою.
+  var expectedRequestId = String((data && data.payment_request_id) || "").trim();
+  if (expectedRequestId && curRequestId !== expectedRequestId) throw new Error(changed);
+  var curType = String(cur[2] || "").trim();
+  var curAmount = Math.round(Number(cur[3]) || 0);
+  if (!expectedRequestId && (String((data && data.payment_type) || "").trim() !== curType
+      || Math.round(Number(data && data.payment_amount)) !== curAmount)) throw new Error(changed);
+  var isOwner = !!(data && data.is_owner === true);
+  if (curType === PAYMENT_SHARE && !isOwner) throw new Error("«Частку підряднику» змінює лише власник");
+
+  var p = (data && data.payment) || {};
+  var amount = Math.round(Number(p.amount) || 0);
+  if (!(amount > 0)) throw new Error("Сума платежу мусить бути більшою за нуль");
+  var type = String(p.type || "").trim();
+  if (PAYMENT_TYPES.indexOf(type) < 0) throw new Error("Невідомий тип платежу: " + type);
+  if (type === PAYMENT_SHARE && !isOwner) throw new Error("«Частку підряднику» вносить лише власник");
+  var recipient = (type !== PAYMENT_MARGIN && type !== PAYMENT_SHARE && String(p.recipient || "").trim() === PAYMENT_ME) ? PAYMENT_ME : "";
+  var method = String(p.method == null ? cur[4] : p.method).slice(0, 60);
+  var note = String(p.note == null ? cur[5] : p.note).slice(0, 500);
+  var date = toISODate(p.date) || toISODate(cur[0]) || Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd");
+  var curRecipient = /^я(?![а-яіїєґa-z])/i.test(String(cur[7] || "").trim()) ? PAYMENT_ME : "";
+  var moneyChanged = amount !== curAmount || type !== curType || recipient !== curRecipient || method !== String(cur[4] || "");
+  if (moneyChanged) {
+    var settledLater = readPayments_(num).some(function (q) {
+      var rid = String(q.request_id || "");
+      return q.row > row && (rid.indexOf(SETTLE_PREFIX) === 0 || rid.indexOf(TAKE_PREFIX) === 0);
+    });
+    if (settledLater) {
+      throw new Error("Після цього платежу за замовленням уже проведено розрахунок із підрядником або «Забрати маржу» (розділ «Каса»). "
+        + "Суму, тип, спосіб і хто отримав зараз змінити не можна — спершу скасуйте той розрахунок. Дату й примітку змінити можна.");
+    }
+  }
+  sh.getRange(row, 1, 1, PAYMENT_RECIPIENT_COL).setValues([[date, num, type, amount, method, note, curRequestId, recipient]]);
+  sh.getRange(row, 1).setNumberFormat("dd.MM.yyyy");
+  sh.getRange(row, 4).setNumberFormat("#,##0 ₴");
+  var summary = syncOrderPaymentState_(num);
+  SpreadsheetApp.flush();
+  return { status: "ok", summary: summary, payments: readPayments_(num) };
+}
+
 // ===================== КАСА ГОТІВКИ І ВЗАЄМОЗАЛІК З ПІДРЯДНИКОМ =====================
 // Клієнт інколи платить власнику (готівка, картка). Ці гроші — платіж клієнта з «Хто отримав: Я».
 // Каса — лише ГОТІВКА: оплати клієнтів «Я» + «Готівка», маржа від підрядника готівкою, мінус
@@ -5527,6 +5588,7 @@ function handleAdminRequest_(data) {
     if (action === "settlement_send") return jsonOut(adminSettlementSend_(data));
     if (action === "add_payment") return jsonOut(adminAddPayment_(data));
     if (action === "delete_payment") return jsonOut(adminDeletePayment_(data));
+    if (action === "update_payment") return jsonOut(adminUpdatePayment_(data));
     if (action === "migrate_legacy_payments") return jsonOut(adminMigrateLegacyPayments_(data));
     if (action === "list_partners") return jsonOut(adminListPartners_());
     if (action === "upsert_partner") return jsonOut(adminUpsertPartner_(data.partner || data));

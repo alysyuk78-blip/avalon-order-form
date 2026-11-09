@@ -333,6 +333,40 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   assert.equal(ctx.adminDeletePayment_({ row, order_number: "ORD-011026-001", is_owner: true }).status, "ok");
 }
 {
+  // Правка платежу олівцем: каса, борг клієнта й маржа перераховуються з журналу самі.
+  const { ctx, sheets } = setup([{ num: "ORD-011026-001", revenue: 5000, profit: 1500 }],
+    [pay("ORD-011026-001", "Передоплата", 1000, { method: "Готівка", me: true })]);
+  assert.equal(ctx.adminCashBox_().cash.expected, 1000);
+  // Не той рядок (тип/сума інші, ніж бачив кабінет) — нічого не міняємо.
+  assert.throws(() => ctx.adminUpdatePayment_({ row: 2, order_number: "ORD-011026-001", payment_type: "Передоплата", payment_amount: 999,
+    payment: { type: "Передоплата", amount: 1500, method: "Готівка", recipient: "Я" } }), /змінився/);
+  let res = ctx.adminUpdatePayment_({ row: 2, order_number: "ORD-011026-001", payment_type: "Передоплата", payment_amount: 1000,
+    payment: { type: "Передоплата", amount: 1500, method: "Готівка", recipient: "Я", note: "уточнено", date: "2026-10-05" } });
+  assert.equal(res.summary.client_paid, 1500);
+  assert.equal(ctx.adminCashBox_().cash.expected, 1500, "каса — з новою сумою");
+  assert.deepEqual(sheets["Платежі"].data[1].slice(1, 8), ["ORD-011026-001", "Передоплата", 1500, "Готівка", "уточнено", "", "Я"]);
+  // Гроші отримав не власник, а підрядник — з каси зникають.
+  ctx.adminUpdatePayment_({ row: 2, order_number: "ORD-011026-001", payment_type: "Передоплата", payment_amount: 1500,
+    payment: { type: "Передоплата", amount: 1500, method: "На карту", recipient: "" } });
+  assert.equal(ctx.adminCashBox_().cash.expected, 0);
+  assert.throws(() => ctx.adminUpdatePayment_({ row: 2, order_number: "ORD-011026-001", payment_type: "Передоплата", payment_amount: 1500,
+    payment: { type: "Передоплата", amount: 0 } }), /більшою за нуль/);
+  // «Частку підряднику» менеджер не ставить і не правит.
+  assert.throws(() => ctx.adminUpdatePayment_({ row: 2, order_number: "ORD-011026-001", payment_type: "Передоплата", payment_amount: 1500,
+    payment: { type: "Частка підряднику", amount: 1500 } }), /лише власник/);
+  // Записи розрахунку з підрядником правляться лише в «Касі».
+  sheets["Платежі"].data.push(["2026-10-09", "ORD-011026-001", "Маржа від підрядника", 300, "Взаємозалік", "", "settle:s1:1", ""]);
+  const settleRow = sheets["Платежі"].data.length;
+  assert.throws(() => ctx.adminUpdatePayment_({ row: settleRow, order_number: "ORD-011026-001", payment_request_id: "settle:s1:1",
+    payment: { type: "Маржа від підрядника", amount: 500 } }), /скасування розрахунку/);
+  // Після розрахунку за цим замовленням: гроші ранішого платежу не міняються, а дата й примітка — так.
+  assert.throws(() => ctx.adminUpdatePayment_({ row: 2, order_number: "ORD-011026-001", payment_type: "Передоплата", payment_amount: 1500,
+    payment: { type: "Передоплата", amount: 2000, method: "На карту", recipient: "" } }), /спершу скасуйте/);
+  res = ctx.adminUpdatePayment_({ row: 2, order_number: "ORD-011026-001", payment_type: "Передоплата", payment_amount: 1500,
+    payment: { type: "Передоплата", amount: 1500, method: "На карту", recipient: "", note: "квитанція 7", date: "2026-10-06" } });
+  assert.equal(res.payments[0].note, "квитанція 7");
+}
+{
   // Акт за період: замовлення, де клієнт платив і Avalon, — лише борг (без суми, маржі й «у Avalon»), розпис у «Детально».
   const { ctx } = setup(
     [{ num: "ORD-011026-001", revenue: 10000, profit: 3000 },
@@ -1105,6 +1139,17 @@ const pay = (num, type, amount, extra) => Object.assign({ num, type, amount }, e
   const mine = await call("POST", {}, { payment: { order_number: "ORD-011026-001", type: "Доплата", amount: 100, recipient: "Я" } }, manager);
   assert.equal(mine.statusCode, 201);
   assert.equal(calls.pop().payload.payment.recipient, "Я");
+  // Правка платежу: менеджер не перетворює платіж на «Частку підряднику»; скрипт дізнається, хто правив.
+  assert.equal((await call("PATCH", {}, { row: 3, order_number: "ORD-011026-001", payment: { type: "Частка підряднику", amount: 100 } }, manager)).statusCode, 403);
+  assert.equal((await call("PATCH", {}, { row: 1, order_number: "ORD-011026-001", payment: { type: "Доплата", amount: 100 } }, owner)).statusCode, 400);
+  const edited = await call("PATCH", {}, { row: 3, order_number: "ORD-011026-001", payment_type: "Доплата", payment_amount: 100,
+    payment: { type: "Доплата", amount: 150, method: "Готівка", recipient: "Я", note: "x", date: "2026-11-02" } }, manager);
+  assert.equal(edited.statusCode, 200);
+  const upd = calls.pop();
+  assert.equal(upd.action, "update_payment");
+  assert.equal(upd.payload.is_owner, false);
+  assert.equal(upd.payload.payment.amount, 150);
+  assert.equal(upd.payload.payment.recipient, "Я");
   assert.equal((await call("POST", {}, { payment: { order_number: "ORD-011026-001", type: "Частка підряднику", amount: 100 } }, manager)).statusCode, 403);
   assert.equal((await call("POST", {}, { payment: { order_number: "ORD-011026-001", type: "Частка підряднику", amount: 100 } }, owner)).statusCode, 201);
   assert.equal((await call("POST", {}, { payment: { order_number: "ORD-011026-001", type: "Доплата", amount: 100, request_id: "settle:a:1" } }, owner)).statusCode, 400);
