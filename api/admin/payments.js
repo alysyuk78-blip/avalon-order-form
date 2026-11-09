@@ -64,7 +64,7 @@ module.exports = async function handler(req, res) {
       const body = req.body || {};
       const payment = body.payment || {};
       const row = Number(body.row || 0);
-      if (!(row >= 2)) return res.status(400).json({ error: "row required" });
+      if (!(row >= 2) || !Number.isInteger(row)) return res.status(400).json({ error: "row required" });
       if (!String(body.order_number || "").trim()) return res.status(400).json({ error: "order_number required" });
       if (!(Number(payment.amount) > 0)) return res.status(400).json({ error: "Сума платежу мусить бути більшою за нуль" });
       if (OWNER_ONLY_TYPES.includes(String(payment.type || "").trim()) && !requireOwner(req, res)) return;
@@ -74,6 +74,8 @@ module.exports = async function handler(req, res) {
         payment_request_id: String(body.payment_request_id || ""),
         payment_type: String(body.payment_type || ""),
         payment_amount: body.payment_amount,
+        payment_method: body.payment_method == null ? undefined : String(body.payment_method),
+        payment_note: body.payment_note == null ? undefined : String(body.payment_note),
         payment: {
           type: payment.type, amount: payment.amount, method: payment.method, note: payment.note,
           date: payment.date, recipient: payment.recipient === "Я" ? "Я" : "",
@@ -90,7 +92,7 @@ module.exports = async function handler(req, res) {
       const paymentRequestId = (req.query && req.query.payment_request_id) || (req.body && req.body.payment_request_id) || "";
       const paymentType = (req.query && req.query.payment_type) || (req.body && req.body.payment_type) || "";
       const paymentAmount = (req.query && req.query.payment_amount) || (req.body && req.body.payment_amount);
-      if (!(row >= 2)) return res.status(400).json({ error: "row required" });
+      if (!(row >= 2) || !Number.isInteger(row)) return res.status(400).json({ error: "row required" });
       if (!String(orderNumber).trim()) return res.status(400).json({ error: "order_number required" });
       const data = await callAdminSheets("delete_payment", {
         row,

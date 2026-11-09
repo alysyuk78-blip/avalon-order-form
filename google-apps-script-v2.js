@@ -3796,7 +3796,7 @@ function adminAddPayment_(data) {
 
 function adminDeletePayment_(data) {
   var row = Number((data && data.row) || 0);
-  if (!(row >= 2)) throw new Error("Вкажіть рядок платежу");
+  if (!(row >= 2) || Math.floor(row) !== row) throw new Error("Вкажіть рядок платежу");
   var expectedOrder = String((data && data.order_number) || "").trim();
   if (!expectedOrder) throw new Error("Вкажіть номер замовлення платежу");
   var sh = paymentsSheet_();
@@ -3827,10 +3827,73 @@ function adminDeletePayment_(data) {
       Number(actual[2]) !== Number(data.payment_amount)) {
     throw new Error("Список платежів змінився. Оновіть картку й повторіть видалення");
   }
+  var isOwnerDel = !!(data && data.is_owner === true);
+  // Платіж, з якого вже рахувався розрахунок із підрядником чи «Забрати маржу», не видаляємо: інакше акт,
+  // борг і каса розійдуться (і видалення + повторне внесення обходило б захист правки).
+  if (paymentSettledAfter_(num, row)) throw new Error(paymentLockedMsg_(isOwnerDel, "видалити"));
+  // Каса спільна: готівку цього платежу могли віддати за інше замовлення. Перевіряємо «на сухо»: тимчасово
+  // прибираємо рядок, дивимось касу; якщо щось ламається — повертаємо рядок як був.
+  var full = sh.getRange(row, 1, 1, PAYMENT_RECIPIENT_COL).getValues()[0];
+  var before = paymentGuardSnapshot_();
+  sh.getRange(row, 1, 1, PAYMENT_RECIPIENT_COL).setValues([full.map(function () { return ""; })]);
+  var broken = paymentGuardBroken_(before, paymentGuardSnapshot_(), isOwnerDel, "видалити");
+  if (broken) {
+    sh.getRange(row, 1, 1, PAYMENT_RECIPIENT_COL).setValues([full]);
+    SpreadsheetApp.flush();
+    throw new Error(broken);
+  }
   sh.deleteRow(row);
   var summary = num ? syncOrderPaymentState_(num) : null;
   SpreadsheetApp.flush();
   return { status: "ok", summary: summary, payments: num ? readPayments_(num) : [] };
+}
+
+/** За замовленням після рядка row уже проведено розрахунок із підрядником або «Забрати маржу» (записи в платежах). */
+function paymentSettledAfter_(num, row) {
+  return readPayments_(num).some(function (q) {
+    var rid = String(q.request_id || "");
+    return q.row > row && (rid.indexOf(SETTLE_PREFIX) === 0 || rid.indexOf(TAKE_PREFIX) === 0);
+  });
+}
+
+/** Текст відмови: власнику — що робити; менеджеру — без подробиць про розрахунки власника. */
+function paymentLockedMsg_(isOwner, verb) {
+  if (!isOwner) return "Цей платіж зараз " + verb + " не можна. Зверніться до власника.";
+  return "Після цього платежу за замовленням уже проведено розрахунок із підрядником або «Забрати маржу» (розділ «Каса»). "
+    + (verb === "змінити"
+      ? "Суму, тип, спосіб і хто отримав зараз змінити не можна — спершу скасуйте той розрахунок. Дату й примітку змінити можна."
+      : "Видалити його зараз не можна — спершу скасуйте той розрахунок у «Касі».");
+}
+
+/** Що правка/видалення платежу не мають зламати: готівку в касі поза передоплатами й «забрано зайве» по замовленнях. */
+function paymentGuardSnapshot_() {
+  var box = adminCashBox_();
+  var c = box.cash || {};
+  var red = {};
+  (box.margin_list || []).forEach(function (r) {
+    if (r.color === "red" && r.reason === "over_taken") red[r.order_number] = Number(r.over) || 0;
+  });
+  return { available: (Number(c.expected) || 0) - (Number(c.deposits) || 0) - (Number(c.cancelled) || 0), red: red };
+}
+
+/** Порожній рядок — усе гаразд; інакше текст помилки. Ламається лише те, що стало гіршим, ніж було. */
+function paymentGuardBroken_(before, after, isOwner, verb) {
+  if (after.available <= -1 && after.available < before.available - 0.5) {
+    if (!isOwner) return "Цей платіж зараз " + verb + " не можна. Зверніться до власника.";
+    return "Після цього в касі вийде мінус " + money_(Math.round(-after.available)) + " ₴: готівку цього платежу вже віддано "
+      + "(розрахунок із підрядником, «Забрати маржу» чи витрата). Спершу скасуйте той розрахунок у «Касі» "
+      + "або, якщо каса справді інша, внесіть «Коригування після перерахунку».";
+  }
+  var nums = Object.keys(after.red);
+  for (var i = 0; i < nums.length; i++) {
+    var n = nums[i];
+    if (after.red[n] >= 1 && after.red[n] > (before.red[n] || 0) + 0.5) {
+      if (!isOwner) return "Цей платіж зараз " + verb + " не можна. Зверніться до власника.";
+      return "Після цього за замовленням " + n + " вийде, що маржі забрано більше, ніж належить (на " + money_(after.red[n])
+        + " ₴). Спершу скасуйте «Забрати маржу» за ним у розділі «Каса».";
+    }
+  }
+  return "";
 }
 
 /**
@@ -3842,7 +3905,7 @@ function adminDeletePayment_(data) {
  */
 function adminUpdatePayment_(data) {
   var row = Number((data && data.row) || 0);
-  if (!(row >= 2)) throw new Error("Вкажіть рядок платежу");
+  if (!(row >= 2) || Math.floor(row) !== row) throw new Error("Вкажіть рядок платежу");
   var expectedOrder = String((data && data.order_number) || "").trim();
   if (!expectedOrder) throw new Error("Вкажіть номер замовлення платежу");
   var sh = paymentsSheet_();
@@ -3853,14 +3916,17 @@ function adminUpdatePayment_(data) {
   if (num !== expectedOrder) throw new Error(changed);
   var curRequestId = String(cur[6] || "").trim();
   if (curRequestId.indexOf(SETTLE_PREFIX) === 0) throw new Error("Цей запис зроблено розрахунком із підрядником — його змінює лише скасування розрахунку в «Касі»");
-  if (curRequestId.indexOf(TAKE_PREFIX) === 0) throw new Error("Цей запис зроблено кнопкою «Забрати маржу» — змінюйте його в розділі «Каса»");
-  // Той самий рядок, що бачив кабінет: за ID запиту, а в старих платежів без ID — за типом і сумою.
+  if (curRequestId.indexOf(TAKE_PREFIX) === 0) throw new Error("Цей запис зроблено кнопкою «Забрати маржу» — його не змінюють, а скасовують у розділі «Каса»");
+  // Той самий рядок і той самий вміст, що бачив кабінет: ID запиту, тип і сума — завжди (інакше правка
+  // з другої відкритої картки тихо перезаписала б щойно змінене), спосіб і примітка — якщо кабінет їх надіслав.
   var expectedRequestId = String((data && data.payment_request_id) || "").trim();
   if (expectedRequestId && curRequestId !== expectedRequestId) throw new Error(changed);
   var curType = String(cur[2] || "").trim();
   var curAmount = Math.round(Number(cur[3]) || 0);
-  if (!expectedRequestId && (String((data && data.payment_type) || "").trim() !== curType
-      || Math.round(Number(data && data.payment_amount)) !== curAmount)) throw new Error(changed);
+  if (String((data && data.payment_type) || "").trim() !== curType
+      || Math.round(Number(data && data.payment_amount)) !== curAmount) throw new Error(changed);
+  if (data && data.payment_method != null && String(data.payment_method) !== String(cur[4] || "")) throw new Error(changed);
+  if (data && data.payment_note != null && String(data.payment_note) !== String(cur[5] || "")) throw new Error(changed);
   var isOwner = !!(data && data.is_owner === true);
   if (curType === PAYMENT_SHARE && !isOwner) throw new Error("«Частку підряднику» змінює лише власник");
 
@@ -3874,19 +3940,23 @@ function adminUpdatePayment_(data) {
   var method = String(p.method == null ? cur[4] : p.method).slice(0, 60);
   var note = String(p.note == null ? cur[5] : p.note).slice(0, 500);
   var date = toISODate(p.date) || toISODate(cur[0]) || Utilities.formatDate(new Date(), "Europe/Kiev", "yyyy-MM-dd");
-  var curRecipient = /^я(?![а-яіїєґa-z])/i.test(String(cur[7] || "").trim()) ? PAYMENT_ME : "";
+  // «Маржа» і «Частка» не мають «хто отримав»: стару позначку «Я» в них не вважаємо зміною грошей.
+  var curRecipient = (curType !== PAYMENT_MARGIN && curType !== PAYMENT_SHARE
+    && /^я(?![а-яіїєґa-z])/i.test(String(cur[7] || "").trim())) ? PAYMENT_ME : "";
   var moneyChanged = amount !== curAmount || type !== curType || recipient !== curRecipient || method !== String(cur[4] || "");
+  if (moneyChanged && paymentSettledAfter_(num, row)) throw new Error(paymentLockedMsg_(isOwner, "змінити"));
+  // Каса спільна для всіх замовлень: готівку цього платежу могли віддати за інше замовлення. Пишемо, дивимось
+  // касу; якщо стало гірше (мінус у касі, «забрано зайве») — повертаємо рядок як був.
+  var before = moneyChanged ? paymentGuardSnapshot_() : null;
+  sh.getRange(row, 1, 1, PAYMENT_RECIPIENT_COL).setValues([[date, num, type, amount, method, note, curRequestId, recipient]]);
   if (moneyChanged) {
-    var settledLater = readPayments_(num).some(function (q) {
-      var rid = String(q.request_id || "");
-      return q.row > row && (rid.indexOf(SETTLE_PREFIX) === 0 || rid.indexOf(TAKE_PREFIX) === 0);
-    });
-    if (settledLater) {
-      throw new Error("Після цього платежу за замовленням уже проведено розрахунок із підрядником або «Забрати маржу» (розділ «Каса»). "
-        + "Суму, тип, спосіб і хто отримав зараз змінити не можна — спершу скасуйте той розрахунок. Дату й примітку змінити можна.");
+    var broken = paymentGuardBroken_(before, paymentGuardSnapshot_(), isOwner, "змінити");
+    if (broken) {
+      sh.getRange(row, 1, 1, PAYMENT_RECIPIENT_COL).setValues([cur]);
+      SpreadsheetApp.flush();
+      throw new Error(broken);
     }
   }
-  sh.getRange(row, 1, 1, PAYMENT_RECIPIENT_COL).setValues([[date, num, type, amount, method, note, curRequestId, recipient]]);
   sh.getRange(row, 1).setNumberFormat("dd.MM.yyyy");
   sh.getRange(row, 4).setNumberFormat("#,##0 ₴");
   var summary = syncOrderPaymentState_(num);
