@@ -2268,6 +2268,15 @@ function contractorClientPaid_(num) {
   } catch (e) { return null; }
 }
 
+/** Адреса з населеним пунктом попереду: «Відділення №200: …» → «Київ, Відділення №200: …» (якщо міста в адресі ще немає). */
+function addressWithCity_(address, city) {
+  var a = String(address || "").trim(), c = String(city || "").trim();
+  if (!a || !c) return a;
+  if (a.toLowerCase().indexOf(c.toLowerCase().replace(/^(м\.|с\.|смт\.?|селище)\s*/, "")) >= 0) return a;
+  if (/^(м\.|с\.|смт\.?|селище|місто)\s/i.test(a)) return a;   // уже з населеним пунктом (інше місто)
+  return c + ", " + a;
+}
+
 /**
  * Клієнт у формі пише отримувача вільним текстом: «Отримувач:\nПанчук Олег Володимирович\n0680265430».
  * Витягуємо імʼя й телефон (він іде в «Доставку»), решту приміток повертаємо без цього блоку.
@@ -2632,7 +2641,7 @@ function buildProductionMsg_(data, opts) {
   var del = "";
   var transport = data.transport === "Інше" ? (data.transport_custom || "") : (data.transport || "");
   if (transport) del += "• Спосіб: <b>" + esc_(transport) + "</b>\n";
-  if (show.address && data.delivery_address) del += "• Адреса: " + esc_(data.delivery_address) + "\n";
+  if (show.address && data.delivery_address) del += "• Адреса: " + esc_(addressWithCity_(data.delivery_address, show.city ? data.city : "")) + "\n";
   // Отримувач — інша людина, ніж замовник: підряднику для ТТН (разом з адресою — ті самі пташки).
   if (DELIVERY_PAY_LABELS[data.delivery_pay]) del += "• Оплата доставки: <b>" + DELIVERY_PAY_LABELS[data.delivery_pay] + "</b>\n";
   if (show.address && data.recipient && (data.recipient.name || data.recipient.phone)) {
