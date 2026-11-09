@@ -111,6 +111,23 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       return list;
     }, []);
     const constructionBase = (v) => String(v || "").replace(/\s*\+\s*кришка\s*$/i, "").trim();
+    // AVL-02 «Екран під утеплювач»: розміри — це екран, а кронштейни бувають різної довжини — окреме поле,
+    // що живе рядком «Довжина кронштейнів: N мм» у характеристиках (так його читає й повідомлення підряднику).
+    const BRACKET_LEN_LINE = /^\s*Довжина кронштейнів\s*:/i;
+    // У полі — лише цілі міліметри («630 мм»). Інший запис («0,63 м») поле не показує й не чіпає, доки не вписати нове.
+    const BRACKET_LEN_MM = /^\s*Довжина кронштейнів\s*:\s*(\d+)\s*(?:мм)?\s*$/i;
+    const getBracketLen = (specs) => {
+      const line = String(specs || "").split("\n").find(l => BRACKET_LEN_MM.test(l));
+      const v = line ? line.match(BRACKET_LEN_MM)[1] : "";
+      return Number(v) > 0 ? v : "";
+    };
+    const setBracketLen = (specs, v) => {
+      const val = String(v || "").replace(/\D/g, "").replace(/^0+/, "");
+      const lines = String(specs || "").split("\n");
+      // Порожнє — прибираємо лише рядок у мм; новий — замінює будь-який запис довжини.
+      const rest = lines.filter(l => !(val ? BRACKET_LEN_LINE.test(l) : BRACKET_LEN_MM.test(l)));
+      return (val ? ["Довжина кронштейнів: " + val + " мм"] : []).concat(rest).join("\n").replace(/^\n+|\n+$/g, "");
+    };
     const constructionModelId = (v) => ((String(v || "").toUpperCase().match(/AVL-(?:SK-|K-)?\d{2}(?:\/\d)?/) || [])[0] || "");
     // Ключ для порівняння варіантів: регістр, пробіли й дужки не важать; латинські літери, схожі
     // на кириличні (K/К, P/Р…), — однакові.
@@ -149,6 +166,64 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           </select>
           {custom && <input style={{ marginTop: 6 }} value={v} placeholder={placeholder || "Впишіть свій варіант"} onChange={e => onChange(e.target.value, null)} />}
         </div>
+      );
+    }
+
+    /**
+     * Отримувач посилки й платник, якщо це не замовник (картка й «Нове замовлення»). parties — { recipient?, payer? };
+     * setParty(who, patch | null) — null прибирає.
+     */
+    function PartiesFields({ parties, setParty, idPrefix = "" }) {
+      return (
+        <>
+          <label className="parties-toggle"><input type="checkbox" checked={!!parties.recipient}
+            onChange={e => setParty("recipient", e.target.checked ? { name: "", phone: "" } : null)} /> Отримувач посилки — інша людина</label>
+          {parties.recipient && (
+            <div className="grid2">
+              <div className="field"><label htmlFor={idPrefix + "recipient-name"}>Отримувач (ПІБ)</label>
+                <input id={idPrefix + "recipient-name"} value={parties.recipient.name || ""} onChange={e => setParty("recipient", { name: e.target.value })} /></div>
+              <div className="field"><label htmlFor={idPrefix + "recipient-phone"}>Телефон отримувача</label>
+                <input id={idPrefix + "recipient-phone"} value={parties.recipient.phone || ""} onChange={e => setParty("recipient", { phone: e.target.value })} placeholder="+380…" /></div>
+            </div>
+          )}
+          <label className="parties-toggle"><input type="checkbox" checked={!!parties.payer}
+            onChange={e => setParty("payer", e.target.checked ? { kind: "company", name: "" } : null)} /> Платник — інший (на кого рахунок / хто оплачує)</label>
+          {parties.payer && (
+            <>
+              <div className="quick-actions" style={{ margin: "4px 0 8px" }}>
+                {[["person", "Фізична особа"], ["fop", "ФОП"], ["company", "Компанія"]].map(([k, t]) => (
+                  <button key={k} type="button" className={parties.payer.kind === k ? "active" : ""} onClick={() => setParty("payer", { kind: k })}>{t}</button>
+                ))}
+              </div>
+              <div className="grid2">
+                <div className="field"><label htmlFor={idPrefix + "payer-name"}>{parties.payer.kind === "company" ? "Назва компанії" : "ПІБ"}</label>
+                  <input id={idPrefix + "payer-name"} value={parties.payer.name || ""} onChange={e => setParty("payer", { name: e.target.value })} /></div>
+                {parties.payer.kind !== "person" && (
+                  <div className="field"><label htmlFor={idPrefix + "payer-code"}>{parties.payer.kind === "company" ? "Код ЄДРПОУ" : "РНОКПП"}</label>
+                    <input id={idPrefix + "payer-code"} value={parties.payer.code || ""} onChange={e => setParty("payer", { code: e.target.value })} /></div>
+                )}
+                {parties.payer.kind === "company" && (
+                  <div className="field"><label htmlFor={idPrefix + "payer-ipn"}>ІПН (якщо платник ПДВ)</label>
+                    <input id={idPrefix + "payer-ipn"} value={parties.payer.ipn || ""} onChange={e => setParty("payer", { ipn: e.target.value })} /></div>
+                )}
+                {parties.payer.kind !== "person" && (
+                  <>
+                    <div className="field"><label htmlFor={idPrefix + "payer-iban"}>IBAN</label>
+                      <input id={idPrefix + "payer-iban"} value={parties.payer.iban || ""} onChange={e => setParty("payer", { iban: e.target.value })} /></div>
+                    <div className="field"><label htmlFor={idPrefix + "payer-bank"}>Банк</label>
+                      <input id={idPrefix + "payer-bank"} value={parties.payer.bank || ""} onChange={e => setParty("payer", { bank: e.target.value })} /></div>
+                    <div className="field"><label htmlFor={idPrefix + "payer-address"}>Адреса</label>
+                      <input id={idPrefix + "payer-address"} value={parties.payer.address || ""} onChange={e => setParty("payer", { address: e.target.value })} /></div>
+                  </>
+                )}
+                <div className="field"><label htmlFor={idPrefix + "payer-phone"}>Телефон</label>
+                  <input id={idPrefix + "payer-phone"} value={parties.payer.phone || ""} onChange={e => setParty("payer", { phone: e.target.value })} /></div>
+                <div className="field"><label htmlFor={idPrefix + "payer-email"}>E-mail</label>
+                  <input id={idPrefix + "payer-email"} value={parties.payer.email || ""} onChange={e => setParty("payer", { email: e.target.value })} /></div>
+              </div>
+        </>
+      )}
+        </>
       );
     }
 
@@ -4637,53 +4712,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
 
             {blockTitle("parties", "Отримувач і платник", <>Отримувач і платник</>)}
             <p className="send-hint" style={{ margin: "0 0 8px" }}>Якщо не вказано — отримувач і платник той самий, що й замовник.</p>
-            <label className="parties-toggle"><input type="checkbox" checked={!!parties.recipient}
-              onChange={e => setParty("recipient", e.target.checked ? { name: "", phone: "" } : null)} /> Отримувач посилки — інша людина</label>
-            {parties.recipient && (
-              <div className="grid2">
-                <div className="field"><label htmlFor="recipient-name">Отримувач (ПІБ)</label>
-                  <input id="recipient-name" value={parties.recipient.name || ""} onChange={e => setParty("recipient", { name: e.target.value })} /></div>
-                <div className="field"><label htmlFor="recipient-phone">Телефон отримувача</label>
-                  <input id="recipient-phone" value={parties.recipient.phone || ""} onChange={e => setParty("recipient", { phone: e.target.value })} placeholder="+380…" /></div>
-              </div>
-            )}
-            <label className="parties-toggle"><input type="checkbox" checked={!!parties.payer}
-              onChange={e => setParty("payer", e.target.checked ? { kind: "company", name: "" } : null)} /> Платник — інший (на кого рахунок / хто оплачує)</label>
-            {parties.payer && (
-              <>
-                <div className="quick-actions" style={{ margin: "4px 0 8px" }}>
-                  {[["person", "Фізична особа"], ["fop", "ФОП"], ["company", "Компанія"]].map(([k, t]) => (
-                    <button key={k} type="button" className={parties.payer.kind === k ? "active" : ""} onClick={() => setParty("payer", { kind: k })}>{t}</button>
-                  ))}
-                </div>
-                <div className="grid2">
-                  <div className="field"><label htmlFor="payer-name">{parties.payer.kind === "company" ? "Назва компанії" : "ПІБ"}</label>
-                    <input id="payer-name" value={parties.payer.name || ""} onChange={e => setParty("payer", { name: e.target.value })} /></div>
-                  {parties.payer.kind !== "person" && (
-                    <div className="field"><label htmlFor="payer-code">{parties.payer.kind === "company" ? "Код ЄДРПОУ" : "РНОКПП"}</label>
-                      <input id="payer-code" value={parties.payer.code || ""} onChange={e => setParty("payer", { code: e.target.value })} /></div>
-                  )}
-                  {parties.payer.kind === "company" && (
-                    <div className="field"><label htmlFor="payer-ipn">ІПН (якщо платник ПДВ)</label>
-                      <input id="payer-ipn" value={parties.payer.ipn || ""} onChange={e => setParty("payer", { ipn: e.target.value })} /></div>
-                  )}
-                  {parties.payer.kind !== "person" && (
-                    <>
-                      <div className="field"><label htmlFor="payer-iban">IBAN</label>
-                        <input id="payer-iban" value={parties.payer.iban || ""} onChange={e => setParty("payer", { iban: e.target.value })} /></div>
-                      <div className="field"><label htmlFor="payer-bank">Банк</label>
-                        <input id="payer-bank" value={parties.payer.bank || ""} onChange={e => setParty("payer", { bank: e.target.value })} /></div>
-                      <div className="field"><label htmlFor="payer-address">Адреса</label>
-                        <input id="payer-address" value={parties.payer.address || ""} onChange={e => setParty("payer", { address: e.target.value })} /></div>
-                    </>
-                  )}
-                  <div className="field"><label htmlFor="payer-phone">Телефон</label>
-                    <input id="payer-phone" value={parties.payer.phone || ""} onChange={e => setParty("payer", { phone: e.target.value })} /></div>
-                  <div className="field"><label htmlFor="payer-email">E-mail</label>
-                    <input id="payer-email" value={parties.payer.email || ""} onChange={e => setParty("payer", { email: e.target.value })} /></div>
-                </div>
-              </>
-            )}
+            <PartiesFields parties={parties} setParty={setParty} />
             <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy || stale || !partiesDraft} onClick={async () => {
               const p = partiesDraft || {};
               if (p.payer && !String(p.payer.name || "").trim()) return setError("Вкажіть платника або зніміть пташку «Платник — інший».");
@@ -4828,6 +4857,11 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                       </>
                     )}
                   </div>
+                  {!isServiceItem && constructionModelId(form.construction) === "AVL-02" && (
+                    <div className="field"><label htmlFor="order-bracket-len">Довжина кронштейнів, мм (AVL-02: розміри вище — це екран)</label>
+                      <input id="order-bracket-len" type="number" min="0" value={getBracketLen(form.specs)} placeholder="Напр. 630"
+                        onChange={e => { const v = e.target.value; setForm(f => ({ ...f, specs: setBracketLen(f.specs, v) })); }} /></div>
+                  )}
                   <div className="field"><label>{isServiceItem ? "Характеристики (матеріал, товщина, розміри, деталі)" : "Характеристики (для виробів не з каталогу)"}</label>
                     <textarea value={form.specs} onChange={e => setForm({ ...form, specs: e.target.value })} rows="3"
                       placeholder="Розміри, матеріал, комплектація — по рядку на пункт" /></div>
@@ -5116,6 +5150,9 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       usePricingInfo();   // попередня ціна — за чинними ставками
       const [kind, setKind] = useState("basket"); // basket | bracket | other | service
       const [npCityRef, setNpCityRef] = useState(""); // місто в довіднику Нової пошти — для відділень
+      // Отримувач і платник, якщо це не замовник (інша людина чи організація).
+      const [newParties, setNewParties] = useState({});
+      const setNewParty = (who, patch) => setNewParties(p => ({ ...p, [who]: patch === null ? undefined : { ...(p[who] || {}), ...patch } }));
       const [form, setForm] = useState({
         client: "", phone: "", contact_method: "phone", contact_telegram: "", contact_email: "",
         city: "", source: "Телефон",
@@ -5213,6 +5250,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           ...f,
           basket_model: id,
           construction_type: m ? m.construction + " · " + m.id : "",
+          // Довжина кронштейнів — поле лише AVL-02: інша модель її не бачить, тож рядок прибираємо.
+          specs: id === "AVL-02" ? f.specs : setBracketLen(f.specs, ""),
           unit: m && m.bracket ? "комп." : "шт.",
           // Кришка підставляється з каталогу: у AVL-06/07/08 вона передбачена конструкцією,
           // у AVL-02 — неможлива. Інакше ціна порахувалась би без неї.
@@ -5247,6 +5286,10 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         }
         if (kind === "other" && !form.product_name.trim()) return setError("Вкажіть назву виробу");
         if (!form.unit.trim()) return setError("Вкажіть одиницю виміру");
+        if (newParties.payer && !String(newParties.payer.name || "").trim()) return setError("Вкажіть платника або зніміть пташку «Платник — інший».");
+        if (newParties.recipient && !String(newParties.recipient.name || "").trim() && !String(newParties.recipient.phone || "").trim()) {
+          return setError("Вкажіть отримувача або зніміть пташку «Отримувач — інша людина».");
+        }
         if (form.commission_pct !== "" && !newBreakdown.rateValid) {
           return setError("Комісія з маржі має бути від 0% до 99,99%");
         }
@@ -5265,6 +5308,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           discount_uah: priceUnitOverride ? "" : (discountTotal || ""),
           price_total: revenueTotal || "",
           commission_pct: form.commission_pct === "" ? null : Number(form.commission_pct),
+          parties: { recipient: newParties.recipient || null, payer: newParties.payer || null },
         };
         const fingerprint = JSON.stringify(order);
         if (pendingCreateRef.current.fingerprint !== fingerprint) {
@@ -5360,6 +5404,10 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               </div>
             </div>
 
+            <div className="section-title">Отримувач і платник</div>
+            <p className="send-hint" style={{ margin: "0 0 8px" }}>Якщо не вказано — отримувач і платник той самий, що й клієнт. Платником може бути інша людина, ФОП чи компанія — на нього виставиться рахунок.</p>
+            <PartiesFields parties={newParties} setParty={setNewParty} idPrefix="new-" />
+
             <div className="section-title">Товар</div>
             <div className="quick-actions" style={{ marginBottom: 10 }}>
               {[{ v: "basket", l: "Кошик з каталогу" }, { v: "bracket", l: "Кронштейни" }, { v: "other", l: "Інший виріб" }, { v: "service", l: "Послуга" }].map(o => (
@@ -5447,7 +5495,15 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                   <input type="number" value={form.size_h} onChange={e => set("size_h", e.target.value)} /></div>
                 <div className="field"><label>Глибина, мм</label>
                   <input type="number" value={form.size_d} onChange={e => set("size_d", e.target.value)} /></div>
+                {!isOther && model && model.id === "AVL-02" && (
+                  <div className="field"><label htmlFor="new-bracket-len">Довжина кронштейнів, мм</label>
+                    <input id="new-bracket-len" type="number" min="0" value={getBracketLen(form.specs)} placeholder="Напр. 630"
+                      onChange={e => set("specs", setBracketLen(form.specs, e.target.value))} /></div>
+                )}
               </div>
+            )}
+            {!isOther && model && model.id === "AVL-02" && (
+              <p className="send-hint" style={{ margin: "4px 0 0" }}>AVL-02: ширина, висота й глибина — розміри екрана; кронштейни — окремо, довжиною.</p>
             )}
             <div className="quick-actions" style={{ marginTop: 8 }}>
               {!isBracket && !isOther && model && model.coverAllowed === false && (
@@ -6724,6 +6780,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           ["Товар", "Оберіть, що замовляють: кошик, кронштейни, інший виріб чи послугу. Для кошика — модель, колір, візерунок, ширину, висоту й глибину в міліметрах, кількість. Особливості виготовлення пишіть у «Коментар до позиції» — підрядник побачить його на початку повідомлення, у блоці «⚠️ Важливо»."],
           ["Гроші", "Для кошика поля грошей можна лишити порожніми: ціна порахується за розмірами, а блок «За формулою калькулятора» одразу покаже суму. Для кронштейнів, інших виробів і послуг ціну вписуєте самі — за одиницю."],
           ["Доставка та оплата", "Дата, спосіб доставки, адреса чи відділення, спосіб оплати. Місто й відділення Нової пошти — як у формі: почніть вводити назву міста й оберіть зі списку, далі номер чи адресу відділення. Поштомати сховані — їх показує перемикач «показувати поштомати». Самовивіз чи адресна доставка — адресу пишіть вручну."],
+          ["Отримувач і платник", "Якщо посилку отримує інша людина — поставте пташку «Отримувач посилки — інша людина» і впишіть ПІБ і телефон: підрядник побачить їх у «Доставці». Платить інша людина, ФОП чи компанія — пташка «Платник — інший»: оберіть вид і впишіть реквізити, рахунок виставиться на нього. Для AVL-02 (екран під утеплювач) ширина, висота й глибина — це розміри екрана, а довжину кронштейнів впишіть в окреме поле."],
           ["Створіть замовлення", "Кнопка «Створити замовлення». Воно зʼявиться зі статусом «Нове» — далі дійте за розділом «Прийняти замовлення», починаючи з перевірки ціни."],
           ["Кілька моделей в одному замовленні", "Другу й наступні моделі додавайте через калькулятор: «Перенести в CRM» → «Наявне замовлення» → оберіть замовлення → «Додати новою позицією» → «Додати позицію в CRM»."],
         ],

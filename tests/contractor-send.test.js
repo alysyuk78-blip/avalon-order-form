@@ -1479,6 +1479,24 @@ function testAuditFixes() {
   assert.deepEqual([surcharges(cc.raw).length, basketMarkers(cc)], [0, ["~req-color-2"]], "доплати немає — дія не завершена, рядок лишається «у роботі»");
   cc.ctx.adminCreateOrder_(colored("req-color-2"));
   assert.deepEqual([surcharges(cc.raw).length, basketMarkers(cc)], [1, ["req-color-2"]], "повтор того самого запиту: кошик — один, доплата — на місці");
+  // Нове замовлення з отримувачем і платником (форма «Нове замовлення»): у всіх рядках, разом із доплатою за колір.
+  cc = colorCase(0);
+  const withParties = colored("req-parties");
+  withParties.order.parties = { recipient: { name: "Панчук Олег", phone: "0680265430" }, payer: { kind: "company", name: "ТОВ «Ромашка»", code: "12345678", ipn: "", iban: "UA00", bank: "Банк" } };
+  cc.ctx.adminCreateOrder_(withParties);
+  const partyCells = cc.raw.data.slice(1).filter((r) => r[0] === ORD).map((r) => r[50]);
+  assert.ok(partyCells.length >= 2 && partyCells.every((x) => x && x === partyCells[0]), "отримувач і платник — у кожному рядку, і в доплаті: " + JSON.stringify(partyCells));
+  const savedParties = JSON.parse(partyCells[0]);
+  assert.equal(savedParties.recipient.name, "Панчук Олег");
+  assert.equal(savedParties.payer.kind, "company");
+  assert.equal(savedParties.payer.code, "12345678");
+  // Без отримувача й платника — клітинка порожня.
+  cc = colorCase(0);
+  const noParties = colored("req-no-parties");
+  noParties.order.parties = { recipient: null, payer: null };
+  cc.ctx.adminCreateOrder_(noParties);
+  assert.ok(cc.raw.data.slice(1).filter((r) => r[0] === ORD).every((r) => !r[50]), "порожньо = замовник");
+
   // Те саме для додавання позиції до наявного замовлення.
   cc = colorCase(2);
   cc.raw.data.push(basket({ 9: "Сірий (RAL 7016)" }));
