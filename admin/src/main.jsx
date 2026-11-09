@@ -364,12 +364,21 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       // Список міста підтягуємо у фоні, щойно відомо місто, — до кліку в поле він уже готовий.
       useEffect(() => { if (cityRef) npWarehouses(cityRef).catch(() => {}); }, [cityRef]);
       const load = async (q) => {
-        const t = String(q || "").trim().toLowerCase();
         const all = await npWarehouses(cityRef);
+        // Пошук по словах: «Київ 200», «№200», «відділення 200», «Броварський 31» — назва міста, №, коми й слово
+        // «відділення» не заважають; усі решта слова мусять зустрітись в описі (число — ще й як номер).
+        const cityWords = String(city || "").toLowerCase().replace(/^(м\.|с\.|смт\.?|селище)\s*/, "").split(/[\s,.]+/).filter(Boolean);
+        const tokens = String(q || "").toLowerCase().replace(/[№#,;:.()]/g, " ").split(/\s+/)
+          .filter(w => w && !cityWords.includes(w) && !["м", "відділення", "відд", "пункт", "поштомат", "вул", "просп", "проспект"].includes(w));
+        const nums = tokens.filter(w => /^\d+$/.test(w));
         let found = all.filter(w => (postomats || !w.postomat) && (!hideLight || !(w.placeMax > 0 && w.placeMax <= 30)));
-        if (t) found = found.filter(w => w.description.toLowerCase().includes(t) || w.number === t);
+        if (tokens.length) {
+          const desc = (w) => w.description.toLowerCase();
+          found = found.filter(w => tokens.every(tok => (/^\d+$/.test(tok) && w.number === tok) || desc(w).includes(tok)));
+        }
         // Спершу — відділення саме з таким номером, далі ті, чий номер з нього починається.
-        const rank = (w) => (w.number === t ? 0 : (t && w.number.startsWith(t) ? 1 : 2));
+        const first = nums[0] || "";
+        const rank = (w) => (first && w.number === first ? 0 : (first && w.number.startsWith(first) ? 1 : 2));
         found = found.slice().sort((x, y) => rank(x) - rank(y) || (Number(x.number) || 0) - (Number(y.number) || 0));
         setCounts({ shown: Math.min(found.length, SHOW_MAX), total: found.length });
         return found.slice(0, SHOW_MAX).map(w => ({ ...w, value: w.description }));
