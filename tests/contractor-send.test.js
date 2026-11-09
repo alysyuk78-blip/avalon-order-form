@@ -783,6 +783,31 @@ function testServiceKind() {
   uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { parties: { recipient: null, payer: null } } });
   assert.equal(ps.data[1][50], "", "знято пташки — знову замовник");
   assert.deepEqual(uctx.mapOrderRow_(2, ps.data[1]).parties, {});
+  // Вид платника прибирає зайві реквізити: фізособа — без коду й банку, ФОП — без ІПН.
+  const cp = uctx.cleanParties_({ payer: { kind: "person", name: "Іван", code: "123", ipn: "9", iban: "UA1", bank: "Б", address: "А", phone: "0" } }).payer;
+  assert.deepEqual([cp.code, cp.ipn, cp.iban, cp.bank, cp.address, cp.phone], ["", "", "", "", "", "0"]);
+  assert.equal(uctx.cleanParties_({ payer: { kind: "fop", name: "ФОП", code: "123", ipn: "9" } }).payer.ipn, "");
+  // Клітинку коментарів правили вручну (не JSON) — не затираємо мовчки, а кажемо.
+  ps.data[1][51] = "мій текст"; ps.data[2][51] = "мій текст";
+  assert.throws(() => uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { block_note: { block: "client", text: "x" } } }), /не розуміє/);
+  // Записано лише в другому рядку — коментар читається звідти й не губиться.
+  ps.data[1][51] = ""; ps.data[2][51] = JSON.stringify({ product: { text: "Ескіз №2", by: "власник", at: "2026-11-06T10:00" } });
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { block_note: { block: "client", text: "Дзвонити після 18:00" } } });
+  const both = JSON.parse(ps.data[1][51]);
+  assert.ok(both.product && both.client, "старий коментар з другого рядка лишився, новий додано");
+  // Видалення позиції, де записані отримувач/платник і коментарі, — вони переходять у решту позицій.
+  ps.data[1][50] = JSON.stringify({ payer: { kind: "company", name: "ТОВ «Клієнт»" } }); ps.data[2][50] = "";
+  ps.data[2][51] = "";
+  uctx.assertItemIdentity_ = () => {};
+  uctx.syncColorSurcharge_ = () => {};
+  uctx.adminDeleteOrderItem_({ order_number: "ORD-150926-031", row: 2 });
+  assert.equal(ps.data.length, 2, "лишилась одна позиція");
+  assert.equal(JSON.parse(ps.data[1][50]).payer.name, "ТОВ «Клієнт»", "платник не зник разом із першою позицією");
+  assert.ok(JSON.parse(ps.data[1][51]).client, "коментарі не зникли разом із першою позицією");
+  // Картка бере спільні дані з першого рядка, де вони є.
+  const g2 = uctx.adminGroupOrders_([uctx.mapOrderRow_(2, orderRow("ORD-1", "Нове", {})), uctx.mapOrderRow_(3, orderRow("ORD-1", "Нове", { 50: JSON.stringify({ recipient: { name: "Оля" } }) }))], [])[0];
+  assert.equal(g2.parties.recipient.name, "Оля");
+
   // Підрядник бачить отримувача в «Доставці» (з тими самими пташками, що й адресу).
   const rrow = orderRow(ORD, "Нове", { 26: "Нова пошта", 27: "Відділення №5", 50: JSON.stringify({ recipient: { name: "Іван <Петренко>", phone: "+380501112233" } }) });
   const rctx = processingContext(makeSheet([rrow]), makeProps({ TG_TOKEN: "tg", TG_CONTRACTOR_CHAT: "-100" }), makeCalendar(), []);

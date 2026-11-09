@@ -2149,9 +2149,11 @@ function buildOrderFromRows_(sh, orderNumber) {
         processing_due: ncol >= PROCESSING_DUE_COL ? toISODate(r[PROCESSING_DUE_COL - 1]) : "",
         processing_task: ncol >= PROCESSING_TASK_COL ? String(r[PROCESSING_TASK_COL - 1] || "").trim() : "",
         // AY: отримувач посилки, якщо це не замовник (для ТТН).
-        recipient: (ncol >= PARTIES_COL ? parseJsonCell_(r[PARTIES_COL - 1]).recipient : null) || null
+        recipient: null
       };
     }
+    // AY: отримувач посилки, якщо це не замовник (для ТТН) — з першого рядка, де він записаний.
+    if (!order.recipient && ncol >= PARTIES_COL) order.recipient = parseJsonCell_(r[PARTIES_COL - 1]).recipient || null;
     String(r[31] || "").split(/\n+/).forEach(function (line) {
       line = String(line || "").trim();
       // «Коментар до моделі: …» стосується однієї позиції — він іде в її блок (comment),
@@ -5623,6 +5625,25 @@ function itemComment_(cell, rowNotes) {
   return out.join("\n");
 }
 
+/** Перше непорожнє значення колонки серед рядків замовлення (спільні поля могли лишитись лише в частині рядків). */
+function orderSharedCell_(sh, rows, col) {
+  if (sh.getMaxColumns() < col) return "";
+  for (var i = 0; i < rows.length; i++) {
+    var v = sh.getRange(rows[i], col).getValue();
+    if (v !== "" && v != null) return v;
+  }
+  return "";
+}
+/** Як parseJsonCell_, але не мовчить: непорожня клітинка з не-JSON (правили вручну) — помилка, щоб не затерти. */
+function parseJsonCellStrict_(v, title) {
+  var t = String(v == null ? "" : v).trim();
+  if (!t) return {};
+  var o = parseJsonCell_(t);
+  if (!Object.keys(o).length && t !== "{}") {
+    throw new Error("У колонці «" + title + "» цього замовлення текст, який кабінет не розуміє (правили вручну?). Виправте чи очистіть клітинку в таблиці.");
+  }
+  return o;
+}
 /** Комірка з JSON-обʼєктом → обʼєкт (порожня чи зіпсована — {}). */
 function parseJsonCell_(v) {
   var t = String(v == null ? "" : v).trim();
@@ -5639,8 +5660,12 @@ function cleanParties_(src) {
   var py = p.payer || {};
   if (txt(py.name)) {
     var kind = ["person", "fop", "company"].indexOf(py.kind) >= 0 ? py.kind : "person";
-    out.payer = { kind: kind, name: txt(py.name), code: txt(py.code, 20), ipn: txt(py.ipn, 20), iban: txt(py.iban, 40),
-      bank: txt(py.bank), address: txt(py.address, 300), phone: txt(py.phone, 40), email: txt(py.email, 120) };
+    // Фізособа — без коду, ІПН і банківських реквізитів; ФОП — без ІПН (його вказує лише компанія-платник ПДВ):
+    // інакше після перемикання виду в рахунок потрапили б реквізити попереднього.
+    var person = kind === "person";
+    out.payer = { kind: kind, name: txt(py.name), code: person ? "" : txt(py.code, 20), ipn: kind === "company" ? txt(py.ipn, 20) : "",
+      iban: person ? "" : txt(py.iban, 40), bank: person ? "" : txt(py.bank), address: person ? "" : txt(py.address, 300),
+      phone: txt(py.phone, 40), email: txt(py.email, 120) };
   }
   return out;
 }
@@ -5785,13 +5810,15 @@ function adminGroupOrders_(orders, payments) {
         processing_due: o.processing_due,  // термін опрацювання підрядником
         processing_task: o.processing_task,
         cancel_reason: o.cancel_reason,  // причина скасування (AW)
-        parties: o.parties || {},        // отримувач і платник (AY)
-        block_notes: o.block_notes || {},  // коментарі до блоків (AZ)
+        parties: {},                      // отримувач і платник (AY) — нижче, з першого рядка, де вони є
+        block_notes: {},                  // коментарі до блоків (AZ) — так само
         list_price: 0,
         discount_uah: 0
       };
     }
     var g = byNum[o.order_number];
+    if (o.parties && Object.keys(o.parties).length && !Object.keys(g.parties).length) g.parties = o.parties;
+    if (o.block_notes && Object.keys(o.block_notes).length && !Object.keys(g.block_notes).length) g.block_notes = o.block_notes;
     g.items_count += 1;
     // Чи є вже порахований кошик — від цього залежить, якими ставками рахується замовлення.
     var kindOfItem = String(o.product_kind || "");
@@ -6231,6 +6258,11 @@ function adminAddOrderItem_(data) {
       var v = base[col - 1];
       if (v !== "" && v != null) sh.getRange(row, col).setValue(v);
     });
+    // Отримувач і платник, коментарі до блоків — теж спільні: беремо з будь-якого рядка, де вони є.
+    [PARTIES_COL, BLOCK_NOTES_COL].forEach(function (col) {
+      var shared = orderSharedCell_(sh, rows, col);
+      if (shared) sh.getRange(row, col).setValue(shared);
+    });
     // Роздрібна ціна / знижка — тим самим кодом, що й правка фінансів у кабінеті.
     var fin = {};
     if (it.cost_total != null && it.cost_total !== "") fin.cost_total = Number(it.cost_total);
@@ -6282,6 +6314,14 @@ function adminDeleteOrderItem_(data) {
   if (isColorSurchargeRow_(sh.getRange(row, 1, 1, ADMIN_ORDER_COLS).getValues()[0])) {
     PropertiesService.getScriptProperties().setProperty(colorWaivedKey_(num), "1");
   }
+  // Отримувач і платник, коментарі до блоків — спільні для замовлення: переносимо в позиції, що лишаються,
+  // інакше після видалення рядка, де вони записані, вони б зникли.
+  var keep = rows.filter(function (r) { return r !== row; });
+  [PARTIES_COL, BLOCK_NOTES_COL].forEach(function (col) {
+    var shared = orderSharedCell_(sh, rows, col);
+    if (!shared) return;
+    keep.forEach(function (r) { if (String(sh.getRange(r, col).getValue() || "") === "") sh.getRange(r, col).setValue(shared); });
+  });
   sh.deleteRow(row);
   // Прибрали останній кошик небазового кольору — доплата за колір більше не потрібна.
   try { syncColorSurcharge_(sh, num, undefined, true); } catch (colorErr) { console.error("Доплата за колір: " + colorErr); }
@@ -6492,7 +6532,7 @@ function adminUpdateOrder_(data) {
     var bn = patch.block_note || {};
     var bkey = String(bn.block || "");
     if (BLOCK_NOTE_KEYS.indexOf(bkey) < 0) throw new Error("Невідомий блок картки для коментаря");
-    var notesNow = parseJsonCell_(sh.getRange(targetRows[0], BLOCK_NOTES_COL).getValue());
+    var notesNow = parseJsonCellStrict_(orderSharedCell_(sh, targetRows, BLOCK_NOTES_COL), "Коментарі до блоків");
     var btext = String(bn.text == null ? "" : bn.text).trim().slice(0, 2000);
     if (btext) notesNow[bkey] = { text: btext, by: data.actor === "manager" ? "менеджер" : "власник", at: nowIsoKyiv_() };
     else delete notesNow[bkey];

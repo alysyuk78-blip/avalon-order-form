@@ -2774,12 +2774,13 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             // Платник замовлення — не замовник: позначка «Платив: …» на початку примітки платежу.
             <div className="field"><label>Хто платив</label>
               <div className="quick-actions">
-                {[clientName, payerName].filter(Boolean).map(n => {
-                  const tag = "Платив: " + n;
-                  const on = form.note.startsWith(tag);
-                  const rest = form.note.replace(/^Платив: [^;]*;?\s*/, "");
+                {[clientName, payerName].filter(Boolean).map((n, i, names) => {
+                  // Позначка — лише наша «Платив: <імʼя>» на початку (ціла або перед «; »); ручний текст не чіпаємо.
+                  const ours = (note) => names.find(x => note === "Платив: " + x || note.startsWith("Платив: " + x + "; ")) || "";
+                  const strip = (note) => { const who = ours(note); return who ? note.slice(("Платив: " + who).length).replace(/^; /, "") : note; };
+                  const on = ours(form.note) === n;
                   return <button key={n} type="button" className={on ? "active" : ""}
-                    onClick={() => setForm(f => ({ ...f, note: on ? rest : tag + (rest ? "; " + rest : "") }))}>{n}</button>;
+                    onClick={() => setForm(f => { const rest = strip(f.note); return { ...f, note: on ? rest : "Платив: " + n + (rest ? "; " + rest : "") }; })}>{n}</button>;
                 })}
               </div>
             </div>
@@ -3725,6 +3726,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       useEffect(() => { setNpCityRef(""); }, [orderNumber]);
       // Коментар до блоку картки, який зараз пишуть: { block, text }.
       const [noteEdit, setNoteEdit] = useState(null);
+      // Збережено лише коментар чи отримувача/платника — незбережені правки в інших блоках форми не чіпаємо.
+      const keepFormOnce = useRef(false);
       // Отримувач і платник, які зараз правлять (null — як збережено).
       const [partiesDraft, setPartiesDraft] = useState(null);
       useEffect(() => { setNoteEdit(null); setPartiesDraft(null); }, [orderNumber]);
@@ -3971,7 +3974,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           shownOrderRef.current = orderNumber;
           const keepIdx = sameOrder && itemIdxRef.current < (initialData.items || []).length ? itemIdxRef.current : 0;
           setData(initialData);
-          applyItemToForm(initialData, keepIdx);
+          if (keepFormOnce.current && sameOrder) keepFormOnce.current = false;
+          else applyItemToForm(initialData, keepIdx);
           setItemIdx(keepIdx);
           setError("");
           setStale(!snapshotFresh);
@@ -3990,6 +3994,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       // сервер звірить їх зі ставками замовлення й не прийме суми за застарілими.
       async function save(patch, extra) {
         if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return; }
+        keepFormOnce.current = false;
         setBusy(true); setError("");
         try {
           const res = await api("/api/admin/order", {
@@ -4136,20 +4141,42 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return; }
         setBusy(true); setError("");
         try {
-          // Без applyItemToForm: незбережені правки в інших блоках не губляться.
+          // Без applyItemToForm (і keepFormOnce нижче — для оновлення з кабінету): незбережені правки в інших блоках лишаються.
           const res = await api("/api/admin/order", { method: "PATCH", token,
             body: { order_number: orderNumber, row: form.row, patch: { block_note: { block, text } }, expect: itemExpect(data && data.items && data.items[itemIdx]) } });
           setData(res);
+          keepFormOnce.current = true;
           onChanged && onChanged(res);
           setNoteEdit(null);
         } catch (e) { setError(e.message); } finally { setBusy(false); }
+      }
+      // Отримувач і платник — так само, без перезапису решти форми.
+      async function saveParties(parties) {
+        if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return false; }
+        setBusy(true); setError("");
+        try {
+          const res = await api("/api/admin/order", { method: "PATCH", token,
+            body: { order_number: orderNumber, row: form.row, patch: { parties }, expect: itemExpect(data && data.items && data.items[itemIdx]) } });
+          setData(res);
+          keepFormOnce.current = true;
+          onChanged && onChanged(res);
+          return true;
+        } catch (e) { setError(e.message); return false; } finally { setBusy(false); }
+      }
+      // Відкрити коментар іншого блоку: незбережений текст поточного не губимо мовчки.
+      function openNote(block) {
+        if (noteEdit && noteEdit.block !== block) {
+          const saved = (blockNotes[noteEdit.block] && blockNotes[noteEdit.block].text) || "";
+          if (noteEdit.text.trim() !== saved.trim() && !window.confirm("Коментар до іншого блоку не збережено. Відкрити новий і не зберігати той?")) return;
+        }
+        setNoteEdit({ block, text: (blockNotes[block] && blockNotes[block].text) || "" });
       }
       const noteDate = (iso) => { const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/); return m ? m[3] + "." + m[2] + "." + m[1] + (m[4] ? " " + m[4] + ":" + m[5] : "") : String(iso || ""); };
       function noteButton(block, label) {
         const has = !!blockNotes[block];
         return <button type="button" className={"block-note-btn" + (has ? " has" : "")} disabled={busy || stale}
           title={(has ? "Змінити коментар" : "Додати коментар") + " до блоку «" + label + "»"} aria-label={"Коментар до блоку «" + label + "»"}
-          onClick={() => setNoteEdit({ block, text: (blockNotes[block] && blockNotes[block].text) || "" })}>💬{has ? "" : <span> коментар</span>}</button>;
+          onClick={() => openNote(block)}>💬{has ? "" : <span> коментар</span>}</button>;
       }
       function noteBody(block, label) {
         const n = blockNotes[block];
@@ -4573,8 +4600,11 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               const p = partiesDraft || {};
               if (p.payer && !String(p.payer.name || "").trim()) return setError("Вкажіть платника або зніміть пташку «Платник — інший».");
               if (p.recipient && !String(p.recipient.name || "").trim() && !String(p.recipient.phone || "").trim()) return setError("Вкажіть отримувача або зніміть пташку «Отримувач — інша людина».");
-              if (await save({ parties: { recipient: p.recipient || null, payer: p.payer || null } })) setPartiesDraft(null);
+              if (await saveParties({ recipient: p.recipient || null, payer: p.payer || null })) setPartiesDraft(null);
             }}>Зберегти отримувача й платника</button>
+            {partiesDraft && (
+              <span className="send-hint" style={{ marginLeft: 10 }}>Незбережені зміни · <button type="button" className="link-btn" onClick={() => setPartiesDraft(null)}>скасувати</button></span>
+            )}
 
             {blockTitle("product", "Товар", <>Товар{items.length > 1 ? " (позиція " + (itemIdx + 1) + " з " + items.length + ")" : ""}</>)}
             {items.length > 1 && (
@@ -6599,7 +6629,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         lead: "Кожен платіж — у розділ «Платежі» того ж дня.",
         steps: [
           ["Оплата клієнта", "«Платежі» → тип «Передоплата», «Доплата» або «Оплата повністю» → сума → «Внести платіж». Картка показує, скільки сплачено і скільки лишилось. Борг клієнта рахується лише з «Виготовлення»: поки замовлення в опрацюванні чи на погодженні, несплачене — «до оплати», а сплачене — «Передоплата»."],
-          ["Отримувач і платник", "Картка → «Отримувач і платник». За замовчуванням усе — замовник (з ким спілкуємось). Посилку отримує інша людина — пташка «Отримувач посилки — інша людина», ПІБ і телефон: підрядник побачить їх у «Доставці» (для ТТН). Платить інша особа чи компанія — пташка «Платник — інший» і реквізити: рахунок на оплату підставить саме платника, а в платежі можна позначити «Хто платив»."],
+          ["Отримувач і платник", "Картка → «Отримувач і платник». За замовчуванням усе — замовник (з ким спілкуємось). Посилку отримує інша людина — пташка «Отримувач посилки — інша людина», ПІБ і телефон: підрядник побачить їх у «Доставці» (для ТТН), якщо в «Надіслати підряднику» стоїть пташка «Адреса». Платить інша особа чи компанія — пташка «Платник — інший» і реквізити: рахунок на оплату підставить саме платника, а в платежі можна позначити «Хто платив»."],
           ["Коментар до блоку", "Біля назви кожного блоку картки (Замовник, Товар, Фінанси, Доставка…) і під блоками Платежі, Рахунки, Файли, Підрядник — кнопка 💬. Напишіть коментар і «Зберегти»: його видно в картці з підписом, хто й коли написав. Підряднику й клієнту коментарі не надсилаються."],
           ["Рахунок на оплату", "Картка → «Рахунки на оплату» → «Виставити рахунок»: оберіть, кому платити (ФОП чи ТОВ), перевірте покупця й суму (за замовчуванням — залишок). Назву позиції можна виправити олівцем ✏️. «Створити рахунок (PDF)» — номер СФ-… присвоюється сам, PDF-файл зберігається на компʼютер. Кнопки «PDF» і «Word» у списку рахунків дають файл ще раз; «📤 Надіслати файл» відкриває «Поділитися» з самим файлом (Telegram, Viber, пошта) — клієнт отримує файл, а не посилання на CRM. «✏️ Найменування» змінює назви в уже створеному рахунку (номер і суми ті самі)."],
           ["Маржа від підрядника", "Коли підрядник перерахував вашу частину — внесіть платіж типом «Маржа від підрядника». Кабінет рахує, скільки ще має надійти."],
