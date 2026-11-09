@@ -114,11 +114,19 @@ import invoiceLib from '../../lib/avalon-invoice.js';
     // AVL-02 «Екран під утеплювач»: розміри — це екран, а кронштейни бувають різної довжини — окреме поле,
     // що живе рядком «Довжина кронштейнів: N мм» у характеристиках (так його читає й повідомлення підряднику).
     const BRACKET_LEN_LINE = /^\s*Довжина кронштейнів\s*:/i;
-    const getBracketLen = (specs) => { const m = String(specs || "").match(/^\s*Довжина кронштейнів\s*:\s*(\d+)/im); return m ? m[1] : ""; };
+    // У полі — лише цілі міліметри («630 мм»). Інший запис («0,63 м») поле не показує й не чіпає, доки не вписати нове.
+    const BRACKET_LEN_MM = /^\s*Довжина кронштейнів\s*:\s*(\d+)\s*(?:мм)?\s*$/i;
+    const getBracketLen = (specs) => {
+      const line = String(specs || "").split("\n").find(l => BRACKET_LEN_MM.test(l));
+      const v = line ? line.match(BRACKET_LEN_MM)[1] : "";
+      return Number(v) > 0 ? v : "";
+    };
     const setBracketLen = (specs, v) => {
-      const rest = String(specs || "").split("\n").filter(l => !BRACKET_LEN_LINE.test(l));
-      const val = String(v || "").replace(/\D/g, "");
-      return (val ? ["Довжина кронштейнів: " + val + " мм"] : []).concat(rest).join("\n").replace(/\n+$/, "");
+      const val = String(v || "").replace(/\D/g, "").replace(/^0+/, "");
+      const lines = String(specs || "").split("\n");
+      // Порожнє — прибираємо лише рядок у мм; новий — замінює будь-який запис довжини.
+      const rest = lines.filter(l => !(val ? BRACKET_LEN_LINE.test(l) : BRACKET_LEN_MM.test(l)));
+      return (val ? ["Довжина кронштейнів: " + val + " мм"] : []).concat(rest).join("\n").replace(/^\n+|\n+$/g, "");
     };
     const constructionModelId = (v) => ((String(v || "").toUpperCase().match(/AVL-(?:SK-|K-)?\d{2}(?:\/\d)?/) || [])[0] || "");
     // Ключ для порівняння варіантів: регістр, пробіли й дужки не важать; латинські літери, схожі
@@ -5242,6 +5250,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           ...f,
           basket_model: id,
           construction_type: m ? m.construction + " · " + m.id : "",
+          // Довжина кронштейнів — поле лише AVL-02: інша модель її не бачить, тож рядок прибираємо.
+          specs: id === "AVL-02" ? f.specs : setBracketLen(f.specs, ""),
           unit: m && m.bracket ? "комп." : "шт.",
           // Кришка підставляється з каталогу: у AVL-06/07/08 вона передбачена конструкцією,
           // у AVL-02 — неможлива. Інакше ціна порахувалась би без неї.

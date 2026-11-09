@@ -2269,22 +2269,42 @@ function contractorClientPaid_(num) {
  * Витягуємо імʼя й телефон (він іде в «Доставку»), решту приміток повертаємо без цього блоку.
  */
 function extractRecipientFromNotes_(notes) {
+  var PHONE = /^\+?[\d(][\d\s()-]{7,18}\d$/;
+  var SAME = /^(той самий|та сама|те саме|як замовник|замовник|я|сам|сама)\.?$/i;
+  // ПІБ: слова з великої літери або ініціали («Панчук О.В.»), без «!»/«?» у кінці.
+  function isName(t, minWords) {
+    var words = String(t).trim().split(/\s+/);
+    if (words.length < (minWords || 1) || words.length > 4 || /[!?,;:]$/.test(t)) return false;
+    return words.every(function (w) {
+      return /^[A-ZА-ЯІЇЄҐ][a-zа-яіїєґʼ'’\-]+$/.test(w) || /^[A-ZА-ЯІЇЄҐ]\.(?:\s?[A-ZА-ЯІЇЄҐ]\.)?$/.test(w);
+    });
+  }
   var lines = String(notes || "").split(/\n/);
   for (var i = 0; i < lines.length; i++) {
-    var m = String(lines[i]).trim().match(/^(?:Отримувач|Одержувач)\s*:?\s*(.*)$/i);
-    if (!m || (m[1] && !/^[A-Za-zА-Яа-яІіЇїЄєҐґ+\d(]/.test(m[1]))) continue;
-    var parts = m[1] ? [m[1]] : [], end = i;
-    for (var j = i + 1; j < lines.length && parts.length < 3; j++) {
-      var t = String(lines[j]).trim();
-      if (!t || /^[^\d]{1,40}:\s*\S/.test(t) || /^[❓❗⚠]/.test(t)) break;
-      if (!/^[+\d\s()-]{9,20}$/.test(t) && !/^[A-Za-zА-Яа-яІіЇїЄєҐґʼ'’.\- ]{2,80}$/.test(t)) break;
-      parts.push(t); end = j;
+    // Саме «Отримувач:» (або «Отримувач» окремим рядком), а не «Отримувач посилки…» чи «Отримувачем буде…».
+    var m = String(lines[i]).trim().match(/^(?:Отримувач|Одержувач)\s*(?::\s*(.*))?$/i);
+    if (!m) continue;
+    var first = String(m[1] || "").trim();
+    if (SAME.test(first)) continue;
+    var name = "", phone = "", used = [i];
+    if (first) {
+      var split = first.match(/^(.+?)[\s,;]+(\+?[\d(][\d\s()-]{7,18}\d)$/);
+      if (PHONE.test(first)) phone = first;
+      else if (split && isName(split[1])) { name = split[1].trim(); phone = split[2].trim(); }
+      else if (isName(first)) name = first;
+      else continue;   // незрозумілий текст — лишаємо в примітках як є
     }
-    var phone = "", name = [];
-    parts.forEach(function (x) { if (/^[+\d\s()-]{9,20}$/.test(x)) phone = phone || x.trim(); else name.push(x); });
-    if (!name.length && !phone) continue;
-    var rest = lines.slice(0, i).concat(lines.slice(end + 1)).join("\n");
-    return { name: name.join(" ").trim(), phone: phone, rest: rest };
+    var blankSkipped = false;
+    for (var j = i + 1; j < lines.length && (!name || !phone); j++) {
+      var t = String(lines[j]).trim();
+      if (!t) { if (blankSkipped || (!name && !phone)) break; blankSkipped = true; continue; }
+      if (!phone && PHONE.test(t)) { phone = t; used.push(j); }
+      else if (!name && isName(t, 2)) { name = t; used.push(j); }
+      else break;
+    }
+    if (!name && !phone) continue;
+    var rest = lines.filter(function (x, k) { return used.indexOf(k) < 0; }).join("\n");
+    return { name: name, phone: phone, rest: rest };
   }
   return null;
 }
@@ -2318,7 +2338,7 @@ function buildProductionMsg_(data, opts) {
       if (!line) return;
       var len = line.match(/^Довжина кронштейнів\s*:\s*(.+)$/i);
       if (len && !out.length) out.length = len[1].trim();
-      else if (WARN_START.test(line)) out.warns.push(line.replace(WARN_START, "").trim());
+      else if (WARN_START.test(line)) { var w = line.replace(WARN_START, "").trim(); if (w) out.warns.push(w); }
       else out.rest.push(line);
     });
     return out;
@@ -2380,7 +2400,11 @@ function buildProductionMsg_(data, opts) {
     var text = String((it && (it.comment || it.item_comment || it.model_comment)) || "").trim();
     var lines = text.split(/\n+/).map(function (x) { return String(x || "").replace(WARN_START, "").trim(); }).filter(function (x) { return x; });
     var isBasket = !it.product_type || it.product_type === "basket";
-    var warns = isBasket ? splitSpecs(it).warns : [];
+    var seen = {};
+    lines.forEach(function (x) { seen[x.toLowerCase()] = true; });
+    var warns = (isBasket ? splitSpecs(it).warns : []).filter(function (w) {
+      var k = w.toLowerCase(); if (seen[k]) return false; seen[k] = true; return true;
+    });
     if (!lines.length && !warns.length) return;
     var label = multiBlocks ? itemLabel_(it, i) + ": " : "";
     if (lines.length) {
@@ -2391,8 +2415,15 @@ function buildProductionMsg_(data, opts) {
   });
   if (important) m += "\n⚠️ <b>ВАЖЛИВО</b>\n" + important;
 
+  // Отримувач, якого клієнт вписав у примітки, — у «Доставку» (за пташкою «Адреса», незалежно від «Приміток»).
+  var notesSrc = String(data.notes || "");
+  if (show.address && notesSrc && !(data.recipient && (data.recipient.name || data.recipient.phone))) {
+    var rec = extractRecipientFromNotes_(notesSrc);
+    if (rec) { data = Object.assign({}, data, { recipient: { name: rec.name, phone: rec.phone } }); notesSrc = rec.rest; }
+  }
+
   // 📝 ПРИМІТКИ — загальні до замовлення (без дублів того, що вже стоїть у позиціях і контактах).
-  if (show.notes && data.notes) {
+  if (show.notes && notesSrc.trim()) {
     // Рядки про довжину/віброподушки вже показані у кожній позиції окремо — у злитих
     // примітках вони лише дублюються (а в багатопозиційних могли б і заплутати).
     // Контакти (Telegram / E-mail / Viber / WhatsApp) форма теж дописує в примітки —
@@ -2407,12 +2438,7 @@ function buildProductionMsg_(data, opts) {
         if (key) itemCommentLines_[key] = true;
       });
     });
-    var notesText = String(data.notes);
-    if (show.address && !(data.recipient && (data.recipient.name || data.recipient.phone))) {
-      var rec = extractRecipientFromNotes_(notesText);
-      if (rec) { data = Object.assign({}, data, { recipient: { name: rec.name, phone: rec.phone } }); notesText = rec.rest; }
-    }
-    var noteLines = notesText.split(/\n+/).filter(function (line) {
+    var noteLines = notesSrc.split(/\n+/).filter(function (line) {
       var t = String(line || "").trim();
       if (!t || /^(Довжина кронштейнів|Віброподушки|Telegram|E-mail|Viber|WhatsApp)\s*:/i.test(t)) return false;
       if (itemCommentLines_[t.toLowerCase()]) return false;

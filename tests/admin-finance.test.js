@@ -397,6 +397,33 @@ function testRemovableSidePanelPricing() {
   assert.ok(fromCard.includes("• Отримувач: Іван, 0501112233"), fromCard);
   // Звичайний рядок про отримувача без імені/телефону не ламається.
   assert.equal(ctx.extractRecipientFromNotes_("Отримувач — мій брат"), null);
+  // Знахідки перевірки: чужі рядки, другий телефон, «Отримувач посилки…», «той самий», порожній рядок, ім'я з телефоном.
+  const ex = (t) => ctx.extractRecipientFromNotes_(t);
+  let r1 = ex("Привіт\nОтримувач: Іван\nДякую");
+  assert.equal(r1.name, "Іван"); assert.ok(r1.rest.includes("Дякую") && r1.rest.includes("Привіт"));
+  r1 = ex("Отримувач:\nІваненко Петро\nПотрібно швидко");
+  assert.equal(r1.name, "Іваненко Петро"); assert.ok(r1.rest.includes("Потрібно швидко"));
+  r1 = ex("Отримувач:\nІван Петренко\n0680265430\n0501112233");
+  assert.equal(r1.phone, "0680265430"); assert.ok(r1.rest.includes("0501112233"), "другий телефон лишається в примітках");
+  assert.equal(ex("Отримувач посилки: Іван"), null);
+  assert.equal(ex("Отримувачем буде Іван"), null);
+  assert.equal(ex("Отримувач: той самий"), null);
+  r1 = ex("Отримувач:\nІваненко Петро\n\n0680265430");
+  assert.equal(r1.name, "Іваненко Петро"); assert.equal(r1.phone, "0680265430");
+  r1 = ex("Отримувач: Панчук О.В. +38 (068) 026-54-30");
+  assert.equal(r1.name, "Панчук О.В."); assert.equal(r1.phone, "+38 (068) 026-54-30");
+  r1 = ex("Отримувач:\nПанчук Олег Володимирович\n0680265430");
+  assert.equal(r1.name, "Панчук Олег Володимирович"); assert.equal(r1.phone, "0680265430"); assert.equal(r1.rest, "");
+  // «Примітки» вимкнено, «Адреса» — ні: отримувач усе одно в «Доставці».
+  const noNotes = ctx.buildProductionMsg_({ order_number: "X", transport: "Нова пошта", notes: "Отримувач:\nПанчук Олег\n0680265430",
+    items: [{ product_type: "other", basket_model_name: "Ковш", quantity: 1 }] }, { notes: false }).replace(/<[^>]+>/g, "");
+  assert.ok(noNotes.includes("• Отримувач: Панчук Олег, 0680265430") && !noNotes.includes("ПРИМІТКИ"), noNotes);
+  // «Важливо»: порожній знак і дубль коментаря не друкуються.
+  const dup = ctx.buildProductionMsg_({ order_number: "X", items: [{ product_type: "basket", construction_type: "Суцільний · AVL-01", size_w: 800, size_h: 500, size_d: 500, quantity: 1,
+    item_comment: "Фарбувати двічі", specs: "⚠️\n❗ \n❗ Фарбувати двічі\nМатеріал: сталь" }] }, {}).replace(/<[^>]+>/g, "");
+  const dupImp = dup.split("⚠️ ВАЖЛИВО")[1].split("\n\n")[0];
+  assert.equal(dupImp.split("Фарбувати двічі").length - 1, 1, dupImp);
+  assert.ok(!/•\s*\n/.test(dupImp), "порожніх пунктів немає: " + dupImp);
 
   // Площа з повною точністю: показані множники дають показану суму (810×550×500).
   const precise = ctx.buildProductionMsg_({
