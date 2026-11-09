@@ -249,15 +249,31 @@ import invoiceLib from '../../lib/avalon-invoice.js';
     const npWarehouseOf = (w) => ({ description: w.Description, number: String(w.Number || ""), shortAddress: w.ShortAddress,
       postomat: String(w.CategoryOfWarehouse || "").toLowerCase() === "postomat" || /поштомат/i.test(w.Description || ""),
       placeMax: parseFloat(w.PlaceMaxWeightAllowed) || 0 });
-    // Без запиту — перші 500 відділень міста (запамʼятовуємо); з запитом — пошук по всьому довіднику міста.
-    async function npWarehouses(cityRef, query) {
+    // Усі пункти міста: довідник віддає по 500, тож гортаємо сторінки (Київ — понад 3 500, з них ~3 000 поштомати)
+    // і запамʼятовуємо. Раніше брали лише першу сторінку — відділень у ній мало, решти (№200 тощо) не було.
+    const NP_MAX_PAGES = 20;
+    const npSleep = (ms) => new Promise(r => setTimeout(r, ms));
+    // Нова пошта обмежує частоту запитів («To many requests») — сторінки йдуть по черзі, з повтором і паузою.
+    async function npPage(cityRef, page) {
+      let lastErr;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try { return await npCall("Address", "getWarehouses", { CityRef: cityRef, Limit: String(NP_PAGE), Page: String(page) }); }
+        catch (e) { lastErr = e; await npSleep(700 * (attempt + 1)); }
+      }
+      throw lastErr;
+    }
+    async function npWarehouses(cityRef) {
       if (!cityRef) return [];
-      const q = String(query || "").trim();
-      if (q) return (await npCall("Address", "getWarehouses", { CityRef: cityRef, FindByString: q, Limit: "100", Page: "1" })).map(npWarehouseOf);
       if (!npWarehouseCache[cityRef]) {
-        npWarehouseCache[cityRef] = npCall("Address", "getWarehouses", { CityRef: cityRef, Limit: String(NP_PAGE), Page: "1" })
-          .then(list => list.map(npWarehouseOf))
-          .catch(e => { delete npWarehouseCache[cityRef]; throw e; });
+        npWarehouseCache[cityRef] = (async () => {
+          const all = [];
+          for (let page = 1; page <= NP_MAX_PAGES; page++) {
+            const list = await npPage(cityRef, page);
+            all.push(...list);
+            if (list.length < NP_PAGE) break;
+          }
+          return all.map(npWarehouseOf);
+        })().catch(e => { delete npWarehouseCache[cityRef]; throw e; });
       }
       return npWarehouseCache[cityRef];
     }
@@ -330,6 +346,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
     // Відділення: без поштоматів (перемикач їх показує); ліміт ваги — підписом, щоб підібрати під кошик.
     function NpBranchField({ id, value, onChange, city, cityRef, onCityRef }) {
       const [postomats, setPostomats] = useState(false);
+      const [hideLight, setHideLight] = useState(false);
+      const [counts, setCounts] = useState({ shown: 0, total: 0 });
       const [resolving, setResolving] = useState(false);
       // Місто вписано вручну чи прийшло із замовлення — шукаємо його ref (з паузою, не на кожну літеру).
       useEffect(() => {
@@ -341,30 +359,33 @@ import invoiceLib from '../../lib/avalon-invoice.js';
         }, 600);
         return () => { alive = false; clearTimeout(t); };
       }, [city, cityRef]);
+      // Показуємо ВСІ пункти міста; поштомати й відділення з обмеженням до 30 кг — за перемикачами-фільтрами.
+      const SHOW_MAX = 800;
+      // Список міста підтягуємо у фоні, щойно відомо місто, — до кліку в поле він уже готовий.
+      useEffect(() => { if (cityRef) npWarehouses(cityRef).catch(() => {}); }, [cityRef]);
       const load = async (q) => {
         const t = String(q || "").trim().toLowerCase();
-        const own = await npWarehouses(cityRef);
-        let found = t ? own.filter(w => w.description.toLowerCase().includes(t) || w.number === t) : own;
-        // У місті понад 500 відділень (Київ, Харків…) — довідник шукаємо ще й напряму, щоб знайти №1200 тощо.
-        if (t && (own.length >= NP_PAGE || !found.length)) {
-          const seen = new Set(found.map(w => w.description));
-          (await npWarehouses(cityRef, q)).forEach(w => { if (!seen.has(w.description)) { seen.add(w.description); found.push(w); } });
-        }
-        found = found.filter(w => postomats || !w.postomat);
+        const all = await npWarehouses(cityRef);
+        let found = all.filter(w => (postomats || !w.postomat) && (!hideLight || !(w.placeMax > 0 && w.placeMax <= 30)));
+        if (t) found = found.filter(w => w.description.toLowerCase().includes(t) || w.number === t);
         // Спершу — відділення саме з таким номером, далі ті, чий номер з нього починається.
         const rank = (w) => (w.number === t ? 0 : (t && w.number.startsWith(t) ? 1 : 2));
         found = found.slice().sort((x, y) => rank(x) - rank(y) || (Number(x.number) || 0) - (Number(y.number) || 0));
-        return found.slice(0, 60).map(w => ({ ...w, value: w.description }));
+        setCounts({ shown: Math.min(found.length, SHOW_MAX), total: found.length });
+        return found.slice(0, SHOW_MAX).map(w => ({ ...w, value: w.description }));
       };
       return (
         <>
-          <NpSuggest id={id} value={value} minChars={0} disabled={false}
+          <NpSuggest key={String(postomats) + String(hideLight)} id={id} value={value} minChars={0} disabled={false}
             placeholder={cityRef ? "Номер або адреса відділення…" : (resolving ? "Шукаю місто в Новій пошті…" : "Спершу оберіть місто зі списку (або впишіть вручну)")}
             load={cityRef ? load : async () => []}
             onChange={(text) => onChange(text)}
-            footer={<div className="np-suggest-note">Показано до 60 — уточніть номер чи вулицю, якщо потрібного немає.</div>}
+            footer={<div className="np-suggest-note">{counts.total > counts.shown
+              ? "Показано " + counts.shown + " з " + counts.total + " — введіть номер чи вулицю, щоб звузити."
+              : "Усього: " + counts.total + ". Введіть номер чи вулицю, щоб знайти швидше."}</div>}
             render={w => <><b>{w.description}</b><small>{[w.shortAddress, w.postomat ? "поштомат" : "", !w.postomat && w.placeMax > 0 ? "до " + w.placeMax + " кг на місце" : ""].filter(Boolean).join(" · ")}</small></>} />
           <label className="np-postomat-toggle"><input type="checkbox" checked={postomats} onChange={e => setPostomats(e.target.checked)} /> показувати поштомати</label>
+          <label className="np-postomat-toggle"><input type="checkbox" checked={hideLight} onChange={e => setHideLight(e.target.checked)} /> сховати відділення до 30 кг</label>
         </>
       );
     }
@@ -4509,6 +4530,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           ...(qtyChanged ? { quantity: normQty(form, form.quantity) } : {}),
           ...financeFields(),
           commission_pct: form.commission_pct === "" ? null : Number(form.commission_pct),
+          payment_method: form.payment_method,
         });
       }
 
@@ -5025,14 +5047,14 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               </div>
             )}
 
+            <ChoiceField id="order-payment-method" label="Форма оплати (як клієнт платить за замовлення)" value={form.payment_method} options={FORM_PAYMENT_METHODS}
+              onChange={v => setForm(f => ({ ...f, payment_method: v }))} />
             <button className="btn" style={{ marginTop: 8 }} disabled={busy || stale} onClick={saveFinance}>Зберегти фінанси</button>
             {blockTitle("delivery", "Доставка", <>Доставка та нотатки</>)}
             <div className="grid2">
               <div className="field"><label>Дата доставки</label>
                 <input type="date" value={(form.delivery_date || "").slice(0, 10)} onChange={e => setForm({ ...form, delivery_date: e.target.value })} /></div>
-              <ChoiceField id="order-payment-method" label="Форма оплати" value={form.payment_method} options={FORM_PAYMENT_METHODS}
-                onChange={v => setForm(f => ({ ...f, payment_method: v }))} />
-              <div className="field"><label htmlFor="order-delivery-pay">Оплата доставки</label>
+              <div className="field"><label htmlFor="order-delivery-pay">Хто платить за доставку</label>
                 <select id="order-delivery-pay" value={deliveryPay} onChange={e => setDeliveryPay(e.target.value)}>
                   {DELIVERY_PAY_OPTIONS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
                 </select></div>
@@ -5051,7 +5073,6 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             </div>
             <button className="btn secondary" disabled={busy || stale} onClick={() => save({
               delivery_date: form.delivery_date,
-              payment_method: form.payment_method,
               transport: form.transport,
               address: form.address,
               notes: form.notes,
@@ -5537,6 +5558,18 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                 placeholder="Кріплення, зʼєднання, особливості виготовлення — підрядник побачить у блоці «Важливо» на початку повідомлення" /></div>
 
             <div className="section-title">Гроші</div>
+            <div className="grid2" style={{ marginBottom: 8 }}>
+              <div className="field"><label>Форма оплати (як клієнт платить за замовлення)</label>
+                <select value={form.payment_method} onChange={e => set("payment_method", e.target.value)}>
+                  <option value="">— не вказано —</option>
+                  <option value="На карту">На карту</option>
+                  <option value="На рахунок ФО-П">На рахунок ФО-П</option>
+                  <option value="На рахунок ТОВ">На рахунок ТОВ</option>
+                  <option value="Готівка">Готівка</option>
+                  <option value="Уточнити з менеджером">Уточнити з менеджером</option>
+                </select>
+              </div>
+            </div>
             <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 13, lineHeight: 1.4 }}>
               {isOther || isBracket
                 ? "Ціни вказуються ЗА ОДИНИЦЮ — підсумок з урахуванням кількості порахується нижче."
@@ -5623,20 +5656,10 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               </div>
               <div className="field"><label>Дата доставки</label>
                 <input type="date" value={form.delivery_date} onChange={e => set("delivery_date", e.target.value)} /></div>
-              <div className="field"><label htmlFor="new-delivery-pay">Оплата доставки</label>
+              <div className="field"><label htmlFor="new-delivery-pay">Хто платить за доставку</label>
                 <select id="new-delivery-pay" value={newParties.delivery_pay || ""} onChange={e => { const v = e.target.value; setNewParties(p => ({ ...p, delivery_pay: v })); }}>
                   {DELIVERY_PAY_OPTIONS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
                 </select></div>
-              <div className="field"><label>Форма оплати</label>
-                <select value={form.payment_method} onChange={e => set("payment_method", e.target.value)}>
-                  <option value="">— не вказано —</option>
-                  <option value="На карту">На карту</option>
-                  <option value="На рахунок ФО-П">На рахунок ФО-П</option>
-                  <option value="На рахунок ТОВ">На рахунок ТОВ</option>
-                  <option value="Готівка">Готівка</option>
-                  <option value="Уточнити з менеджером">Уточнити з менеджером</option>
-                </select>
-              </div>
             </div>
             <div className="field"><label>Примітки</label>
               <textarea value={form.notes} onChange={e => set("notes", e.target.value)} /></div>
@@ -6794,7 +6817,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           ["Постійний клієнт", "Замовляв раніше — угорі форми «Постійний клієнт — знайти в довіднику»: почніть вводити телефон або імʼя й натисніть на клієнта. Підставляться імʼя, телефон, місто, контакти, спосіб доставки, адреса чи відділення й оплата з його останнього замовлення, джерело — «Повторний клієнт». Або просто впишіть телефон: якщо клієнт уже є, під полем зʼявиться «Це … — підставити дані клієнта». Перевірте й за потреби виправте."],
           ["Товар", "Оберіть, що замовляють: кошик, кронштейни, інший виріб чи послугу. Для кошика — модель, колір, візерунок, ширину, висоту й глибину в міліметрах, кількість. Особливості виготовлення пишіть у «Коментар до позиції» — підрядник побачить його на початку повідомлення, у блоці «⚠️ Важливо»."],
           ["Гроші", "Для кошика поля грошей можна лишити порожніми: ціна порахується за розмірами, а блок «За формулою калькулятора» одразу покаже суму. Для кронштейнів, інших виробів і послуг ціну вписуєте самі — за одиницю."],
-          ["Доставка та оплата", "Дата, спосіб доставки, адреса чи відділення, форма оплати (як клієнт платить за замовлення) і «Оплата доставки» (хто платить Новій пошті: отримувач чи ми) — її бачить підрядник у «Доставці». Місто й відділення Нової пошти — як у формі: почніть вводити назву міста й оберіть зі списку, далі номер чи адресу відділення. Поштомати сховані — їх показує перемикач «показувати поштомати». Самовивіз чи адресна доставка — адресу пишіть вручну."],
+          ["Доставка та оплата", "Дата, спосіб доставки, адреса чи відділення, «Хто платить за доставку» (Новій пошті: отримувач чи ми) — це бачить підрядник у «Доставці». Форма оплати (як клієнт платить за замовлення) — у розділі «Фінанси». Місто й відділення Нової пошти — як у формі: почніть вводити назву міста й оберіть зі списку, далі номер чи адресу відділення. Список — усі відділення міста (у Києві їх сотні, тож введіть номер чи вулицю). Поштомати сховані — їх показує перемикач «показувати поштомати»; перемикач «сховати відділення до 30 кг» лишає лише вантажні. Самовивіз чи адресна доставка — адресу пишіть вручну."],
           ["Отримувач і платник", "Якщо посилку отримує інша людина — поставте пташку «Отримувач посилки — інша людина» і впишіть ПІБ і телефон: підрядник побачить їх у «Доставці». Платить інша людина, ФОП чи компанія — пташка «Платник — інший»: оберіть вид і впишіть реквізити, рахунок виставиться на нього. Для AVL-02 (екран під утеплювач) ширина, висота й глибина — це розміри екрана, а довжину кронштейнів впишіть в окреме поле."],
           ["Створіть замовлення", "Кнопка «Створити замовлення». Воно зʼявиться зі статусом «Нове» — далі дійте за розділом «Прийняти замовлення», починаючи з перевірки ціни."],
           ["Кілька моделей в одному замовленні", "Другу й наступні моделі додавайте через калькулятор: «Перенести в CRM» → «Наявне замовлення» → оберіть замовлення → «Додати новою позицією» → «Додати позицію в CRM»."],
