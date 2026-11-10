@@ -5939,7 +5939,12 @@ function readLabels_() {
   if (!raw) return DEFAULT_LABELS.map(function (l) { return Object.assign({}, l); });
   try { var a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch (e) { return []; }
 }
-function writeLabels_(list) { PropertiesService.getScriptProperties().setProperty(LABELS_PROP, JSON.stringify(list)); }
+function writeLabels_(list) {
+  var text = JSON.stringify(list);
+  // Властивість скрипта вміщує ~9 КБ — більший список не запишеться («Argument too large»).
+  if (text.length * 2 > 8500) throw new Error("Список міток завеликий — приберіть непотрібні чи скоротіть назви");
+  PropertiesService.getScriptProperties().setProperty(LABELS_PROP, text);
+}
 function cleanLabelText_(v, max) { return String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, max); }
 /** Нова мітка (будь-хто) або зміна назви/кольору/статусу наявної (лише власник). Однакова назва — та сама мітка. */
 function adminUpsertLabel_(data) {
@@ -5959,7 +5964,7 @@ function adminUpsertLabel_(data) {
   } else {
     var same = list.filter(function (x) { return x.name.toLowerCase() === name.toLowerCase(); })[0];
     if (same) return { status: "ok", label: same, labels: list };
-    if (list.length >= 60) throw new Error("Забагато міток — приберіть непотрібні");
+    if (list.length >= 30) throw new Error("Забагато міток (до 30) — приберіть непотрібні");
     cur = { id: "lbl-" + Utilities.getUuid().slice(0, 8), name: name, color: color, status: status };
     list.push(cur);
   }
@@ -6889,6 +6894,7 @@ function adminUpdateOrder_(data) {
   }
   // Мітки замовлення (як у Trello): лише відомі id зі словника, без повторів — у всі рядки замовлення.
   if (patch.labels != null) {
+    if (!Array.isArray(patch.labels)) throw new Error("Невірний список міток — оновіть сторінку");
     var known = {};
     readLabels_().forEach(function (l) { known[l.id] = true; });
     var ids = [];

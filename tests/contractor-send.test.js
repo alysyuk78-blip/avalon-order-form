@@ -801,6 +801,11 @@ function testServiceKind() {
   assert.ok(!uctx.readLabels_().some((l) => l.id === "lbl-price"));
   uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { labels: ["lbl-price", "lbl-payment"] } });
   assert.deepEqual(JSON.parse(ps.data[1][52]), ["lbl-payment"], "прибрану мітку більше не поставити");
+  assert.throws(() => uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { labels: "lbl-payment" } }), /Невірний список міток/);
+  assert.deepEqual(JSON.parse(ps.data[1][52]), ["lbl-payment"], "неправильний запит — мітки не стерто");
+  // Ліміт міток і місце у властивості скрипта.
+  for (let k = 0; k < 40 && uctx.readLabels_().length < 30; k++) uctx.Utilities.getUuid = () => "u" + k + "zzzzzzz", uctx.adminUpsertLabel_({ label: { name: "М" + k } });
+  assert.throws(() => uctx.adminUpsertLabel_({ label: { name: "Зайва" } }), /до 30/);
   uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { labels: [] } });
   assert.equal(ps.data[1][52], "", "без міток — порожньо");
   uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { labels: ["lbl-payment"] } });

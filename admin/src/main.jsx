@@ -1026,7 +1026,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               {labels.map(l => (
                 <div key={l.id} className="label-manage-row">
                   <input defaultValue={l.name} maxLength={40} aria-label={"Назва мітки «" + l.name + "»"}
-                    onBlur={e => { const v = e.target.value.trim(); if (v && v !== l.name) call("POST", { label: { ...l, name: v } }); else e.target.value = l.name; }} />
+                    onBlur={async e => { const el = e.target; const v = el.value.trim();
+                      if (v && v !== l.name) { const r = await call("POST", { label: { ...l, name: v } }); if (!r) el.value = l.name; } else el.value = l.name; }} />
                   {colorSelect(l.color, v => call("POST", { label: { ...l, color: v } }))}
                   <select value={l.status || ""} onChange={e => call("POST", { label: { ...l, status: e.target.value } })} aria-label="Пропонувати першою в статусі">
                     <option value="">— будь-який статус —</option>
@@ -5869,6 +5870,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       const funnelStatuses = hasMissingStatus ? DISPLAY_STATUSES : STATUSES;
       const labelsList = useLabels(token);
       const [labelFilter, setLabelFilter] = useState("");
+      useEffect(() => { if (labelFilter && !labelsList.some(l => l.id === labelFilter)) setLabelFilter(""); }, [labelsList, labelFilter]);
       const filteredGroups = useMemo(() => {
         const needle = q.trim().toLowerCase();
         return groups.filter(g => {
@@ -8254,7 +8256,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             const nextExpenses = Array.isArray(data.expenses) ? data.expenses : [];
             const nextPayments = Array.isArray(data.payments) ? data.payments : [];
             const nextPayouts = Array.isArray(data.payouts) ? data.payouts : [];
-            if (Array.isArray(data.labels)) setLabelsList(data.labels);
+            // Знімок може бути старший за щойно створену мітку — свіжий словник ним не підміняємо.
+            if (Array.isArray(data.labels) && !(labelsStore.list && data.snapshot && data.snapshot.source === "snapshot")) setLabelsList(data.labels);
             setGroups(nextGroups);
             setOrderItems(nextOrders);
             setExpenses(nextExpenses);
