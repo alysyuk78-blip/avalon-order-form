@@ -442,6 +442,36 @@ function processingContext(sheet, props, calendar, tg) {
   return ctx;
 }
 
+// ── Нагадування підряднику про термін опрацювання (10.11.2026) ─────────────
+function testProcessingReminders() {
+  const ORDP = "ORD-101126-201";
+  const row = (num, status, due) => orderRow(num, status, { 46: due, 47: "Порахувати виробничу вартість; Розробити конструктив нової моделі" });
+  const sheet = makeSheet([row(ORDP, "В опрацюванні підрядником", "2026-11-11"), row(ORDP, "В опрацюванні підрядником", "2026-11-11"),
+    row("ORD-101126-202", "В опрацюванні підрядником", "2026-11-11"),          // не надсилали на опрацювання
+    row("ORD-101126-203", "Погодження клієнтом", "2026-11-11"),                // статус уже інший
+    row("ORD-101126-204", "В опрацюванні підрядником", "2026-11-20")]);        // ще далеко
+  const props = makeProps({ TG_CONTRACTOR_CHAT: "-100", ["thread_" + ORDP]: "77", ["sent_purpose_" + ORDP]: "processing",
+    "thread_ORD-101126-202": "78", "sent_purpose_ORD-101126-202": "production",
+    "thread_ORD-101126-203": "79", "sent_purpose_ORD-101126-203": "processing",
+    "thread_ORD-101126-204": "80", "sent_purpose_ORD-101126-204": "processing" });
+  const sent = [];
+  const ctx = load({ PropertiesService: { getScriptProperties: () => props } });
+  ctx.tgSendTo_ = (chat, text, thread) => { sent.push({ chat, text, thread }); return { ok: true }; };
+  ctx.sendProcessingReminders_(sheet, "2026-11-10", props);
+  assert.equal(sent.length, 1, "лише замовлення, надіслане на опрацювання, у статусі опрацювання, з терміном завтра: " + JSON.stringify(sent));
+  assert.equal(sent[0].thread, "77");
+  assert.ok(sent[0].text.includes("ЗАВТРА термін опрацювання") && sent[0].text.includes("11.11.2026") && sent[0].text.includes("Розробити конструктив нової моделі"), sent[0].text);
+  ctx.sendProcessingReminders_(sheet, "2026-11-10", props);
+  assert.equal(sent.length, 1, "раз на день");
+  ctx.sendProcessingReminders_(sheet, "2026-11-11", props);
+  assert.ok(sent[1].text.includes("СЬОГОДНІ термін опрацювання"));
+  ctx.sendProcessingReminders_(sheet, "2026-11-12", props);
+  assert.ok(sent[2].text.includes("Термін опрацювання минув") && sent[2].text.includes("1 день тому"), sent[2].text);
+  ctx.sendProcessingReminders_(sheet, "2026-11-15", props);
+  assert.ok(sent[3].text.includes("4 дні тому"), sent[3].text);
+  assert.equal(ctx.daysWord_(5), "днів"); assert.equal(ctx.daysWord_(11), "днів"); assert.equal(ctx.daysWord_(21), "день"); assert.equal(ctx.daysWord_(2), "дні");
+}
+
 // ── Нові статуси: «В роботі» → «Виготовлення», міграція разова ────────────
 function testStatusesMigrationAndCanon() {
   const props = makeProps();
@@ -2191,6 +2221,7 @@ testStatusChangeFromCrmDoesNotAutoSend();
 testResumableUpload();
 testSendFileToContractor();
 testContractorSendFlow();
+testProcessingReminders();
 testStatusesMigrationAndCanon();
 testProcessingFlow();
 testSheetStatusProcessing();
