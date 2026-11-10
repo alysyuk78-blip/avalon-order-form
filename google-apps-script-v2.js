@@ -2667,7 +2667,11 @@ function dayDiff_(isoFrom, isoTo) { // isoTo − isoFrom, у днях (чере�
   var b = new Date(isoTo + "T00:00:00Z").getTime();
   return Math.round((b - a) / 86400000);
 }
-function daysWord_(n) { return (n % 10 >= 2 && n % 10 <= 4 && (n < 10 || n > 20)) ? "дні" : "днів"; }
+function daysWord_(n) {
+  var m = Math.abs(n) % 100, d = Math.abs(n) % 10;
+  if (m >= 11 && m <= 14) return "днів";
+  return d === 1 ? "день" : (d >= 2 && d <= 4 ? "дні" : "днів");
+}
 
 /**
  * Для часових тригерів відкриваємо саме ту таблицю, до якої автоматика була
@@ -2726,6 +2730,44 @@ function sendDeliveryReminders() {
     tgSendTo_(chat, buildReminder_(o, diff, tz), thread === "0" ? null : thread);
     props.setProperty(guard, "1");
   });
+  try { sendProcessingReminders_(sh, todayIso, props); } catch (procErr) { console.error("Нагадування про опрацювання: " + procErr); }
+}
+
+/**
+ * Нагадування підряднику про ТЕРМІН ОПРАЦЮВАННЯ (порахувати вартість, конструктив…) — у гілку замовлення в його групі:
+ * за день до терміну, у сам день і щодня після, поки замовлення «В опрацюванні підрядником». Лише якщо замовлення
+ * надсилали «На опрацювання»; не частіше разу на день. Той самий щоденний тригер, що й нагадування про доставку.
+ */
+function sendProcessingReminders_(sh, todayIso, props) {
+  var last = sh.getLastRow();
+  if (last < 2 || sh.getMaxColumns() < PROCESSING_TASK_COL) return;
+  var rows = sh.getRange(2, 1, last - 1, PROCESSING_TASK_COL).getValues();
+  var seen = {};
+  rows.forEach(function (r) {
+    var num = String(r[0] || "").trim();
+    if (!num || seen[num]) return;
+    seen[num] = true;
+    if (String(r[2] || "").trim() !== STATUS_PROCESSING) return;
+    var due = toISODate(r[PROCESSING_DUE_COL - 1]);
+    if (!due) return;
+    var diff = dayDiff_(todayIso, due);
+    if (diff > 1) return;
+    var thread = props.getProperty("thread_" + num);
+    if (!thread || props.getProperty("sent_purpose_" + num) !== "processing") return;
+    var guard = "prem_" + num + "_" + todayIso;
+    if (props.getProperty(guard)) return;
+    var chat = props.getProperty("TG_CONTRACTOR_CHAT") || props.getProperty("TG_CHAT");
+    if (!chat) return;
+    tgSendTo_(chat, buildProcessingReminder_(num, due, diff, r[PROCESSING_TASK_COL - 1]), thread === "0" ? null : thread);
+    props.setProperty(guard, "1");
+  });
+}
+function buildProcessingReminder_(num, due, diff, task) {
+  var head = diff === 1 ? "⏳ <b>ЗАВТРА термін опрацювання</b> — " + fmtDate_(due)
+    : diff === 0 ? "🔴 <b>СЬОГОДНІ термін опрацювання</b> — " + fmtDate_(due)
+    : "⚠️ <b>Термін опрацювання минув</b> " + fmtDate_(due) + " (" + (-diff) + " " + daysWord_(-diff) + " тому)";
+  return head + "\n📌 <b>№" + esc_(num) + "</b>\n" + tasksLines_(task)
+    + "\nВідповідь — у цій гілці: вартість чи конструктив. Якщо потрібно більше часу — напишіть, до якої дати.";
 }
 
 function buildReminder_(o, diff, tz) {
