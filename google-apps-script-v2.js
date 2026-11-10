@@ -102,8 +102,8 @@ function doPost(e) {
 // онови всі три копії (npm run sync:pricing) і контрольну суму, інакше тести впадуть.
 // Синтаксис ES5 — щоб блок без змін працював і в Apps Script.
 var AVALON_PRICING_DEFAULTS = {
-  solidRate: 2030,          // стінки: AVL-01 / 02 / 04 і суцільний AVL-03, ₴/м²
-  sectionalRate: 2170,      // стінки: AVL-05 / 07 і розбірний AVL-03, ₴/м²
+  solidRate: 2030,          // стінки: AVL-01 / 02 і суцільні AVL-03 / 04, ₴/м²
+  sectionalRate: 2170,      // стінки: AVL-05 / 07 і розбірні AVL-03 / 04, ₴/м²
   coverRate: 1920,          // кришка НЕ перфорована, ₴/м²
   coverPerfRate: 2030,      // кришка перфорована, ₴/м²
   screenKitPrice: 1700,     // AVL-02: система кріплення (2 кронштейни + 2 перемички), за комплект
@@ -145,7 +145,7 @@ var AVALON_MATERIALS = {
 //   lamella      — AVL-06: лицьова стінка ламельна, бокові — з візерунком;
 //   lamella_full — AVL-06/1: ламельні всі три стінки;
 //   four_sided   — AVL-08: чотири стінки (дві лицьові + дві бокові).
-// Ставку стінок цих трьох моделей, як і AVL-03, визначає виконання в тексті конструкції:
+// Ставку стінок цих трьох моделей, як і AVL-03 та AVL-04, визначає виконання в тексті конструкції:
 // «розбірний» → ставка розбірного, інакше суцільного. Кришка — якщо є в конструкції.
 var AVALON_MODEL_TYPES = {
   "AVL-01": "solid", "AVL-02": "screen", "AVL-03": "universal", "AVL-04": "sectional_frame",
@@ -287,7 +287,7 @@ function avalonParseOptions(construction, specs) {
  *         lamella | lamella_full | four_sided
  *   topCover / bottomCover: "" | "plain" | "perforated"
  *   customPattern: візерунок «Інший» — +customPatternRate за м² поверхонь із візерунком
- *   universalSectional: стінки розбірні (AVL-03, 06, 06/1, 08 — за текстом конструкції)
+ *   universalSectional: стінки розбірні (AVL-03, 04, 06, 06/1, 08 — за текстом конструкції)
  *   commissionPct: комісія з маржі (ТОВ/партнер), яку утримують з нашої маржі. Націнка
  *     збільшується так, щоб ПІСЛЯ комісії лишалась планова: націнка / (1 − комісія).
  */
@@ -315,9 +315,10 @@ function avalonPrice(input, rates) {
 
   // Собівартість за одиницю («чорна» база).
   // Моделі, де виконання (суцільне / розбірне) — вибір: ставку визначає ознака «стінки розбірні».
-  var byExecution = isUniversal || isLamella || isFourSided;
+  // AVL-04 «Зі знімною боковиною» — суцільний (типово) або розбірний; боковина — за суцільною.
+  var byExecution = isUniversal || isLamella || isFourSided || type === "sectional_frame";
   var universalSectional = byExecution && !!input.universalSectional;
-  var usesSolidRate = type === "solid" || isScreen || type === "sectional_frame";
+  var usesSolidRate = type === "solid" || isScreen;
   var wallRate = byExecution
     ? (universalSectional ? rate("sectionalRate") : rate("solidRate"))
     : (usesSolidRate ? rate("solidRate") : rate("sectionalRate"));
