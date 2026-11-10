@@ -104,7 +104,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
     const FORM_COLORS = ["Білий (RAL 9016)", "Сірий (RAL 7016)", "Чорний (RAL 9005)"];
     const FORM_PATTERNS = ["K1", "K2", "K3", "K4", "K5", "K6", "K7", "K8", "K9", "K10"];
     // Моделі, у яких виконання — вибір (суцільний / розбірний), як у калькуляторі.
-    const EXECUTION_CHOICE_MODELS = ["AVL-03", "AVL-06", "AVL-06/1", "AVL-08"];
+    const EXECUTION_CHOICE_MODELS = ["AVL-03", "AVL-04", "AVL-06", "AVL-06/1", "AVL-08"];
     // «Конструкція» в таблиці — «Виконання · AVL-xx[ + кришка]»: з неї формула бере модель і кришку.
     const CONSTRUCTION_CHOICES = CATALOG_MODELS_CRM.reduce((list, m) => {
       const same = m.construction.toLowerCase() === m.name.toLowerCase();
@@ -3876,7 +3876,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             {type === "lamella" ? " Бокові стінки — з візерунком, лицьова — ламельна: до ставки стінки додається гнуття кожної ламелі." : ""}
             {type === "lamella_full" ? " Ламельні всі три стінки: до ставки стінки додається гнуття кожної ламелі." : ""}
             {type === "four_sided" ? " Чотири стінки: дві лицьові й дві бокові." : ""}
-            {["lamella", "lamella_full", "four_sided"].includes(type) ? " Виконання — у полі «Конструкція»: суцільне рахується за " + money(calc ? calc.solidRate : rates.solidRate) + "/м², розбірне — за ставкою розбірного." : ""}
+            {type === "sectional_frame" ? " Знімна боковина рахується окремо, за ставкою суцільних стінок." : ""}
+            {["sectional_frame", "lamella", "lamella_full", "four_sided"].includes(type) ? " Виконання — у полі «Конструкція» або «Виконання» нижче: суцільне рахується за " + money(calc ? calc.solidRate : rates.solidRate) + "/м², розбірне — за ставкою розбірного." : ""}
             {customPattern ? " Візерунок «Інший»: +" + money(rates.customPatternRate) + " до ставки за м² поверхонь із візерунком." : ""}
             {type === "screen" ? " Висота — вже з рамкою (+40 мм), глибина — борти екрана." : ""}
           </p>
@@ -3890,6 +3891,13 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                 <select value={opts.universalSectional ? "1" : ""} disabled={disabled}
                   onChange={e => setOption({ universalSectional: e.target.value === "1" })}>
                   <option value="">суцільні</option><option value="1">розбірні</option>
+                </select></div>
+            )}
+            {["sectional_frame", "lamella", "lamella_full", "four_sided"].includes(type) && (
+              <div className="field"><label>Виконання</label>
+                <select value={opts.universalSectional ? "1" : ""} disabled={disabled}
+                  onChange={e => setOption({ universalSectional: e.target.value === "1" })}>
+                  <option value="">суцільне</option><option value="1">розбірне</option>
                 </select></div>
             )}
             {type !== "screen" && (

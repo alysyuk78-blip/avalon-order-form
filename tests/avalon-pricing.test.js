@@ -16,7 +16,7 @@ function coreOf(file) {
 
 // Змінив формулу — онови всі копії (npm run sync:pricing) і цю суму. Та сама сума стоїть у
 // тесті калькулятора (test/avalonPricing.test.mjs): розбіжність = алгоритми розʼїхались.
-const CORE_SHA256 = "53f1d0b07a5462b516d26906d33750e1a00f2990af151c298cdce42ba63ba970";
+const CORE_SHA256 = "4fd66438af6ec58a75240ffcde581143760d282e02913a84abd65192da64e916";
 
 function testCopiesAreIdentical() {
   const root = path.join(__dirname, "..");
@@ -256,7 +256,35 @@ function testCustomPattern() {
   assert.deepEqual([p.unitPrice, p.total, tov.unitPrice, tov.total], [2588, 2588 * 60, 2876, Math.round(2876 * 60 * 0.95)]);
 }
 
+// AVL-04 «Зі знімною боковиною» (рішення власника 10.11.2026): виконання — вибір, як в AVL-03.
+// Суцільний — як було; розбірний — стінки за розбірною ставкою, боковина — за суцільною.
+function testRemovableSideExecution() {
+  const item = (construction) => P.avalonPriceItem({ construction, model: "Зі знімною боковиною", specs: "",
+    width: 1000, height: 600, depth: 550, quantity: 1 }, {});
+  assert.equal(item("Суцільний · AVL-04").costTotal, Math.round(1.26 * 2030 + 0.33 * 2030));
+  assert.equal(P.avalonPrice({ type: "sectional_frame", width: 1000, height: 600, depth: 550 }).baseUnit, 3227.7);
+  const sect = item("Розбірний (з 3-х частин) · AVL-04");
+  assert.deepEqual([sect.unitPrice, item("Розбірний · AVL-04").unitPrice], [4596, 4596]);
+  assert.equal(P.avalonPrice({ type: "sectional_frame", width: 1000, height: 600, depth: 550, universalSectional: true }).baseUnit, 3404.1);
+  // Старі записи без коду моделі не змінюються.
+  assert.equal(P.avalonModelType("Суцільний+з'ємна бокова частина", ""), "solid");
+  // Картка: вибір «Виконання» переписує конструкцію; зайвий рядок «Стінки: розбірні» не губить ставку.
+  const t = (c, sp, o) => P.applyOptionsToText(c, sp, o, "sectional_frame");
+  assert.deepEqual(t("Суцільний · AVL-04 + кришка", "", { universalSectional: true, topCover: "plain" }),
+    { construction: "Розбірний (з 3-х частин) · AVL-04 + кришка", specs: "Верхня кришка: не перфорована" });
+  assert.equal(t("Розбірний (з 3-х частин) · AVL-04", "", { universalSectional: false }).construction, "Суцільний · AVL-04");
+  const opts = P.avalonParseOptions("Суцільний · AVL-04", "Стінки: розбірні");
+  const moved = t("Суцільний · AVL-04", "Стінки: розбірні", { ...opts, material: "galvanized" });
+  assert.deepEqual(moved, { construction: "Розбірний (з 3-х частин) · AVL-04", specs: "Матеріал: Оцинкований метал" });
+  assert.equal(P.avalonPriceItem({ ...moved, model: "", width: 1000, height: 600, depth: 550, quantity: 1 }, {}).costTotal,
+    Math.round(3404.1 + 1400));
+  // Без змін виконання конструкція лишається дослівно, як була.
+  assert.equal(t("Суцільний · AVL-04", "", {}).construction, "Суцільний · AVL-04");
+  assert.equal(P.applyOptionsToText("Суцільний · AVL-03", "", { universalSectional: true }, "universal").construction, "Суцільний · AVL-03");
+}
+
 testCopiesAreIdentical();
+testRemovableSideExecution();
 testLamellaAndFourSidedModels();
 testCustomPattern();
 testItemSized();
