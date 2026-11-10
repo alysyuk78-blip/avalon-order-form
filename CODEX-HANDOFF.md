@@ -1,5 +1,17 @@
 # CODEX HANDOFF — avalon-order-form
 
+## Мітки замовлень (як у Trello) — 10.11.2026
+
+Власник: «набір позначок про статуси, щоб не розширювати колонки… можливість створювати й додавати нові, як у Trello».
+- Таблиця: ADMIN_ORDER_COLS 52 → 53, BA (LABELS_COL) «Мітки замовлення» — JSON-масив id, у всіх рядках замовлення (SHARED_ORDER_COLS =
+  AY, AZ, BA: копіюються в нову позицію / доплату за колір, переносяться при видаленні позиції). Прапорець ORDERS_COLS_V11_READY.
+- Словник — властивість скрипта ORDER_LABELS_V1 [{id, name, color, status}]; без неї — 4 типові для «Погодження клієнтом».
+  label_upsert (нова — будь-хто, однакова назва = та сама; зміна — is_owner), label_delete (is_owner), labels_list; bootstrap віддає labels.
+  patch.labels в update_order — лише відомі id, без повторів, ≤ 20.
+- Vercel: /api/admin/order?resource=labels (lib/admin-labels-handler.js; GET/POST/DELETE, roleOf). WRITE_ACTIONS + IDEMPOTENT_WRITES.
+- Кабінет: блок «Мітки» під статусом (OrderLabelsBlock, клік ставить/знімає, «＋ Нова мітка», «Керувати мітками» — власник),
+  плашки на картках дошки (LabelChips), фільтр «Усі мітки», розділ інструкції «Мітки замовлень».
+
 ## Повідомлення підряднику: місто й номер відділення жирним — 10.11.2026
 
 Власник: «населений пункт і номер відділення має бути жирним». addressHtml_ у buildProductionMsg_: «<b>Київ, Відділення №200</b> (до 200 кг):

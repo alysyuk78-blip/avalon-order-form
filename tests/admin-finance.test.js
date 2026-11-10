@@ -570,7 +570,7 @@ function testOrderDetailReadsOnlyMatchedRows() {
           }),
         };
       }
-      if (r === 7 && c === 1 && rows === 1 && cols === 52) {
+      if (r === 7 && c === 1 && rows === 1 && cols === 53) {
         fullReads.push(r);
         return { getValues: () => [row] };
       }
@@ -734,7 +734,7 @@ function testSheetCommissionFormula() {
   assert.equal(formulas[26], '=IF($W7="";"";$W7-$Y7)', "чистий прибуток = валовий − комісія");
 
   // Схема таблиці розширена до AT (46) — інакше читання картки впаде.
-  assert.equal(context.ADMIN_ORDER_COLS, 52);  // …AY — отримувач і платник, AZ — коментарі до блоків
+  assert.equal(context.ADMIN_ORDER_COLS, 53);  // …AY — отримувач і платник, AZ — коментарі до блоків, BA — мітки
   assert.equal(context.COMMISSION_PCT_COL, 46);
 
   // mapOrderRow_ має віддавати ставку в CRM.

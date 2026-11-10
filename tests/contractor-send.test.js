@@ -347,7 +347,7 @@ function testContractorSendFlow() {
 
 // ── Аркуш «Замовлення» в памʼяті (сценарії зі статусами й терміном) ─────────
 function makeSheet(rows) {
-  const W = 52;
+  const W = 53;
   const pad = (r) => { const a = r.slice(); while (a.length < W) a.push(""); return a; };
   const data = [new Array(W).fill("")].concat(rows.map(pad));
   return {
@@ -384,7 +384,7 @@ function makeSheet(rows) {
 }
 
 function orderRow(num, status, extra) {
-  const r = new Array(52).fill("");
+  const r = new Array(53).fill("");
   r[0] = num; r[2] = status; r[4] = "Олександр Заєць"; r[5] = "'+380673406685"; r[6] = "Київ";
   r[16] = 1; r[19] = 9650; r[21] = 13790; r[22] = 4140; r[40] = "Ковш для трактора"; r[41] = "Інший виріб";
   Object.keys(extra || {}).forEach((k) => { r[Number(k)] = extra[k]; });
@@ -467,7 +467,7 @@ function testStatusesMigrationAndCanon() {
   assert.equal(mapped.processing_task, "Розробити конструктив");
 
   const widths = CODE.match(/var widths = \[([^\]]+)\]/)[1].split(",").length;
-  assert.equal(ctx.ADMIN_ORDER_COLS, 52);
+  assert.equal(ctx.ADMIN_ORDER_COLS, 53);
   assert.equal(widths, ctx.ADMIN_ORDER_COLS, "ширин колонок стільки ж, скільки колонок");
 }
 
@@ -780,6 +780,31 @@ function testServiceKind() {
   uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { block_note: { block: "finance", text: "" } } });
   assert.ok(!("finance" in JSON.parse(ps.data[1][51])), "порожній текст — коментар прибрано");
   assert.throws(() => uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { block_note: { block: "evil", text: "x" } } }), /Невідомий блок/);
+  // Мітки замовлення (BA, 53): лише відомі id, без повторів, у всіх рядках; група бере їх із першого непорожнього.
+  const lprops = {};
+  uctx.PropertiesService = { getScriptProperties: () => ({ getProperty: (k) => (k in lprops ? lprops[k] : null), setProperty: (k, v) => { lprops[k] = String(v); }, deleteProperty: (k) => { delete lprops[k]; }, getProperties: () => lprops }) };
+  uctx.Utilities = Object.assign({}, uctx.Utilities || {}, { getUuid: () => "abcdef12-3456" });
+  assert.equal(uctx.readLabels_().length, 4, "типові мітки для «Погодження клієнтом»");
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { labels: ["lbl-price", "lbl-price", "lbl-evil", "lbl-payment"] } });
+  assert.deepEqual(JSON.parse(ps.data[1][52]), ["lbl-price", "lbl-payment"], "лише відомі мітки, без повторів");
+  assert.equal(ps.data[2][52], ps.data[1][52], "в обох рядках замовлення");
+  assert.deepEqual(uctx.mapOrderRow_(2, ps.data[1]).labels, ["lbl-price", "lbl-payment"]);
+  // Нова мітка — і менеджер; однакова назва — та сама мітка; змінити чи прибрати — лише власник.
+  const created = uctx.adminUpsertLabel_({ label: { name: "  Чекаємо   ескіз ", color: "pink" }, is_owner: false });
+  assert.equal(created.label.name, "Чекаємо ескіз"); assert.equal(created.label.color, "pink"); assert.equal(created.label.id, "lbl-abcdef12");
+  assert.equal(uctx.adminUpsertLabel_({ label: { name: "чекаємо ЕСКІЗ" } }).label.id, "lbl-abcdef12", "та сама назва — та сама мітка");
+  assert.throws(() => uctx.adminUpsertLabel_({ label: { id: "lbl-abcdef12", name: "Інша" }, is_owner: false }), /лише власник/);
+  assert.equal(uctx.adminUpsertLabel_({ label: { id: "lbl-abcdef12", name: "Ескіз від клієнта", color: "nope" }, is_owner: true }).label.color, "grey", "невідомий колір — сірий");
+  assert.throws(() => uctx.adminUpsertLabel_({ label: { id: "lbl-abcdef12", name: "Погодження вартості" }, is_owner: true }), /вже є/);
+  assert.throws(() => uctx.adminDeleteLabel_({ id: "lbl-price", is_owner: false }), /лише власник/);
+  uctx.adminDeleteLabel_({ id: "lbl-price", is_owner: true });
+  assert.ok(!uctx.readLabels_().some((l) => l.id === "lbl-price"));
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { labels: ["lbl-price", "lbl-payment"] } });
+  assert.deepEqual(JSON.parse(ps.data[1][52]), ["lbl-payment"], "прибрану мітку більше не поставити");
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { labels: [] } });
+  assert.equal(ps.data[1][52], "", "без міток — порожньо");
+  uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { labels: ["lbl-payment"] } });
+
   // Оплата доставки — у тій самій клітинці: окрема правка не стирає отримувача й платника, і навпаки.
   uctx.adminUpdateOrder_({ order_number: "ORD-150926-031", patch: { delivery_pay: "recipient" } });
   let dp = JSON.parse(ps.data[1][50]);

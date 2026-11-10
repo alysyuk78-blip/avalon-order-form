@@ -38,7 +38,8 @@ var ADMIN_WRITE_ACTIONS = ["create_order", "update_order", "delete_order_item", 
   "add_expense", "update_expense", "add_payout", "add_payment", "delete_payment", "update_payment",
   "settlement_pdf", "settlement_send", "migrate_legacy_payments",
   "rates_save", "rates_delete", "order_reprice",
-  "cash_add", "cash_delete", "cash_settle", "cash_settle_undo", "cash_take", "invoice_create", "invoice_update_lines"];
+  "cash_add", "cash_delete", "cash_settle", "cash_settle_undo", "cash_take", "invoice_create", "invoice_update_lines",
+  "label_upsert", "label_delete"];
 
 function doPost(e) {
   // Тіло читаємо ДО блокування: кабінет робить кілька запитів паралельно, і якщо
@@ -1003,7 +1004,7 @@ function syncColorSurcharge_(sh, orderNumber, keepRow, dueBefore) {
       if (val !== "" && val != null) sh.getRange(written.row, col).setValue(val);
     });
     // Отримувач і платник, коментарі до блоків — спільні для замовлення й у рядку доплати.
-    [PARTIES_COL, BLOCK_NOTES_COL].forEach(function (col) {
+    SHARED_ORDER_COLS.forEach(function (col) {
       var shared = orderSharedCell_(sh, rows, col);
       if (shared) sh.getRange(written.row, col).setValue(shared);
     });
@@ -3017,13 +3018,14 @@ function setupOrders(sheet) {
     "Причина скасування",             // AW (49): обовʼязкова при скасуванні з CRM
     "Коментар до позиції",            // AX (50): стосується лише цієї позиції замовлення
     "Отримувач і платник",            // AY (51): якщо це не замовник (JSON)
-    "Коментарі до блоків"             // AZ (52): коментарі до блоків картки CRM (JSON)
+    "Коментарі до блоків",            // AZ (52): коментарі до блоків картки CRM (JSON)
+    "Мітки замовлення"                // BA (53): мітки (як у Trello), JSON-масив id
   ];
   if (sheet.getMaxColumns() < headers.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   headerStyle(sheet, headers.length);
   // Ширини A..AW — рівно стільки ж, скільки заголовків (останні: опрацювання й причина скасування).
-  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150,150,260,260,280,260,260];
+  var widths = [130,130,90,130,150,130,100,170,150,120,80,120,150,60,60,60,80,80,110,110,110,110,110,80,110,110,140,200,110,140,160,200,120,130,120,90,100,110,120,160,170,120,320,120,210,150,150,260,260,280,260,260,220];
   widths.forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
 
   var rule = SpreadsheetApp.newDataValidation()
@@ -5612,11 +5614,14 @@ function adminMigrateLegacyPayments_(data) {
 
 // ===================== ВЕБ-КАБІНЕТ CRM (admin_action) =====================
 
-var ADMIN_ORDER_COLS = 52; // A–AZ (контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT; опрацювання AU–AV; причина скасування AW; коментар до позиції AX; отримувач і платник AY; коментарі до блоків AZ)
+var ADMIN_ORDER_COLS = 53; // A–BA (мітки замовлення BA; контакт AL–AN; виріб AO–AQ; одиниця AR; ID запиту AS; комісія % AT; опрацювання AU–AV; причина скасування AW; коментар до позиції AX; отримувач і платник AY; коментарі до блоків AZ)
 var CANCEL_REASON_COL = 49;  // AW: чому скасовано — обовʼязково при скасуванні з CRM
 var ITEM_COMMENT_COL = 50;   // AX: коментар САМЕ до цієї позиції — підрядник бачить його в її блоці
 var PARTIES_COL = 51;        // AY: отримувач і платник, якщо це не замовник (JSON, однаковий у всіх рядках замовлення)
 var BLOCK_NOTES_COL = 52;    // AZ: коментарі до блоків картки (JSON { блок: { text, by, at } }, у всіх рядках)
+var LABELS_COL = 53;         // BA: мітки замовлення (JSON-масив id міток зі словника ORDER_LABELS_V1, у всіх рядках)
+// Колонки, спільні для всіх рядків (позицій) замовлення: копіюються в нову позицію / доплату, переносяться при видаленні.
+var SHARED_ORDER_COLS = [PARTIES_COL, BLOCK_NOTES_COL, LABELS_COL];
 var BLOCK_NOTE_KEYS = ["client", "parties", "product", "finance", "delivery", "payments", "invoices", "contractor", "files"];
 // Статуси замовлення. «В опрацюванні підрядником» — підрядник рахує виробничу
 // вартість / розробляє конструктив; «Погодження клієнтом» — клієнт отримав ціну й думає;
@@ -5700,13 +5705,13 @@ function ensureDiscountColumns_(sheet) {
 
 function ensureDiscountColumnsOnce_() {
   var props = PropertiesService.getScriptProperties();
-  // V10: після додавання AY–AZ (отримувач і платник, коментарі до блоків) заголовки треба проставити ще раз.
-  if (props.getProperty("ORDERS_COLS_V10_READY") === "1") return;
+  // V11: після додавання BA (мітки замовлення) заголовки треба проставити ще раз.
+  if (props.getProperty("ORDERS_COLS_V11_READY") === "1") return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_ORDERS);
   if (!sheet) return;
   ensureDiscountColumns_(sheet);
-  props.setProperty("ORDERS_COLS_V10_READY", "1");
+  props.setProperty("ORDERS_COLS_V11_READY", "1");
 }
 
 /** Колонки AL–AN: спосіб зв'язку, Telegram, e-mail (для CRM). */
@@ -5739,7 +5744,8 @@ function ensureContactColumns_(sheet) {
     { col: CANCEL_REASON_COL, title: "Причина скасування", key: "Причина скасування", width: 260 },
     { col: ITEM_COMMENT_COL, title: "Коментар до позиції", key: "Коментар до позиції", width: 280 },
     { col: PARTIES_COL, title: "Отримувач і платник", key: "Отримувач і платник", width: 260 },
-    { col: BLOCK_NOTES_COL, title: "Коментарі до блоків", key: "Коментарі до блоків", width: 260 }
+    { col: BLOCK_NOTES_COL, title: "Коментарі до блоків", key: "Коментарі до блоків", width: 260 },
+    { col: LABELS_COL, title: "Мітки замовлення", key: "Мітки замовлення", width: 220 }
   ];
   extra.forEach(function (e) {
     var head = String(sheet.getRange(1, e.col).getValue() || "");
@@ -5829,6 +5835,9 @@ function handleAdminRequest_(data) {
     if (action === "cash_take") return jsonOut(adminCashTake_(data));
     if (action === "invoice_create") return jsonOut(adminInvoiceCreate_(data));
     if (action === "invoice_update_lines") return jsonOut(adminInvoiceUpdateLines_(data));
+    if (action === "labels_list") return jsonOut({ status: "ok", labels: readLabels_() });
+    if (action === "label_upsert") return jsonOut(adminUpsertLabel_(data));
+    if (action === "label_delete") return jsonOut(adminDeleteLabel_(data));
     if (action === "invoice_list") return jsonOut({ status: "ok", invoices: readInvoices_(String((data && data.order_number) || "").trim()) });
     // Чати з клієнтами (Telegram Business). Аркуш «Чати» пишуть під власним блокуванням.
     if (action === "chat_ingest") return jsonOut(adminChatIngest_(data));
@@ -5908,6 +5917,63 @@ function orderSharedCell_(sh, rows, col) {
   }
   return "";
 }
+// ── Мітки замовлень (як у Trello) ──
+// Словник — у властивостях скрипта (як ставки підрядника): [{ id, name, color, status }]. status — підказка, у якому
+// статусі мітка доречна (картка пропонує її першою), не обмеження. Створити мітку може і менеджер; змінити чи
+// прибрати — лише власник. Мітку прибрали зі словника — у замовленнях вона просто перестає показуватись.
+var LABELS_PROP = "ORDER_LABELS_V1";
+var LABEL_COLORS = ["green", "yellow", "orange", "red", "purple", "blue", "sky", "lime", "pink", "grey"];
+var DEFAULT_LABELS = [
+  { id: "lbl-specs", name: "Характеристики від замовника", color: "blue", status: "Погодження клієнтом" },
+  { id: "lbl-price", name: "Погодження вартості", color: "yellow", status: "Погодження клієнтом" },
+  { id: "lbl-payment", name: "Очікування оплати", color: "orange", status: "Погодження клієнтом" },
+  { id: "lbl-reply", name: "Чекаємо відповіді клієнта", color: "purple", status: "Погодження клієнтом" }
+];
+function parseLabelsCell_(v) {
+  var t = String(v == null ? "" : v).trim();
+  if (!t || t.charAt(0) !== "[") return [];
+  try { var a = JSON.parse(t); return Array.isArray(a) ? a.map(String).filter(function (x) { return x; }) : []; } catch (e) { return []; }
+}
+function readLabels_() {
+  var raw = PropertiesService.getScriptProperties().getProperty(LABELS_PROP);
+  if (!raw) return DEFAULT_LABELS.map(function (l) { return Object.assign({}, l); });
+  try { var a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+function writeLabels_(list) { PropertiesService.getScriptProperties().setProperty(LABELS_PROP, JSON.stringify(list)); }
+function cleanLabelText_(v, max) { return String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, max); }
+/** Нова мітка (будь-хто) або зміна назви/кольору/статусу наявної (лише власник). Однакова назва — та сама мітка. */
+function adminUpsertLabel_(data) {
+  var l = (data && data.label) || {};
+  var name = cleanLabelText_(l.name, 40);
+  if (!name) throw new Error("Вкажіть назву мітки");
+  var color = LABEL_COLORS.indexOf(l.color) >= 0 ? l.color : "grey";
+  var status = cleanLabelText_(l.status, 60);
+  var list = readLabels_();
+  var id = String(l.id || "");
+  if (id) {
+    if (!(data && data.is_owner === true)) throw new Error("Змінювати мітки може лише власник");
+    var cur = list.filter(function (x) { return x.id === id; })[0];
+    if (!cur) throw new Error("Мітку вже прибрали — оновіть сторінку");
+    if (list.some(function (x) { return x.id !== id && x.name.toLowerCase() === name.toLowerCase(); })) throw new Error("Мітка з такою назвою вже є");
+    cur.name = name; cur.color = color; cur.status = status;
+  } else {
+    var same = list.filter(function (x) { return x.name.toLowerCase() === name.toLowerCase(); })[0];
+    if (same) return { status: "ok", label: same, labels: list };
+    if (list.length >= 60) throw new Error("Забагато міток — приберіть непотрібні");
+    cur = { id: "lbl-" + Utilities.getUuid().slice(0, 8), name: name, color: color, status: status };
+    list.push(cur);
+  }
+  writeLabels_(list);
+  return { status: "ok", label: cur, labels: list };
+}
+function adminDeleteLabel_(data) {
+  if (!(data && data.is_owner === true)) throw new Error("Прибрати мітку може лише власник");
+  var id = String((data && data.id) || "");
+  var list = readLabels_().filter(function (x) { return x.id !== id; });
+  writeLabels_(list);
+  return { status: "ok", labels: list };
+}
+
 /** Як parseJsonCell_, але не мовчить: непорожня клітинка з не-JSON (правили вручну) — помилка, щоб не затерти. */
 function parseJsonCellStrict_(v, title) {
   var t = String(v == null ? "" : v).trim();
@@ -6012,7 +6078,8 @@ function mapOrderRow_(rowIndex, v) {
     cancel_reason: String(v[48] || "").trim(),     // AW: чому скасовано
     item_comment: itemComment_(v[49], v[31]),      // AX: коментар до цієї позиції
     parties: parseJsonCell_(v[50]),                // AY: отримувач і платник (порожньо — це замовник)
-    block_notes: parseJsonCell_(v[51])             // AZ: коментарі до блоків картки
+    block_notes: parseJsonCell_(v[51]),            // AZ: коментарі до блоків картки
+    labels: parseLabelsCell_(v[52])                // BA: мітки замовлення (id)
   };
   // Y — усі комісії рядка. Комісію з маржі (утримує підрядник) рахуємо зі ставки; решта —
   // ставка партнера «за кошик» (її Avalon виплачує партнерові сама).
@@ -6089,6 +6156,7 @@ function adminGroupOrders_(orders, payments) {
         cancel_reason: o.cancel_reason,  // причина скасування (AW)
         parties: {},                      // отримувач і платник (AY) — нижче, з першого рядка, де вони є
         block_notes: {},                  // коментарі до блоків (AZ) — так само
+        labels: [],                       // мітки замовлення (BA) — так само
         list_price: 0,
         discount_uah: 0
       };
@@ -6096,6 +6164,7 @@ function adminGroupOrders_(orders, payments) {
     var g = byNum[o.order_number];
     if (o.parties && Object.keys(o.parties).length && !Object.keys(g.parties).length) g.parties = o.parties;
     if (o.block_notes && Object.keys(o.block_notes).length && !Object.keys(g.block_notes).length) g.block_notes = o.block_notes;
+    if (o.labels && o.labels.length && !g.labels.length) g.labels = o.labels;
     g.items_count += 1;
     // Чи є вже порахований кошик — від цього залежить, якими ставками рахується замовлення.
     var kindOfItem = String(o.product_kind || "");
@@ -6255,7 +6324,8 @@ function adminBootstrap_(data) {
     pricing: listed.pricing,
     expenses: expenses.expenses || [],
     payments: payments,
-    payouts: payouts.payouts || []
+    payouts: payouts.payouts || [],
+    labels: readLabels_()
   };
 }
 
@@ -6544,7 +6614,7 @@ function adminAddOrderItem_(data) {
       if (v !== "" && v != null) sh.getRange(row, col).setValue(v);
     });
     // Отримувач і платник, коментарі до блоків — теж спільні: беремо з будь-якого рядка, де вони є.
-    [PARTIES_COL, BLOCK_NOTES_COL].forEach(function (col) {
+    SHARED_ORDER_COLS.forEach(function (col) {
       var shared = orderSharedCell_(sh, rows, col);
       if (shared) sh.getRange(row, col).setValue(shared);
     });
@@ -6602,7 +6672,7 @@ function adminDeleteOrderItem_(data) {
   // Отримувач і платник, коментарі до блоків — спільні для замовлення: переносимо в позиції, що лишаються,
   // інакше після видалення рядка, де вони записані, вони б зникли.
   var keep = rows.filter(function (r) { return r !== row; });
-  [PARTIES_COL, BLOCK_NOTES_COL].forEach(function (col) {
+  SHARED_ORDER_COLS.forEach(function (col) {
     var shared = orderSharedCell_(sh, rows, col);
     if (!shared) return;
     keep.forEach(function (r) { if (String(sh.getRange(r, col).getValue() || "") === "") sh.getRange(r, col).setValue(shared); });
@@ -6816,6 +6886,18 @@ function adminUpdateOrder_(data) {
     var partiesCell = cleanParties_(partiesSrc);
     var partiesText = Object.keys(partiesCell).length ? JSON.stringify(partiesCell) : "";
     targetRows.forEach(function (r) { sh.getRange(r, PARTIES_COL).setValue(partiesText); });
+  }
+  // Мітки замовлення (як у Trello): лише відомі id зі словника, без повторів — у всі рядки замовлення.
+  if (patch.labels != null) {
+    var known = {};
+    readLabels_().forEach(function (l) { known[l.id] = true; });
+    var ids = [];
+    (Array.isArray(patch.labels) ? patch.labels : []).forEach(function (id) {
+      id = String(id || "");
+      if (known[id] && ids.indexOf(id) < 0 && ids.length < 20) ids.push(id);
+    });
+    var labelsText = ids.length ? JSON.stringify(ids) : "";
+    targetRows.forEach(function (r) { sh.getRange(r, LABELS_COL).setValue(labelsText); });
   }
   // Коментар до блоку картки (Замовник, Товар, Фінанси, …): хто й коли написав. Порожній текст — прибрати.
   if (patch.block_note != null) {
