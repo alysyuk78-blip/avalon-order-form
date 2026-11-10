@@ -918,6 +918,132 @@ import invoiceLib from '../../lib/avalon-invoice.js';
       writeAdminCache({ pricing: next });
       pricingStore.listeners.forEach(fn => fn());
     }
+    // ── Мітки замовлень (як у Trello) ──
+    // Словник міток — один на кабінет: приходить у bootstrap, оновлюється після створення/зміни мітки.
+    const LABEL_COLOR_HEX = { green: "#4bce97", yellow: "#f5cd47", orange: "#fea362", red: "#f87168", purple: "#9f8fef",
+      blue: "#579dff", sky: "#6cc3e0", lime: "#94c748", pink: "#e774bb", grey: "#8590a2" };
+    const LABEL_COLOR_NAMES = { green: "зелений", yellow: "жовтий", orange: "помаранчевий", red: "червоний", purple: "фіолетовий",
+      blue: "синій", sky: "блакитний", lime: "салатовий", pink: "рожевий", grey: "сірий" };
+    const labelsStore = { list: null, listeners: new Set(), loading: null };
+    function setLabelsList(list) {
+      if (!Array.isArray(list)) return;
+      labelsStore.list = list;
+      labelsStore.listeners.forEach(fn => fn());
+    }
+    function useLabels(token) {
+      const [, force] = useState(0);
+      useEffect(() => {
+        const fn = () => force(x => x + 1);
+        labelsStore.listeners.add(fn);
+        if (!labelsStore.list && token && !labelsStore.loading) {
+          labelsStore.loading = api("/api/admin/order?resource=labels", { token })
+            .then(r => setLabelsList(r.labels)).catch(() => {}).finally(() => { labelsStore.loading = null; });
+        }
+        return () => { labelsStore.listeners.delete(fn); };
+      }, [token]);
+      return labelsStore.list || [];
+    }
+    function LabelChips({ ids, labels, small }) {
+      const map = {};
+      (labels || []).forEach(l => { map[l.id] = l; });
+      const list = (ids || []).map(id => map[id]).filter(Boolean);
+      if (!list.length) return null;
+      return (
+        <div className={"label-chips" + (small ? " small" : "")}>
+          {list.map(l => <span key={l.id} className="label-chip" style={{ background: LABEL_COLOR_HEX[l.color] || LABEL_COLOR_HEX.grey }} title={l.name}>{l.name}</span>)}
+        </div>
+      );
+    }
+    /**
+     * Блок «Мітки» в картці: клік по мітці ставить/знімає її. Мітки, повʼязані з поточним статусом, — першими.
+     * «＋ Нова мітка» — і власник, і менеджер; «Керувати» (назва, колір, прибрати) — лише власник.
+     */
+    function OrderLabelsBlock({ token, status, value, onSave, disabled }) {
+      const labels = useLabels(token);
+      const isOwner = tokenRole(token) !== "manager";
+      const [adding, setAdding] = useState(false);
+      const [manage, setManage] = useState(false);
+      const [name, setName] = useState("");
+      const [color, setColor] = useState("blue");
+      const [busy, setBusy] = useState(false);
+      const [err, setErr] = useState("");
+      const selected = value || [];
+      const sorted = labels.slice().sort((a, b) => (b.status === status ? 1 : 0) - (a.status === status ? 1 : 0));
+      async function toggle(id) {
+        setErr("");
+        await onSave(selected.includes(id) ? selected.filter(x => x !== id) : selected.concat([id]));
+      }
+      async function call(method, body, query) {
+        setBusy(true); setErr("");
+        try { const r = await api("/api/admin/order?resource=labels" + (query || ""), { method, token, body }); setLabelsList(r.labels); return r; }
+        catch (e) { setErr(e.message || "Не вдалося зберегти мітку"); return null; }
+        finally { setBusy(false); }
+      }
+      async function create() {
+        if (!name.trim()) return setErr("Вкажіть назву мітки");
+        const r = await call("POST", { label: { name: name.trim(), color, status } });
+        if (!r) return;
+        setName(""); setAdding(false);
+        if (r.label && !selected.includes(r.label.id)) await onSave(selected.concat([r.label.id]));
+      }
+      async function remove(l) {
+        if (!window.confirm("Прибрати мітку «" + l.name + "» зі списку? З усіх замовлень вона теж зникне.")) return;
+        const r = await call("DELETE", null, "&id=" + encodeURIComponent(l.id));
+        if (r && selected.includes(l.id)) await onSave(selected.filter(x => x !== l.id));
+      }
+      const colorSelect = (val, onChange, id) => (
+        <select id={id} value={val} onChange={e => onChange(e.target.value)} className="label-color-select" style={{ borderLeft: "10px solid " + (LABEL_COLOR_HEX[val] || "#ccc") }}>
+          {Object.keys(LABEL_COLOR_HEX).map(c => <option key={c} value={c}>{LABEL_COLOR_NAMES[c]}</option>)}
+        </select>
+      );
+      return (
+        <div className="order-labels">
+          <div className="label-picker">
+            {sorted.map(l => {
+              const on = selected.includes(l.id);
+              return (
+                <button key={l.id} type="button" disabled={disabled || busy} className={"label-toggle" + (on ? " on" : "")}
+                  style={on ? { background: LABEL_COLOR_HEX[l.color] || LABEL_COLOR_HEX.grey } : { borderColor: LABEL_COLOR_HEX[l.color] || LABEL_COLOR_HEX.grey }}
+                  aria-pressed={on} title={on ? "Зняти мітку" : "Поставити мітку"} onClick={() => toggle(l.id)}>
+                  {on ? "✓ " : ""}{l.name}
+                </button>
+              );
+            })}
+            {!adding && <button type="button" className="label-add" disabled={disabled || busy} onClick={() => { setAdding(true); setErr(""); }}>＋ Нова мітка</button>}
+            {isOwner && labels.length > 0 && <button type="button" className="link-btn" onClick={() => setManage(v => !v)}>{manage ? "Готово" : "Керувати мітками"}</button>}
+          </div>
+          {adding && (
+            <div className="label-new">
+              <input value={name} maxLength={40} autoFocus placeholder="Назва, напр. «Чекаємо ескіз»" onChange={e => setName(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); create(); } if (e.key === "Escape") setAdding(false); }} />
+              {colorSelect(color, setColor)}
+              <button type="button" className="btn small" disabled={busy} onClick={create}>Додати</button>
+              <button type="button" className="btn secondary small" disabled={busy} onClick={() => setAdding(false)}>Скасувати</button>
+            </div>
+          )}
+          {manage && isOwner && (
+            <div className="label-manage">
+              {labels.map(l => (
+                <div key={l.id} className="label-manage-row">
+                  <input defaultValue={l.name} maxLength={40} aria-label={"Назва мітки «" + l.name + "»"}
+                    onBlur={async e => { const el = e.target; const v = el.value.trim();
+                      if (v && v !== l.name) { const r = await call("POST", { label: { ...l, name: v } }); if (!r) el.value = l.name; } else el.value = l.name; }} />
+                  {colorSelect(l.color, v => call("POST", { label: { ...l, color: v } }))}
+                  <select value={l.status || ""} onChange={e => call("POST", { label: { ...l, status: e.target.value } })} aria-label="Пропонувати першою в статусі">
+                    <option value="">— будь-який статус —</option>
+                    {STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
+                  </select>
+                  <IconButton icon="trash" label={"Прибрати мітку «" + l.name + "»"} disabled={busy} onClick={() => remove(l)} />
+                </div>
+              ))}
+              <small className="send-hint">Статус — у якому статусі мітка пропонується першою. Прибрана мітка зникає з усіх замовлень.</small>
+            </div>
+          )}
+          {err && <div className="error">{err}</div>}
+        </div>
+      );
+    }
+
     function usePricingInfo() {
       const [, force] = useState(0);
       useEffect(() => {
@@ -4394,6 +4520,20 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           setNoteEdit(null);
         } catch (e) { setError(e.message); } finally { setBusy(false); }
       }
+      // Мітки замовлення — без перезапису решти форми (незбережені правки в інших блоках лишаються).
+      async function saveLabels(ids) {
+        if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return false; }
+        setBusy(true); setError("");
+        try {
+          const res = await api("/api/admin/order", { method: "PATCH", token,
+            body: { order_number: orderNumber, row: form.row, patch: { labels: ids }, expect: itemExpect(data && data.items && data.items[itemIdx]) } });
+          setData(res);
+          keepFormOnce.current = true;
+          onChanged && onChanged(res);
+          return true;
+        } catch (e) { setError(e.message || "Не вдалося зберегти мітки"); return false; }
+        finally { setBusy(false); }
+      }
       // Отримувач і платник — так само, без перезапису решти форми.
       async function saveParties(parties) {
         if (stale) { setError("Зачекайте кілька секунд — оновлюю дані замовлення"); return false; }
@@ -4707,6 +4847,9 @@ import invoiceLib from '../../lib/avalon-invoice.js';
               if (savedDelivery) parts.push(<span key="d">Доставка <b>{payDateLabel(savedDelivery)}</b></span>);
               return parts.length ? <div className="order-summary">{parts.reduce((acc, x, k) => k ? acc.concat([" · ", x]) : [x], [])}</div> : null;
             })()}
+
+            <div className="section-title" style={{ marginTop: 6 }}>Мітки <GuideLink section="labels" /></div>
+            <OrderLabelsBlock token={token} status={form.status || order.status} value={order.labels || []} onSave={saveLabels} disabled={busy || stale} />
 
             <QuickContact order={order} />
 
@@ -5725,10 +5868,14 @@ import invoiceLib from '../../lib/avalon-invoice.js';
 
       const hasMissingStatus = groups.some(g => g.status === MISSING_STATUS);
       const funnelStatuses = hasMissingStatus ? DISPLAY_STATUSES : STATUSES;
+      const labelsList = useLabels(token);
+      const [labelFilter, setLabelFilter] = useState("");
+      useEffect(() => { if (labelFilter && !labelsList.some(l => l.id === labelFilter)) setLabelFilter(""); }, [labelsList, labelFilter]);
       const filteredGroups = useMemo(() => {
         const needle = q.trim().toLowerCase();
         return groups.filter(g => {
           if (status && g.status !== status) return false;
+          if (labelFilter && !(g.labels || []).includes(labelFilter)) return false;
           if (!needle) return true;
           const phoneKey = normalizePhone(g.phone);
           const haystack = [
@@ -5738,7 +5885,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             .map(v => String(v || "").toLowerCase()).join(" ");
           return haystack.includes(needle);
         });
-      }, [groups, q, status]);
+      }, [groups, q, status, labelFilter]);
 
       async function moveToStatus(orderNumber, newStatus) {
         const current = groups.find(g => g.order_number === orderNumber);
@@ -5844,6 +5991,13 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             <div className="toolbar-primary">
               <SearchControl value={q} onChange={setQ} />
               <StatusControl value={status} onChange={setStatus} includeMissing={hasMissingStatus} />
+              {labelsList.length > 0 && (
+                <select className="label-filter" value={labelFilter} onChange={e => setLabelFilter(e.target.value)} aria-label="Фільтр за міткою"
+                  style={labelFilter ? { borderLeft: "8px solid " + (LABEL_COLOR_HEX[(labelsList.find(l => l.id === labelFilter) || {}).color] || "#ccc") } : null}>
+                  <option value="">Усі мітки</option>
+                  {labelsList.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+              )}
               <IconButton
                 icon="refresh"
                 label="Оновити замовлення"
@@ -5998,6 +6152,7 @@ import invoiceLib from '../../lib/avalon-invoice.js';
                           <span>{formatDateShort(g.created_at).split(" ")[0]}</span>
                         </div>
                         {g.status === MISSING_STATUS && <div className="meta" style={{ color: "#b54842" }}>{g.status_issue}</div>}
+                        <LabelChips ids={g.labels} labels={labelsList} small />
                         <div className="card-client">{g.client || "Клієнт не вказаний"}</div>
                         <div className="card-contact">
                           <ContactLinks order={g} onClickStop />
@@ -6858,6 +7013,17 @@ import invoiceLib from '../../lib/avalon-invoice.js';
           ["Позначте, що побачить підрядник", "Імʼя замовника, телефон, адреса, фінанси, нотатки — пташками. Перегляд показує повідомлення таким, яким воно прийде в Telegram."],
           ["Надішліть", "Повідомлення й обрані файли підуть у групу підрядника, в окрему гілку цього замовлення."],
           ["Щось змінилось після надсилання", "Виправте замовлення і надішліть ще раз — «Надіслати оновлення». Воно прийде в ту саму гілку з позначкою «Оновлено замовлення»."],
+        ],
+      },
+      {
+        id: "labels",
+        title: "Мітки замовлень",
+        lead: "Мітки уточнюють, на чому зупинилось замовлення, не змінюючи статус: «Погодження вартості», «Очікування оплати» тощо.",
+        steps: [
+          ["Поставити мітку", "Картка → «Мітки» (угорі, під статусом) → натисніть мітку. Ще раз — зняти. Можна кілька одразу. Мітки, повʼязані з поточним статусом, стоять першими."],
+          ["Нова мітка", "«＋ Нова мітка» → назва → колір → «Додати». Вона одразу стане на це замовлення й зʼявиться в списку для всіх замовлень."],
+          ["На дошці", "Мітки видно кольоровими плашками на картках у колонках. Фільтр «Усі мітки» поруч із пошуком лишає лише замовлення з обраною міткою."],
+          ["Керувати мітками (власник)", "«Керувати мітками»: змінити назву, колір, статус, у якому мітка пропонується першою, або прибрати мітку зовсім (зникне з усіх замовлень)."],
         ],
       },
       {
@@ -8090,6 +8256,8 @@ import invoiceLib from '../../lib/avalon-invoice.js';
             const nextExpenses = Array.isArray(data.expenses) ? data.expenses : [];
             const nextPayments = Array.isArray(data.payments) ? data.payments : [];
             const nextPayouts = Array.isArray(data.payouts) ? data.payouts : [];
+            // Знімок може бути старший за щойно створену мітку — свіжий словник ним не підміняємо.
+            if (Array.isArray(data.labels) && !(labelsStore.list && data.snapshot && data.snapshot.source === "snapshot")) setLabelsList(data.labels);
             setGroups(nextGroups);
             setOrderItems(nextOrders);
             setExpenses(nextExpenses);

@@ -302,6 +302,24 @@ async function run() {
   assert.equal(r.statusCode, 200);
   assert.deepEqual(calls.pop(), { action: "order_reprice", payload: { order_number: ORD } });
 
+  // Мітки замовлень: створити — і менеджер; змінити чи прибрати — лише власник.
+  const labels = withResource("labels");
+  role = "manager";
+  r = await call(labels, { method: "POST", body: { label: { name: "  Чекаємо   ескіз ", color: "pink", status: "Погодження клієнтом" } } });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(calls.pop(), { action: "label_upsert", payload: { label: { name: "Чекаємо ескіз", color: "pink", status: "Погодження клієнтом" }, is_owner: false } });
+  assert.equal((await call(labels, { method: "POST", body: { label: { id: "lbl-abc", name: "X" } } })).statusCode, 403);
+  assert.equal((await call(labels, { method: "DELETE", query: { id: "lbl-abc" } })).statusCode, 403);
+  assert.equal((await call(labels, { method: "POST", body: { label: { name: " " } } })).statusCode, 400);
+  role = "owner";
+  r = await call(labels, { method: "POST", body: { label: { id: "lbl-abc", name: "Ескіз", color: "evil" } } });
+  assert.deepEqual(calls.pop().payload, { label: { name: "Ескіз", color: "grey", status: "", id: "lbl-abc" }, is_owner: true });
+  assert.equal((await call(labels, { method: "DELETE", query: { id: "bad id" } })).statusCode, 400);
+  r = await call(labels, { method: "DELETE", query: { id: "lbl-abc" } });
+  assert.deepEqual(calls.pop(), { action: "label_delete", payload: { id: "lbl-abc", is_owner: true } });
+  r = await call(labels, { method: "GET" });
+  assert.equal(calls.pop().action, "labels_list");
+
   console.log("admin-files-api tests: OK");
 }
 
